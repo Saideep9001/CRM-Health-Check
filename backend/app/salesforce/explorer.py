@@ -1,0 +1,385 @@
+"""Read-only data explorer: list objects, describe fields, and page through records.
+
+Every object and field name that goes into a SOQL string is checked against
+Salesforce's own describe results first, and search text is escaped, so user
+input can never change the shape of a query.
+"""
+import re
+import time
+from typing import Any
+from urllib.parse import quote
+
+from .client import SalesforceClient
+from .errors import SalesforceError
+
+CACHE_SECONDS = 600
+PAGE_SIZE = 200  # Salesforce's smallest query batch size
+MAX_COLUMNS = 25
+
+# Objects most people care about, shown first.
+COMMON = [
+    "Account", "Contact", "Lead", "Opportunity", "Case", "Task", "Event", "Campaign",
+    "Product2", "Pricebook2", "Quote", "Contract", "Order", "User",
+]
+
+# Housekeeping objects (history, sharing, feeds, change events…), hidden by default.
+_SYSTEM_SUFFIXES = ("History", "Share", "Feed", "ChangeEvent", "__Tag", "__mdt", "__e", "__x", "__b")
+_SYSTEM_PREFIXES = ("Apex", "Auth", "Setup", "Flow", "Permission", "Login", "Process", "Package", "Platform")
+
+# Reference targets that always have a Name field, so we can show "Owner: Jane Doe" instead of an id.
+_NAMED = {"Account", "Contact", "Lead", "User", "Group", "Opportunity", "Campaign", "Product2", "Pricebook2",
+          "Case", "Quote", "Contract", "Order", "RecordType", "Profile", "UserRole"}
+
+# Field types we can't show as a table column.
+_NO_COLUMN = {"base64", "address", "location", "complexvalue", "anyType", "json"}
+
+_PREFERRED = ["StageName", "Status", "Email", "Phone", "Company", "Title", "Industry", "Type", "Amount",
+              "CloseDate", "LeadSource", "AccountId", "OwnerId", "IsActive", "CreatedDate", "LastModifiedDate"]
+
+_ID_RE = re.compile(r"^[A-Za-z0-9]{15}([A-Za-z0-9]{3})?$")
+_CURSOR_RE = re.compile(r"^/services/data/v\d+\.\d+/query/[A-Za-z0-9]+-\d+$")
+
+_cache: dict[tuple, tuple[float, Any]] = {}
+
+
+class NotFound(Exception):
+    pass
+
+
+def _cached(key: tuple, load):
+    hit = _cache.get(key)
+    if hit and time.monotonic() - hit[0] < CACHE_SECONDS:
+        return hit[1]
+    value = load()
+    _cache[key] = (time.monotonic(), value)
+    return value
+
+
+def clear_cache() -> None:
+    _cache.clear()
+
+
+def _api(sf: SalesforceClient) -> str:
+    return f"/services/data/{sf.settings.sf_api_version}"
+
+
+def _org(sf: SalesforceClient) -> str:
+    return sf.conn.org_id or sf.conn.instance_url
+
+
+def is_system(name: str) -> bool:
+    return name.endswith(_SYSTEM_SUFFIXES) or name.startswith(_SYSTEM_PREFIXES)
+
+
+# ---------------------------------------------------------------- objects
+
+def _global(sf: SalesforceClient) -> dict[str, dict]:
+    def load():
+        body = sf.get(f"{_api(sf)}/sobjects")
+        return {
+            o["name"]: o
+            for o in body.get("sobjects", [])
+            if o.get("queryable") and o.get("retrieveable") and not o.get("deprecatedAndHidden")
+        }
+
+    return _cached(("global", _org(sf)), load)
+
+
+def _record_counts(sf: SalesforceClient) -> dict[str, int]:
+    """Approximate counts for every object in one call (Salesforce updates these periodically)."""
+    def load():
+        try:
+            body = sf.get(f"{_api(sf)}/limits/recordCount")
+        except SalesforceError:
+            return {}
+        return {o["name"]: o.get("count", 0) for o in body.get("sObjects", [])}
+
+    return _cached(("counts", _org(sf)), load)
+
+
+def list_objects(sf: SalesforceClient) -> list[dict]:
+    counts = _record_counts(sf)
+    rank = {n: i for i, n in enumerate(COMMON)}
+    out = [
+        {
+            "name": o["name"],
+            "label": o.get("label") or o["name"],
+            "label_plural": o.get("labelPlural") or o.get("label") or o["name"],
+            "custom": bool(o.get("custom")),
+            "common": o["name"] in rank,
+            "system": is_system(o["name"]),
+            "approx_count": counts.get(o["name"]),
+        }
+        for o in _global(sf).values()
+    ]
+    out.sort(key=lambda o: (rank.get(o["name"], 999), o["label"].lower()))
+    return out
+
+
+# ---------------------------------------------------------------- describe
+
+def _describe(sf: SalesforceClient, name: str) -> dict:
+    if name not in _global(sf):
+        raise NotFound(name)
+    return _cached(("describe", _org(sf), name), lambda: sf.get(f"{_api(sf)}/sobjects/{quote(name)}/describe"))
+
+
+def _fields(desc: dict) -> dict[str, dict]:
+    return {f["name"]: f for f in desc.get("fields", [])}
+
+
+def _name_field(desc: dict) -> str | None:
+    return next((f["name"] for f in desc.get("fields", []) if f.get("nameField")), None)
+
+
+def default_columns(desc: dict) -> list[str]:
+    fields = _fields(desc)
+    cols = ["Id"]
+    name = _name_field(desc)
+    if name:
+        cols.append(name)
+    for f in _PREFERRED:
+        if f in fields and f not in cols and fields[f]["type"] not in _NO_COLUMN:
+            cols.append(f)
+        if len(cols) >= 8:
+            return cols
+    for f in desc.get("fields", []):
+        if len(cols) >= 8:
+            break
+        if f["name"] not in cols and f["type"] not in _NO_COLUMN and not f.get("calculated") and f["type"] != "textarea":
+            cols.append(f["name"])
+    return cols
+
+
+def describe_object(sf: SalesforceClient, name: str) -> dict:
+    desc = _describe(sf, name)
+    g = _global(sf)[name]
+    return {
+        "name": name,
+        "label": desc.get("label") or name,
+        "label_plural": desc.get("labelPlural") or name,
+        "custom": bool(desc.get("custom")),
+        "name_field": _name_field(desc),
+        "searchable": bool(_name_field(desc) and _fields(desc)[_name_field(desc)].get("filterable")),
+        "default_columns": default_columns(desc),
+        "child_relationships": child_relationships(sf, name),
+        "approx_count": _record_counts(sf).get(name),
+        "salesforce_url": f"{sf.base}/lightning/o/{quote(name)}/list" if g.get("keyPrefix") else None,
+        "fields": [
+            {
+                "name": f["name"],
+                "label": f.get("label") or f["name"],
+                "type": f["type"],
+                "custom": bool(f.get("custom")),
+                "required": not f.get("nillable", True) and f.get("createable", False) and not f.get("defaultedOnCreate", False),
+                "sortable": bool(f.get("sortable")),
+                "filterable": bool(f.get("filterable")),
+                "column": f["type"] not in _NO_COLUMN,
+                "reference_to": f.get("referenceTo") or [],
+                "help_text": f.get("inlineHelpText"),
+                "picklist_values": [p["value"] for p in f.get("picklistValues") or [] if p.get("active")][:100],
+            }
+            for f in desc.get("fields", [])
+        ],
+    }
+
+
+# ---------------------------------------------------------------- related records
+
+# Related lists people look at most, shown first (e.g. an Account's Contacts and Opportunities).
+RELATED_FIRST = ["Contact", "Opportunity", "Case", "Task", "Event", "Quote", "OpportunityLineItem", "Order",
+                 "Contract", "Asset", "CampaignMember", "Lead", "Account"]
+RELATED_LIMIT = 50
+
+
+def child_relationships(sf: SalesforceClient, name: str) -> list[dict]:
+    """Related lists for an object: child objects that point at it and can be queried by this user."""
+    desc = _describe(sf, name)
+    g = _global(sf)
+    out = []
+    for r in desc.get("childRelationships") or []:
+        child, fld, rel = r.get("childSObject"), r.get("field"), r.get("relationshipName")
+        if not rel or not fld or child not in g or is_system(child) or r.get("deprecatedAndHidden"):
+            continue
+        out.append({"name": rel, "object": child, "field": fld, "label": g[child].get("labelPlural") or child})
+    per_child: dict[str, int] = {}
+    for o in out:
+        per_child[o["object"]] = per_child.get(o["object"], 0) + 1
+    primary = {f"{name}Id", "ParentId"}  # the standard link, e.g. Contact.AccountId for an Account
+    for o in out:
+        o["primary"] = o["field"] in primary
+        if per_child[o["object"]] > 1 and not o["primary"]:  # extra links to the same child: say which link
+            o["label"] = f"{o['label']} ({o['field'].removesuffix('__c').removesuffix('Id').replace('_', ' ')})"
+    rank = {n: i for i, n in enumerate(RELATED_FIRST)}
+    out.sort(key=lambda o: (rank.get(o["object"], 999), not o["primary"], o["label"].lower()))
+    return out
+
+
+def related_records(sf: SalesforceClient, name: str, record_id: str, relationship: str) -> dict:
+    """Up to 50 records from one related list of one record, plus the total count."""
+    if not _ID_RE.match(record_id):
+        raise NotFound(record_id)
+    rel = next((r for r in child_relationships(sf, name) if r["name"] == relationship), None)
+    if rel is None:
+        raise NotFound(relationship)
+    child = rel["object"]
+    cdesc = _describe(sf, child)
+    cf = _fields(cdesc)
+    link = cf.get(rel["field"])
+    if not link or not link.get("filterable"):
+        raise NotFound(relationship)
+    cols = ["Id"] + [c for c in default_columns(cdesc) if c not in ("Id", rel["field"])][:5]
+    refs = _ref_paths(cf, cols)
+    where = f"WHERE {rel['field']} = '{record_id}'"  # field from describe, id checked by _ID_RE
+    order = next((f" ORDER BY {f} DESC NULLS LAST" for f in ("LastModifiedDate", "CreatedDate") if f in cf and cf[f].get("sortable")), "")
+    body = sf.query(f"SELECT {', '.join(cols + list(refs.values()))} FROM {child} {where}{order} LIMIT {RELATED_LIMIT}")
+    total = sf.query(f"SELECT COUNT() FROM {child} {where}").get("totalSize")
+    return {
+        "relationship": relationship,
+        "object": child,
+        "label": rel["label"],
+        "name_field": _name_field(cdesc),
+        "columns": [{"name": c, "label": cf[c].get("label") or c, "type": cf[c]["type"]} for c in cols],
+        "records": [_row(r, cols, refs) for r in body.get("records", [])],
+        "total_size": total,
+        "salesforce_url": f"{sf.base}/lightning/r/{quote(name)}/{record_id}/related/{quote(relationship)}/view",
+    }
+
+
+# ---------------------------------------------------------------- records
+
+def _soql_text(value: str) -> str:
+    """Escape user text for a LIKE '%…%' literal."""
+    out = value.replace("\\", "\\\\").replace("'", "\\'").replace("%", "\\%").replace("_", "\\_")
+    return out
+
+
+def _ref_paths(fields: dict[str, dict], cols: list[str]) -> dict[str, str]:
+    """Map reference columns (e.g. OwnerId) to a related-name path (Owner.Name) where safe."""
+    paths = {}
+    for c in cols:
+        f = fields[c]
+        targets = f.get("referenceTo") or []
+        if f["type"] == "reference" and f.get("relationshipName") and targets and all(t in _NAMED for t in targets):
+            paths[c] = f"{f['relationshipName']}.Name"
+    return paths
+
+
+def _row(rec: dict, cols: list[str], refs: dict[str, str]) -> dict:
+    values = {c: rec.get(c) for c in cols}
+    names = {}
+    for col, path in refs.items():
+        rel = rec.get(path.split(".")[0])
+        if isinstance(rel, dict) and rel.get("Name"):
+            names[col] = rel["Name"]
+    return {"id": rec.get("Id"), "values": values, "ref_names": names}
+
+
+def list_records(
+    sf: SalesforceClient,
+    name: str,
+    columns: list[str] | None,
+    search: str | None,
+    sort: str | None,
+    direction: str,
+    cursor: str | None,
+    ids: list[str] | None = None,
+    filters: list[dict] | None = None,
+) -> dict:
+    if ids is not None and (not ids or len(ids) > 200 or not all(_ID_RE.match(i) for i in ids)):
+        raise ValueError("Invalid record ids.")
+    desc = _describe(sf, name)
+    fields = _fields(desc)
+    cols = [c for c in (columns or default_columns(desc)) if c in fields and fields[c]["type"] not in _NO_COLUMN]
+    if "Id" not in cols:
+        cols.insert(0, "Id")
+    cols = cols[:MAX_COLUMNS]
+    refs = _ref_paths(fields, cols)
+
+    if cursor:
+        if not _CURSOR_RE.match(cursor):
+            raise ValueError("Invalid page cursor.")
+        body = sf.get(cursor, headers={"Sforce-Query-Options": f"batchSize={PAGE_SIZE}"})
+    else:
+        select = ", ".join(cols + list(refs.values()))
+        soql = f"SELECT {select} FROM {name}"
+        name_field = _name_field(desc)
+        conds = []
+        if filters:
+            from .finder import conditions  # finder imports this module
+
+            children = {c["name"]: c for c in child_relationships(sf, name)}
+            conds += conditions(fields, filters, children)
+        if ids:
+            conds.append("Id IN (" + ", ".join(f"'{i}'" for i in ids) + ")")  # ids checked by _ID_RE
+        if search and search.strip() and name_field and fields[name_field].get("filterable"):
+            conds.append(f"{name_field} LIKE '%{_soql_text(search.strip()[:100])}%'")
+        if conds:
+            soql += " WHERE " + " AND ".join(conds)
+        order = sort if sort in fields and fields[sort].get("sortable") else None
+        if order is None:
+            order = next((f for f in ("LastModifiedDate", "CreatedDate", "SystemModstamp") if f in fields), None)
+            direction = "desc"
+        if order:
+            soql += f" ORDER BY {order} {'ASC' if direction == 'asc' else 'DESC'} NULLS LAST"
+        body = sf.get(f"{_api(sf)}/query?q={quote(soql)}", headers={"Sforce-Query-Options": f"batchSize={PAGE_SIZE}"})
+
+    next_url = body.get("nextRecordsUrl")
+    return {
+        "columns": cols,
+        "records": [_row(r, cols, refs) for r in body.get("records", [])],
+        "total_size": body.get("totalSize"),
+        "next_cursor": next_url if next_url and _CURSOR_RE.match(next_url) else None,
+    }
+
+
+def records_matching(sf: SalesforceClient, name: str, where: str | None, cursor: str | None = None, page_size: int = PAGE_SIZE) -> dict:
+    """Records of `name` matching a filter the health check engine built (never user input)."""
+    desc = _describe(sf, name)
+    fields = _fields(desc)
+    cols = default_columns(desc)[:8]
+    refs = _ref_paths(fields, cols)
+    headers = {"Sforce-Query-Options": f"batchSize={max(200, min(page_size, 2000))}"}
+    if cursor:
+        if not _CURSOR_RE.match(cursor):
+            raise ValueError("Invalid page cursor.")
+        body = sf.get(cursor, headers=headers)
+    else:
+        order = next((f for f in ("LastModifiedDate", "CreatedDate") if f in fields and fields[f].get("sortable")), None)
+        soql = f"SELECT {', '.join(cols + list(refs.values()))} FROM {name}" + (f" WHERE {where}" if where else "") + (f" ORDER BY {order} DESC" if order else "")
+        body = sf.get(f"{_api(sf)}/query?q={quote(soql)}", headers=headers)
+    next_url = body.get("nextRecordsUrl")
+    return {
+        "object": name,
+        "columns": [{"name": c, "label": fields[c].get("label") or c, "type": fields[c]["type"]} for c in cols],
+        "records": [_row(r, cols, refs) for r in body.get("records", [])],
+        "total_size": body.get("totalSize"),
+        "next_cursor": next_url if next_url and _CURSOR_RE.match(next_url) else None,
+        "record_url_prefix": f"{sf.base}/",
+    }
+
+
+def get_record(sf: SalesforceClient, name: str, record_id: str) -> dict:
+    if not _ID_RE.match(record_id):
+        raise NotFound(record_id)
+    desc = _describe(sf, name)
+    body = sf.get(f"{_api(sf)}/sobjects/{quote(name)}/{record_id}")
+    values = {k: v for k, v in body.items() if k != "attributes"}
+    fields = _fields(desc)
+    refs = {c: p for c, p in _ref_paths(fields, [c for c in values if c in fields]).items()}
+    names: dict[str, str] = {}
+    if refs:
+        # One small query for the related names (Owner, Account, …).
+        soql = f"SELECT {', '.join(refs.values())} FROM {name} WHERE Id = '{record_id}'"  # id checked by _ID_RE
+        try:
+            res = sf.get(f"{_api(sf)}/query?q={quote(soql)}")
+            rec = (res.get("records") or [{}])[0]
+            names = _row(rec, [], refs)["ref_names"]
+        except SalesforceError:
+            names = {}
+    return {
+        "id": values.get("Id", record_id),
+        "values": values,
+        "ref_names": names,
+        "salesforce_url": f"{sf.base}/{record_id}",
+    }

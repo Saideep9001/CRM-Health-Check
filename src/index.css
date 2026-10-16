@@ -1,0 +1,106 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---------- Design tokens (RGB triplets so Tailwind alpha works) ---------- */
+:root {
+  --bg: 246 248 251;
+  --surface: 255 255 255;
+  --muted: 241 244 248;
+  --line: 226 232 240;
+  --ink: 15 23 42;
+  --ink-muted: 71 85 105;
+  --ink-subtle: 120 134 156;
+  --brand: 15 98 254;
+  --brand-soft: 230 239 255;
+  --brand-ink: 10 70 190;
+  --accent: 13 148 136;
+  --accent-soft: 220 245 241;
+  --good: 22 163 74;
+  --good-soft: 220 247 229;
+  --warn: 217 119 6;
+  --warn-soft: 254 243 219;
+  --bad: 220 38 38;
+  --bad-soft: 254 226 226;
+  --sev-critical: 220 38 38;
+  --sev-high: 234 88 12;
+  --sev-medium: 202 138 4;
+  --sev-low: 59 130 246;
+  color-scheme: light;
+}
+
+.dark {
+  --bg: 9 13 22;
+  --surface: 17 23 35;
+  --muted: 25 33 48;
+  --line: 38 48 66;
+  --ink: 236 241 248;
+  --ink-muted: 165 178 199;
+  --ink-subtle: 118 133 156;
+  --brand: 77 141 255;
+  --brand-soft: 22 37 68;
+  --brand-ink: 150 189 255;
+  --accent: 45 212 191;
+  --accent-soft: 16 48 48;
+  --good: 52 211 113;
+  --good-soft: 17 46 32;
+  --warn: 245 166 35;
+  --warn-soft: 52 38 14;
+  --bad: 248 95 95;
+  --bad-soft: 58 22 26;
+  --sev-critical: 248 95 95;
+  --sev-high: 251 146 60;
+  --sev-medium: 234 179 8;
+  --sev-low: 96 165 250;
+  color-scheme: dark;
+}
+
+@layer base {
+  html, body, #root { height: 100%; }
+  body {
+    @apply bg-bg text-ink font-sans antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+  ::selection { @apply bg-brand/20; }
+  /* Let wide tables scroll inside grid cells instead of stretching the page. */
+  .grid > * { min-width: 0; }
+  *:focus-visible { @apply outline-none ring-2 ring-brand/60 ring-offset-2 ring-offset-bg; }
+}
+
+@layer components {
+  .card { @apply bg-surface border border-line rounded-xl shadow-card; }
+  .card-pad { @apply p-5; }
+  .label { @apply text-xs font-medium uppercase tracking-wide text-ink-subtle; }
+  .input {
+    @apply h-9 w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink placeholder:text-ink-subtle
+      focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20 transition;
+  }
+  .th { @apply px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-ink-subtle whitespace-nowrap; }
+  .td { @apply px-4 py-3 text-sm text-ink align-middle; }
+  .scrollbar-thin { scrollbar-width: thin; scrollbar-color: rgb(var(--line)) transparent; }
+}
+
+/* Recharts theme alignment */
+.recharts-cartesian-grid line { stroke: rgb(var(--line)); }
+.recharts-text { fill: rgb(var(--ink-subtle)); font-size: 12px; }
+.recharts-default-tooltip { display: none; }
+
+.print-only { display: none; }
+
+@media print {
+  aside, header:not(.report-header), .no-print { display: none !important; }
+  .print-only { display: inline !important; }
+  main { padding: 0 !important; }
+  body { background: white; }
+  .print-break-avoid { break-inside: avoid; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
+
+.reduce-motion *, .reduce-motion *::before, .reduce-motion *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}

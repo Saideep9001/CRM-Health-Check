@@ -1,0 +1,19 @@
+# Dependencies and builds
+node_modules
+dist
+backend/.venv
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Secrets and local settings — never commit
+.env
+*.local
+backend/.env
+.claude/settings.local.json
+
+# Local data: database (with encrypted Salesforce tokens), its encryption key, backups, dev API data
+backend/.data
+.dev-data
+*.db
+*.key

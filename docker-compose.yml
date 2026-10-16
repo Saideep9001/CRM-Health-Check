@@ -1,0 +1,52 @@
+# Production-style stack: PostgreSQL + API + health check workers + website.
+#   1. Copy backend/.env.example to backend/.env and fill it in (TOKEN_ENCRYPTION_KEY is required here).
+#   2. docker compose up -d --build        (scale workers: docker compose up -d --scale worker=3)
+#   3. Open http://localhost:8080. Set FRONTEND_ORIGIN and the Connected App callback URL to match.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: aquarient
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      POSTGRES_DB: aquarient
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aquarient"]
+      interval: 5s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build: ./backend
+    env_file: backend/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://aquarient:${POSTGRES_PASSWORD:-change-me}@db:5432/aquarient
+      JOB_MODE: external
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:8080}
+    depends_on:
+      db: { condition: service_healthy }
+    restart: unless-stopped
+
+  worker:
+    build: ./backend
+    command: ["python", "-m", "app.worker"]
+    env_file: backend/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://aquarient:${POSTGRES_PASSWORD:-change-me}@db:5432/aquarient
+      JOB_MODE: external
+      WORKER_THREADS: ${WORKER_THREADS:-2}
+    depends_on:
+      db: { condition: service_healthy }
+      api: { condition: service_started }
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.web
+    ports: ["8080:80"]
+    depends_on: [api]
+    restart: unless-stopped
+
+volumes:
+  pgdata:

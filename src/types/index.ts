@@ -1,0 +1,618 @@
+/**
+ * Domain types for the Aquarient CRM Health platform.
+ *
+ * Everything below `// ---- API contract ----` mirrors the JSON returned by the
+ * FastAPI backend (see docs/API_CONTRACT.md). Field names are camelCase on the
+ * wire; the backend should serialize with an alias generator.
+ */
+
+// ---------------------------------------------------------------------------
+// Static product definitions (frontend configuration)
+// ---------------------------------------------------------------------------
+
+export type CategoryId =
+  | 'data-quality'
+  | 'workflows'
+  | 'reporting'
+  | 'user-adoption'
+  | 'quoting'
+  | 'integrations';
+
+/** Release stage of a category's diagnostic execution. */
+export type ReleaseStage = 'mvp' | 'coming-soon';
+
+export interface DiagnosticArea {
+  id: string; // "area-1" … "area-21" — stable key shared with the backend
+  number: number;
+  categoryId: CategoryId;
+  name: string;
+  description: string;
+  indicators: string[];
+}
+
+export interface Category {
+  id: CategoryId;
+  order: number;
+  name: string;
+  shortName: string;
+  purpose: string;
+  release: ReleaseStage;
+  areaIds: string[];
+}
+
+// ---------------------------------------------------------------------------
+// ---- API contract ----
+// ---------------------------------------------------------------------------
+
+export type Severity = 'critical' | 'high' | 'medium' | 'low';
+export type FindingStatus = 'open' | 'in-review' | 'resolved' | 'accepted-risk';
+export type AssessmentStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+export type Priority = 'P1' | 'P2' | 'P3' | 'P4';
+
+export interface ApiHealth {
+  status: 'ok' | 'degraded';
+  version: string;
+  /** Area ids the diagnostic engine can currently execute. */
+  executableAreaIds: string[];
+}
+
+export type ConnectionStatus = 'disconnected' | 'connected' | 'expired' | 'error';
+export type SalesforceEnvironment = 'production' | 'sandbox' | 'custom';
+
+export interface SalesforceConnection {
+  id: string | null;
+  status: ConnectionStatus;
+  environment: SalesforceEnvironment | null;
+  organizationName: string | null;
+  orgId: string | null;
+  instanceUrl: string | null;
+  edition: string | null;
+  apiVersion: string | null;
+  connectedBy: string | null;
+  connectedAt: string | null;
+  lastCheckedAt: string | null;
+  /** Remaining daily API requests, if the backend reports limits. */
+  apiRequestsRemaining: number | null;
+  apiRequestsMax: number | null;
+  errorMessage: string | null;
+}
+
+/** Salesforce Connected App setup status. The secret is never sent back. */
+export interface SalesforceAppConfig {
+  configured: boolean;
+  /** Where the keys come from: entered on the page, or the server's .env file. */
+  source: 'ui' | 'env' | null;
+  clientIdPreview: string | null;
+  callbackUrl: string;
+  updatedAt: string | null;
+}
+
+export interface SalesforceAppUpdate {
+  clientId: string;
+  clientSecret: string;
+}
+
+export interface OAuthStartRequest {
+  environment: SalesforceEnvironment;
+  /** Required when environment === 'custom', e.g. "acme.my.salesforce.com". */
+  myDomain?: string;
+  redirectUri: string;
+}
+
+export interface OAuthStartResponse {
+  authorizationUrl: string;
+  state: string;
+}
+
+export interface OAuthCallbackRequest {
+  code: string;
+  state: string;
+  redirectUri: string;
+}
+
+export interface AssessmentScope {
+  categoryIds: CategoryId[];
+  areaIds: string[];
+  /** Only consider records modified within N days; null = all records. */
+  lookbackDays: number | null;
+  /** Thresholds the engine uses (e.g. stale-lead days). */
+  staleLeadDays: number;
+  stuckOpportunityDays: number;
+  /** Salesforce objects to check (API names). Omitted = Account, Contact, Lead, Opportunity. */
+  objects?: string[] | null;
+}
+
+export interface Assessment {
+  id: string;
+  name: string;
+  connectionId: string;
+  organizationName: string;
+  orgId: string;
+  status: AssessmentStatus;
+  scope: AssessmentScope;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  createdBy: string | null;
+  /** 0–100 while running. */
+  progress: number | null;
+  currentStep: string | null;
+  recordsAssessed: number | null;
+  findingsCount: number | null;
+  overallScore: number | null;
+  errorMessage: string | null;
+}
+
+export interface CreateAssessmentRequest {
+  name: string;
+  connectionId: string;
+  scope: AssessmentScope;
+  notes?: string;
+}
+
+export interface IndicatorValue {
+  label: string; // matches DiagnosticArea.indicators
+  value: number;
+  unit: 'count' | '%';
+  direction: 'lower-better' | 'higher-better';
+}
+
+export interface AreaResult {
+  areaId: string;
+  score: number | null;
+  status: 'assessed' | 'skipped' | 'failed';
+  indicators: IndicatorValue[];
+  recordsEvaluated: number | null;
+  message: string | null;
+  /** When this area was last checked. May be earlier than the health check itself, when a later check skipped it. */
+  checkedAt?: string | null;
+  /** Health check this area's result comes from. */
+  sourceAssessmentId?: string | null;
+}
+
+export interface CategoryResult {
+  categoryId: CategoryId;
+  score: number | null;
+}
+
+/** Per-object summary of a health check ("Results by object"). */
+export interface ObjectResult {
+  name: string;
+  label: string;
+  records: number | null;
+  /** % of key fields filled in. */
+  completeness: number | null;
+  /** Extra records that duplicate another one. */
+  duplicates: number | null;
+  problems: number;
+}
+
+export interface AssessmentResults {
+  assessmentId: string;
+  overallScore: number | null;
+  dataQualityScore: number | null;
+  salesProcessScore: number | null;
+  recordsAssessed: number;
+  categories: CategoryResult[];
+  areas: AreaResult[];
+  objects?: ObjectResult[];
+  /** Problems from the previous check that are gone now. */
+  resolved?: ResolvedFinding[];
+}
+
+export interface Finding {
+  id: string;
+  assessmentId: string;
+  name: string;
+  categoryId: CategoryId;
+  areaId: string;
+  severity: Severity;
+  affectedRecords: number;
+  businessImpact: string;
+  recommendedAction: string;
+  status: FindingStatus;
+  description: string;
+  whyItMatters: string;
+  priority: Priority;
+  detectedAt: string;
+  /** Optional Salesforce report/list-view URL listing affected records. */
+  sampleRecordsUrl: string | null;
+  /** Salesforce object the problem is about (null for org-wide settings). */
+  objectName?: string | null;
+  notes: string | null;
+  /** The affected records can be listed and downloaded. */
+  recordsAvailable?: boolean;
+  /** Money involved, e.g. the total Amount of the deals affected. */
+  valueAtRisk?: number | null;
+  /** Salesforce page where this can be fixed. */
+  fixUrl?: string | null;
+  /** Affected records in the previous check (null = new problem). */
+  previousAffected?: number | null;
+  change?: FindingChange;
+}
+
+export type FindingChange = 'new' | 'worse' | 'better' | 'same';
+
+/** A problem from the previous check that's gone now. */
+export interface ResolvedFinding {
+  name: string;
+  areaId: string;
+  categoryId: CategoryId;
+  objectName: string | null;
+  severity: Severity;
+  previousAffected: number;
+}
+
+export interface FindingRecordsPage {
+  object: string;
+  columns: { name: string; label: string; type: string }[];
+  records: DataRow[];
+  totalSize: number | null;
+  nextCursor: string | null;
+  /** + record id = link to the record in Salesforce. */
+  recordUrlPrefix: string;
+}
+
+export interface UpdateFindingRequest {
+  status?: FindingStatus;
+  notes?: string;
+}
+
+export interface Paginated<T> {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface HealthMetric {
+  key: string;
+  label: string;
+  value: number | null;
+  unit: 'score' | 'count';
+  /** Delta vs the previous completed assessment, if one exists. */
+  trend: number | null;
+}
+
+export interface UserProfile {
+  id: string;
+  name: string;
+  email: string;
+  title: string | null;
+  role: string | null;
+}
+
+export interface NotificationPreferences {
+  assessmentCompleted: boolean;
+  criticalFindings: boolean;
+  weeklyDigest: boolean;
+  productUpdates: boolean;
+}
+
+/** White-label settings for printed and shared reports. */
+export interface ReportBranding {
+  companyName: string | null;
+  /** data:image/...;base64 URL (max ~300 KB). */
+  logoDataUrl: string | null;
+  accentColor: string | null;
+  preparedBy: string | null;
+  footerNote: string | null;
+  showAquarient: boolean;
+}
+
+export interface AppSettings {
+  defaultLandingPage: 'dashboard' | 'results' | 'reports';
+  dateFormat: 'mdy' | 'dmy' | 'iso';
+  notifications: NotificationPreferences;
+  branding: ReportBranding;
+  /** Default consultant rate for proposals. */
+  hourlyRate: number;
+  currency: string;
+}
+
+export interface AppNotification {
+  id: string;
+  title: string;
+  body: string;
+  createdAt: string;
+  read: boolean;
+  link: string | null;
+  kind?: 'alert' | 'info';
+}
+
+export interface LoginRequest {
+  email: string;
+  password: string;
+  rememberMe: boolean;
+}
+
+export interface SsoStartRequest {
+  email: string;
+  redirectUri: string;
+}
+
+export interface SsoStartResponse {
+  authorizationUrl: string;
+}
+
+export interface ForgotPasswordRequest {
+  email: string;
+}
+
+/** One line in a CRM data answer (a record or a group). */
+export interface CrmRow {
+  label: string;
+  detail?: string;
+  /** Link to the record in Salesforce, when the row is a single record. */
+  url?: string;
+}
+
+/** Answer to a fixed CRM data question asked in the help assistant. */
+export interface CrmAnswer {
+  id: string;
+  title: string;
+  /** Markdown-lite summary (supports **bold**). */
+  summary: string;
+  total: number | null;
+  rows: CrmRow[];
+  /** Link to the matching list in Salesforce. */
+  salesforceUrl: string | null;
+  asOf: string;
+}
+
+// ---- Data explorer (read-only view of the connected org) ----
+
+export interface DataObject {
+  name: string;
+  label: string;
+  labelPlural: string;
+  custom: boolean;
+  /** Everyday sales objects (Account, Contact, Lead…), listed first. */
+  common: boolean;
+  /** Housekeeping objects (history, sharing, feeds…), hidden by default. */
+  system: boolean;
+  /** Approximate record count from Salesforce; refreshed by Salesforce periodically. */
+  approxCount: number | null;
+}
+
+export interface DataField {
+  name: string;
+  label: string;
+  type: string;
+  custom: boolean;
+  required: boolean;
+  sortable: boolean;
+  filterable: boolean;
+  /** Whether it can be shown as a table column. */
+  column: boolean;
+  referenceTo: string[];
+  helpText: string | null;
+  picklistValues: string[];
+}
+
+/** A related list: child records that point at this object (e.g. an Account's Contacts). */
+export interface DataChildRelationship {
+  /** Salesforce relationship name, e.g. "Contacts". */
+  name: string;
+  /** Child object, e.g. "Contact". */
+  object: string;
+  /** Field on the child that points back, e.g. "AccountId". */
+  field: string;
+  label: string;
+  /** The standard link (e.g. Contact.AccountId), rather than an extra lookup field. */
+  primary?: boolean;
+}
+
+export interface DataRelatedPage {
+  relationship: string;
+  object: string;
+  label: string;
+  nameField: string | null;
+  columns: { name: string; label: string; type: string }[];
+  records: DataRow[];
+  totalSize: number | null;
+  salesforceUrl: string | null;
+}
+
+export interface DataObjectDetail {
+  name: string;
+  label: string;
+  labelPlural: string;
+  custom: boolean;
+  nameField: string | null;
+  searchable: boolean;
+  defaultColumns: string[];
+  childRelationships?: DataChildRelationship[];
+  approxCount: number | null;
+  salesforceUrl: string | null;
+  fields: DataField[];
+}
+
+export interface DataRow {
+  id: string | null;
+  values: Record<string, unknown>;
+  /** Display names for reference fields, e.g. { OwnerId: "Jane Doe" }. */
+  refNames: Record<string, string>;
+}
+
+export interface DataRecordPage {
+  columns: string[];
+  records: DataRow[];
+  totalSize: number | null;
+  nextCursor: string | null;
+}
+
+export interface DataRecord extends DataRow {
+  salesforceUrl: string;
+}
+
+export interface DataRecordQuery {
+  fields?: string[];
+  q?: string;
+  sort?: string;
+  dir?: 'asc' | 'desc';
+  /** Show only these records (e.g. one opened from a related list). */
+  ids?: string[];
+  /** Filters from a question (checked again by the server). */
+  filters?: DataFilter[];
+}
+
+export interface DataFilter {
+  field: string;
+  op: string;
+  value?: unknown;
+  /** Readable text, e.g. "Amount > 50,000". */
+  label?: string | null;
+}
+
+export interface DataSearchHit {
+  id: string;
+  name: string;
+  detail: string | null;
+}
+
+export interface DataSearchGroup {
+  object: string;
+  label: string;
+  labelPlural: string;
+  records: DataSearchHit[];
+}
+
+/** A plain-English question turned into filters on one object. */
+export interface DataAnswer {
+  question: string;
+  object: string;
+  label: string;
+  labelPlural: string;
+  filters: DataFilter[];
+  sort: string | null;
+  dir: 'asc' | 'desc' | null;
+  countOnly: boolean;
+  /** Words that weren't understood (and so weren't applied). */
+  ignored: string[];
+  total: number | null;
+}
+
+export type ReportType = 'executive' | 'category' | 'findings' | 'severity' | 'history' | 'proposal';
+
+// ---------------- Consultant features ----------------
+
+export type ScheduleFrequency = 'daily' | 'weekly' | 'monthly';
+
+export interface ScanSchedule {
+  orgId: string;
+  organizationName: string | null;
+  frequency: ScheduleFrequency;
+  enabled: boolean;
+  areaIds: string[] | null;
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+  lastAssessmentId: string | null;
+  alertEmail: string | null;
+  scoreDrop: number;
+  alertNewCritical: boolean;
+}
+
+export interface ScanScheduleUpdate {
+  frequency: ScheduleFrequency;
+  enabled: boolean;
+  areaIds?: string[] | null;
+  alertEmail?: string | null;
+  scoreDrop: number;
+  alertNewCritical: boolean;
+}
+
+/** One client org in the consultant's portfolio. */
+export interface PortfolioOrg {
+  orgId: string;
+  organizationName: string;
+  edition: string | null;
+  environment: string | null;
+  connectionStatus: string;
+  active: boolean;
+  instanceUrl: string | null;
+  latestAssessmentId: string | null;
+  score: number | null;
+  previousScore: number | null;
+  lastCheckedAt: string | null;
+  trend: number[];
+  openProblems: number;
+  criticalProblems: number;
+  /** Biggest single problem's value at risk (problems can overlap, so not a sum). */
+  valueAtRisk: number | null;
+  running: boolean;
+  schedule: ScanSchedule | null;
+}
+
+export interface ProposalLine {
+  findingId: string;
+  name: string;
+  categoryId: CategoryId;
+  areaId: string;
+  severity: Severity;
+  phase: 'P1' | 'P2' | 'P3';
+  affectedRecords: number;
+  valueAtRisk: number | null;
+  hours: number;
+  action: string;
+}
+
+export interface ProposalPhase {
+  id: 'P1' | 'P2' | 'P3';
+  name: string;
+  description: string;
+  hours: number;
+  cost: number;
+  valueAtRisk: number | null;
+  problems: number;
+}
+
+/** A statement of work drafted from a health check (meant to be edited). */
+export interface Proposal {
+  assessmentId: string;
+  organizationName: string;
+  overallScore: number | null;
+  rate: number;
+  currency: string;
+  hours: number;
+  cost: number;
+  weeks: number;
+  valueAtRisk: number | null;
+  summary: string;
+  phases: ProposalPhase[];
+  lines: ProposalLine[];
+}
+
+export interface BenchmarkLine {
+  key: string;
+  label: string;
+  score: number | null;
+  peers: number;
+  median: number | null;
+  /** Share of peer orgs scoring lower (0–100); null until there are enough peers. */
+  percentile: number | null;
+}
+
+export interface Benchmarks {
+  assessmentId: string;
+  peers: number;
+  minPeers: number;
+  ready: boolean;
+  lines: BenchmarkLine[];
+}
+
+export interface FixPlan {
+  summary: string;
+  steps: { title: string; detail: string }[];
+  risks: string;
+  effortHours: number | null;
+}
+
+export interface ReportExportRequest {
+  type: ReportType;
+  format: 'pdf' | 'csv';
+  assessmentId: string | null;
+  categoryId: CategoryId | null;
+  from: string | null;
+  to: string | null;
+}
