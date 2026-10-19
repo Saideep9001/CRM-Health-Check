@@ -20,7 +20,8 @@ from ..engine.scheduler import FREQUENCIES, advance, all_areas
 from ..models import AssessmentRow, FindingRow, NotificationRow, ScanScheduleRow
 from ..salesforce import service
 from ..schemas import (
-    AppNotification, BenchmarkLine, Benchmarks, FixPlan, MarkReadRequest, PortfolioOrg, Proposal, ProposalLine, ProposalPhase,
+    AppNotification, BenchmarkLine, Benchmarks, FixPlan, MarkReadRequest, PortfolioCategoryScore, PortfolioOrg, PortfolioProblem, Proposal,
+    ProposalLine, ProposalPhase,
     ScanSchedule, ScanScheduleUpdate,
 )
 
@@ -55,12 +56,18 @@ def portfolio(db: Session = Depends(get_db)):
         conn = conns.get(org_id)
         recent = _latest(db, org_id, 6)
         latest = recent[0] if recent else None
-        critical, value, open_n = 0, 0.0, 0
+        critical, high, value, open_n, cats, top = 0, 0, 0.0, 0, [], []
         if latest:
-            _, found = combined_view(db, latest)
+            summary, found = combined_view(db, latest)
             live = [f for f in found if f.status in OPEN]
             open_n = len(live)
             critical = sum(1 for f in live if f.severity == "critical")
+            high = sum(1 for f in live if f.severity == "high")
+            cats = [PortfolioCategoryScore(category_id=c["categoryId"], score=c.get("score")) for c in summary.get("categories", [])]
+            rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+            top = [PortfolioProblem(finding_id=f.id, assessment_id=f.assessment_id, name=f.name, severity=f.severity,
+                                    affected_records=f.affected_records, value_at_risk=f.value_at_risk)
+                   for f in sorted(live, key=lambda f: (rank.get(f.severity, 4), -(f.value_at_risk or 0), -f.affected_records))[:3]]
             # The same deals can appear in several problems, so show the biggest single risk rather than a sum.
             value = max((f.value_at_risk or 0 for f in live), default=0)
         running = db.scalars(select(AssessmentRow).where(AssessmentRow.org_id == org_id, AssessmentRow.status.in_(("queued", "running"))).limit(1)).first()
@@ -83,6 +90,9 @@ def portfolio(db: Session = Depends(get_db)):
             value_at_risk=value or None,
             running=running is not None,
             schedule=_schedule(s, conn) if s else None,
+            high_problems=high,
+            category_scores=cats,
+            top_problems=top,
         ))
     return out
 

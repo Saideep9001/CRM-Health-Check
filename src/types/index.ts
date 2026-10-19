@@ -579,6 +579,11 @@ export interface PortfolioOrg {
   valueAtRisk: number | null;
   running: boolean;
   schedule: ScanSchedule | null;
+  highProblems: number;
+  /** Latest score per topic (from the combined view of the latest check). */
+  categoryScores: { categoryId: CategoryId; score: number | null }[];
+  /** The three most urgent open problems. */
+  topProblems: { findingId: string; assessmentId: string; name: string; severity: Severity; affectedRecords: number; valueAtRisk: number | null }[];
 }
 
 export interface ProposalLine {

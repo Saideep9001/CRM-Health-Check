@@ -476,6 +476,23 @@ class PortfolioOrg(ApiModel):
     value_at_risk: float | None = None
     running: bool = False
     schedule: ScanSchedule | None = None
+    high_problems: int = 0
+    category_scores: list["PortfolioCategoryScore"] = []
+    top_problems: list["PortfolioProblem"] = []
+
+
+class PortfolioCategoryScore(ApiModel):
+    category_id: str
+    score: int | None = None
+
+
+class PortfolioProblem(ApiModel):
+    finding_id: str
+    assessment_id: str
+    name: str
+    severity: str
+    affected_records: int
+    value_at_risk: float | None = None
 
 
 class ProposalLine(ApiModel):
@@ -543,3 +560,5 @@ class FixPlan(ApiModel):
     steps: list[FixPlanStep]
     risks: str
     effort_hours: float | None = None
+
+PortfolioOrg.model_rebuild()

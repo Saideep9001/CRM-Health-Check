@@ -60,6 +60,7 @@ def test_portfolio_switching_and_history_per_org(client, sf):
     orgs = {o["orgId"]: o for o in client.get(f"{API}/portfolio").json()}
     assert set(orgs) == {ORG_A, "00Dyy0000002", "00Dzz0000003"}
     assert orgs[ORG_A]["active"] and orgs[ORG_A]["score"] == 70 and orgs["00Dzz0000003"]["connectionStatus"] == "disconnected"
+    assert orgs[ORG_A]["categoryScores"] == [{"categoryId": "data-quality", "score": 70}] and orgs[ORG_A]["topProblems"] == []
 
     # History and the dashboard follow the active org.
     assert [a["organizationName"] for a in client.get(f"{API}/assessments").json()["items"]] == ["Acme Inc"]
