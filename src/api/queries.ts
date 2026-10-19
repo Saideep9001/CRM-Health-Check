@@ -16,9 +16,11 @@ export const queryClient: QueryClient = new QueryClient({
     queries: {
       staleTime: 30_000,
       refetchOnWindowFocus: false,
-      // Retry transient network failures and 5xx a couple of times; never retry 4xx client errors.
+      // Never retry 4xx client errors. If the server can't be reached (a restart, a dev server being
+      // replaced), keep trying for ~30 s before showing "unavailable"; other failures retry twice.
       retry: (count, err) => {
         if (isApiError(err) && err.kind === 'http' && err.status !== null && err.status < 500) return false;
+        if (isApiError(err) && err.isUnavailable) return count < 6;
         return count < 2;
       },
       retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
