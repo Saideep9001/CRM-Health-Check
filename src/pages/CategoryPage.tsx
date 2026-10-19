@@ -95,11 +95,11 @@ export default function CategoryPage() {
 
       {!soon && coverage === 'not-assessed' && state !== 'loading' && <MeasurePreview areas={areas} color={color} />}
 
-      <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <h2 className="text-lg font-semibold tracking-tight">
+      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <h2 className="shrink-0 whitespace-nowrap text-lg font-semibold tracking-tight">
           Areas in this topic <span className="text-ink-subtle">({filtered.length} of {areas.length})</span>
         </h2>
-        <div className="flex flex-col gap-2 sm:flex-row">
+        <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap lg:justify-end">
           <SearchInput value={q} onChange={setQ} placeholder="Search areas…" className="sm:w-64" />
           <Select<AssessedFilter>
             label="Filter by status"

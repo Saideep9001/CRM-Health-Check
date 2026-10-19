@@ -9,6 +9,16 @@ echo.
 
 cd /d "%~dp0backend"
 
+:: Two backends on the same port answer requests at random (old and new code mixed) - never start a second one.
+netstat -ano | findstr "LISTENING" | findstr ":8000 " >nul
+if %ERRORLEVEL% equ 0 (
+    echo  [INFO] The backend is already running on port 8000 - not starting a second copy.
+    echo  [INFO] To restart it, close its window first ^(or press Ctrl+C in it^).
+    echo.
+    pause
+    exit /b 0
+)
+
 where python >nul 2>&1
 if %ERRORLEVEL% neq 0 (
     echo  [ERROR] Python not found. Install Python 3.12 from https://www.python.org then try again.

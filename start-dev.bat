@@ -11,6 +11,15 @@ echo.
 :: Move into the project folder (works even if you run the bat from elsewhere)
 cd /d "%~dp0"
 
+:: Already running? Just open it instead of starting a second copy on another port.
+netstat -ano | findstr "LISTENING" | findstr ":5173 " >nul
+if %ERRORLEVEL% equ 0 (
+    echo  [INFO] The website is already running - opening http://localhost:5173
+    start http://localhost:5173
+    timeout /t 3 /nobreak >nul
+    exit /b 0
+)
+
 :: Check Node is installed
 where node >nul 2>&1
 if %ERRORLEVEL% neq 0 (

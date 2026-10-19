@@ -205,12 +205,12 @@ export function RunCheckPanel({
   const failed = watched.data?.id === startedId && watched.data?.status === 'failed' ? watched.data : null;
   const controls = (
     <div className="flex flex-wrap items-center gap-2">
-      <Select<Lookback> label="Which records to check" value={lookback} onChange={setLookback} options={LOOKBACK_OPTIONS} className="w-56" />
+      <Select<Lookback> label="Which records to check" value={lookback} onChange={setLookback} options={LOOKBACK_OPTIONS} className="w-full sm:w-56" />
       {usesStale && (
-        <Select<DayOption> label="When is a lead stale?" value={staleDays} onChange={setStaleDays} options={dayOptions('Stale lead after')} className="w-48" />
+        <Select<DayOption> label="When is a lead stale?" value={staleDays} onChange={setStaleDays} options={dayOptions('Stale lead after')} className="w-full sm:w-48" />
       )}
       {usesStuck && (
-        <Select<DayOption> label="When is a deal stuck?" value={stuckDays} onChange={setStuckDays} options={dayOptions('Stuck deal after')} className="w-48" />
+        <Select<DayOption> label="When is a deal stuck?" value={stuckDays} onChange={setStuckDays} options={dayOptions('Stuck deal after')} className="w-full sm:w-48" />
       )}
       <Button
         size="sm"
@@ -273,8 +273,8 @@ export function RunCheckPanel({
         </Notice>
       )}
       <div className={cx('mb-6 rounded-xl border px-4 py-3 text-sm', checked ? 'border-line bg-muted' : 'border-brand/25 bg-brand-soft')}>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <div className="flex flex-1 items-start gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex min-w-[14rem] flex-1 items-start gap-3">
             <span className="mt-0.5 shrink-0">
               {checked ? <CheckCircle2 className="h-4 w-4 text-good" /> : <Info className="h-4 w-4 text-brand" />}
             </span>
@@ -283,7 +283,7 @@ export function RunCheckPanel({
               {checked ? (lastChecked ? `Last checked ${fmtDate(lastChecked)}.` : 'Run it again to see the latest.') : 'Takes about a minute. We only read your data.'}
             </p>
           </div>
-          <div className="shrink-0">{controls}</div>
+          <div className="min-w-0 max-w-full">{controls}</div>
         </div>
         {objectRow}
       </div>

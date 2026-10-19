@@ -64,7 +64,7 @@ export function DiagnosticAreaCard({
           <span className="text-base font-bold leading-none">{area.number}</span>
         </span>
         <div className="min-w-0 flex-1">
-          <h3 className="text-[15px] font-semibold leading-snug">
+          <h3 className="min-h-[4.125em] text-[15px] font-semibold leading-snug">
             {area.name}{' '}
             <InfoTip label={`About area ${area.number}`}>{area.description}</InfoTip>
           </h3>
@@ -78,8 +78,6 @@ export function DiagnosticAreaCard({
           </div>
         </div>
       </div>
-
-      <div className="flex-1" />
 
       {assessed && result.score !== null ? (
         <div className="mt-4 flex items-center gap-4">
@@ -106,6 +104,8 @@ export function DiagnosticAreaCard({
       )}
 
       {assessed && assessmentId && <AreaExtras areaId={area.id} findings={findings} objects={objects} assessmentId={assessmentId} />}
+
+      <div className="flex-1" />
 
       <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-muted">
         <span className="inline-flex items-center gap-1">
