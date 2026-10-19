@@ -39,6 +39,7 @@ class FakeSalesforce:
         self.refresh_ok = True
         self.revoked: list[str] = []
         self.soql: list[str] = []
+        self.rotate_refresh = False
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         url = urlparse(str(request.url))
@@ -58,7 +59,10 @@ class FakeSalesforce:
                 if not self.refresh_ok:
                     return httpx.Response(400, json={"error": "invalid_grant", "error_description": "expired access/refresh token"})
                 self.valid_access = {"access-2"}
-                return httpx.Response(200, json={"access_token": "access-2", "instance_url": INSTANCE})
+                body = {"access_token": "access-2", "instance_url": INSTANCE}
+                if self.rotate_refresh:  # Connected App with refresh token rotation
+                    body["refresh_token"] = "refresh-2"
+                return httpx.Response(200, json=body)
         if url.path == "/services/oauth2/revoke":
             self.revoked.append(parse_qs(request.content.decode())["token"][0])
             return httpx.Response(200)
@@ -143,8 +147,14 @@ def client(sf: FakeSalesforce):
         conn.execute(text("DROP TABLE IF EXISTS alembic_version"))
     app.state.http_transport = httpx.MockTransport(sf.handler)
     with TestClient(app) as c:
+        # Sign-in is on: create the first admin (first-run setup) and stay signed in for the test.
+        r = c.post("/api/v1/auth/setup", json=ADMIN)
+        assert r.status_code == 201, r.text
         yield c
     app.dependency_overrides.clear()
+
+
+ADMIN = {"name": "Test Admin", "email": "admin@aquarient.test", "password": "correct horse battery"}
 
 
 def connect(client: TestClient, environment: str = "production") -> dict:

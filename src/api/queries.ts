@@ -1,7 +1,7 @@
 import { QueryCache, QueryClient, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { AppSettings, Assessment, CreateAssessmentRequest, DataRecordQuery, Finding, Paginated, SalesforceAppConfig, SalesforceAppUpdate, ScanScheduleUpdate, UpdateFindingRequest, UserProfile } from '@/types';
+import type { AppSettings, Assessment, CreateAssessmentRequest, DataRecordQuery, Finding, Paginated, SalesforceAppConfig, SalesforceAppUpdate, ScanScheduleUpdate, TeamMember, TeamMemberCreate, UpdateFindingRequest, UserProfile, UserRole } from '@/types';
 import { isApiError } from './client';
-import { assessmentApi, authApi, connectionApi, consultantApi, dataApi, findingApi, reportApi, systemApi, userApi } from './endpoints';
+import { assessmentApi, authApi, connectionApi, consultantApi, dataApi, findingApi, reportApi, systemApi, teamApi, userApi } from './endpoints';
 
 export const queryClient: QueryClient = new QueryClient({
   queryCache: new QueryCache({
@@ -293,6 +293,47 @@ export function useLogout() {
 }
 
 export const useSsoStart = () => useMutation({ mutationFn: authApi.ssoStart });
+
+/** Sign-in mode comes from the server, so the website and API always agree. */
+export const useAuthStatus = () =>
+  useQuery({ queryKey: ['auth', 'status'], queryFn: ({ signal }) => authApi.status(signal), staleTime: 5 * 60_000, retry: 1 });
+
+export function useSetup() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: authApi.setup,
+    onSuccess: (me) => {
+      qc.setQueryData(qk.me, me);
+      qc.invalidateQueries({ queryKey: ['auth', 'status'] });
+    },
+  });
+}
+
+export const useChangePassword = () => useMutation({ mutationFn: authApi.changePassword });
+
+/** What the signed-in person may do (the server enforces the same rules). */
+export function useRole() {
+  const me = useMe();
+  const role = (me.data?.role ?? 'viewer') as UserRole;
+  return { role, isAdmin: role === 'admin', canEdit: role === 'admin' || role === 'consultant', loading: me.isLoading };
+}
+
+export const useTeam = (enabled = true) => useQuery({ queryKey: ['team'], queryFn: ({ signal }) => teamApi.list(signal), enabled });
+
+export function useCreateMember() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: (body: TeamMemberCreate) => teamApi.create(body), onSuccess: () => qc.invalidateQueries({ queryKey: ['team'] }) });
+}
+
+export function useUpdateMember() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Partial<Pick<TeamMember, 'name' | 'role' | 'allOrgs' | 'orgIds' | 'isActive'>> }) => teamApi.update(id, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['team'] }),
+  });
+}
+
+export const useResetMemberPassword = () => useMutation({ mutationFn: ({ id, password }: { id: string; password: string }) => teamApi.resetPassword(id, password) });
 export const useForgotPassword = () => useMutation({ mutationFn: authApi.forgotPassword });
 
 export function useUpdateMe() {

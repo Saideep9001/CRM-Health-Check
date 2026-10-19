@@ -94,8 +94,12 @@ def exchange_code(http: httpx.Client, *, login_host: str, client_id: str, client
     return TokenSet(body["access_token"], body.get("refresh_token"), body["instance_url"], body.get("id"))
 
 
-def refresh_access_token(http: httpx.Client, *, login_host: str, client_id: str, client_secret: str, refresh_token: str) -> tuple[str, str | None]:
-    """Returns (access_token, instance_url)."""
+def refresh_access_token(http: httpx.Client, *, login_host: str, client_id: str, client_secret: str, refresh_token: str) -> tuple[str, str | None, str | None]:
+    """Returns (access_token, instance_url, new_refresh_token).
+
+    With "refresh token rotation" on the Connected App, Salesforce returns a new refresh token and retires the old
+    one, so it must be saved or the next refresh fails with "expired access/refresh token".
+    """
     resp = http.post(
         f"https://{login_host}/services/oauth2/token",
         data={"grant_type": "refresh_token", "refresh_token": refresh_token, "client_id": client_id, "client_secret": client_secret},
@@ -103,7 +107,7 @@ def refresh_access_token(http: httpx.Client, *, login_host: str, client_id: str,
     if resp.status_code != 200:
         raise SalesforceAuthExpired(f"Your Salesforce connection has expired ({_error_text(resp)}). Please reconnect.", resp.status_code)
     body = resp.json()
-    return body["access_token"], body.get("instance_url")
+    return body["access_token"], body.get("instance_url"), body.get("refresh_token")
 
 
 def revoke(http: httpx.Client, *, login_host: str, token: str) -> None:

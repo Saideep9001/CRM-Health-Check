@@ -11,13 +11,14 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from ..auth import Principal, ensure_org, require_editor, require_user
 from ..config import Settings
 from ..db import get_db
 from ..deps import http_dep, settings_dep
 from ..engine.combine import combined_view
 from ..engine import jobs
 from ..engine.runner import EXECUTABLE_AREA_IDS
-from ..models import AssessmentRow, FindingRow, UserPrefsRow
+from ..models import AssessmentRow, FindingRow
 from ..salesforce import explorer, service
 from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
 from ..schemas import (
@@ -110,7 +111,17 @@ def _get(db: Session, assessment_id: str) -> AssessmentRow:
     row = db.get(AssessmentRow, assessment_id)
     if row is None:
         raise HTTPException(404, "Health check not found.")
+    ensure_org(row.org_id, "Health check not found.")
     return row
+
+
+def _finding(db: Session, finding_id: str) -> tuple[FindingRow, AssessmentRow]:
+    row = db.get(FindingRow, finding_id)
+    check = db.get(AssessmentRow, row.assessment_id) if row else None
+    if row is None or check is None:
+        raise HTTPException(404, "Problem not found.")
+    ensure_org(check.org_id, "Problem not found.")
+    return row, check
 
 
 def _page(items: list, total: int, page: int, page_size: int) -> Paginated:
@@ -130,6 +141,9 @@ def list_assessments(
     active = None if all_orgs else service.get_row(db)
     if active is not None and active.org_id:
         stmt = stmt.where(AssessmentRow.org_id == active.org_id)
+    visible = require_user().allowed()
+    if visible is not None:
+        stmt = stmt.where(AssessmentRow.org_id.in_(visible or {""}))
     if status:
         stmt = stmt.where(AssessmentRow.status == status)
     col = SORTS.get(sort.lstrip("-"), AssessmentRow.created_at)
@@ -144,6 +158,7 @@ def create_assessment(
     body: CreateAssessmentRequest,
     background: BackgroundTasks,
     request: Request,
+    user: Principal = Depends(require_editor),
     db: Session = Depends(get_db),
     settings: Settings = Depends(settings_dep),
 ):
@@ -160,7 +175,6 @@ def create_assessment(
     if db.scalar(select(func.count()).select_from(AssessmentRow).where(AssessmentRow.status.in_(ACTIVE), AssessmentRow.org_id == (conn.org_id or ""))):
         raise HTTPException(409, "A health check is already running for this Salesforce. Wait for it to finish or cancel it first.")
 
-    prefs = db.get(UserPrefsRow, 1)
     row = AssessmentRow(
         id=str(uuid.uuid4()),
         name=body.name.strip(),
@@ -170,7 +184,7 @@ def create_assessment(
         status="queued",
         scope=body.scope.model_dump(by_alias=True),
         notes=(body.notes or "").strip() or None,
-        created_by=(prefs.profile or {}).get("name") if prefs else settings.local_user_name or None,
+        created_by=user.name,
         progress=0,
         current_step="Waiting to start",
     )
@@ -188,7 +202,7 @@ def get_assessment(assessment_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/assessments/{assessment_id}/cancel", response_model=Assessment)
-def cancel_assessment(assessment_id: str, db: Session = Depends(get_db)):
+def cancel_assessment(assessment_id: str, _: Principal = Depends(require_editor), db: Session = Depends(get_db)):
     row = _get(db, assessment_id)
     if row.status not in ACTIVE:
         raise HTTPException(409, "This health check has already finished.")
@@ -227,18 +241,16 @@ def list_findings(
     return _page([to_finding(r) for r in found[start : start + page_size]], len(found), page, page_size)
 
 
-def _finding_with_records(db: Session, finding_id: str) -> FindingRow:
-    row = db.get(FindingRow, finding_id)
-    if row is None:
-        raise HTTPException(404, "Problem not found.")
+def _finding_with_records(db: Session, finding_id: str) -> tuple[FindingRow, str]:
+    row, check = _finding(db, finding_id)
     if not row.records_object:
         raise HTTPException(404, "This problem isn’t about specific records.")
-    return row
+    return row, check.org_id
 
 
-def _salesforce(db: Session, http: httpx.Client, settings: Settings, fn):
+def _salesforce(db: Session, http: httpx.Client, settings: Settings, fn, org_id: str | None = None):
     try:
-        sf = service.client_for(db, http, settings)
+        sf = service.client_for(db, http, settings, org_id=org_id or None)  # the problem's own org, not the active one
     except service.NotConnected:
         raise HTTPException(409, "Salesforce isn’t connected. Connect it to see the records.")
     try:
@@ -265,8 +277,8 @@ def finding_records(
     settings: Settings = Depends(settings_dep),
 ):
     """The records a problem is about, live from Salesforce (200 per page)."""
-    row = _finding_with_records(db, finding_id)
-    return _salesforce(db, http, settings, lambda sf: explorer.records_matching(sf, row.records_object, row.records_where, cursor))
+    row, org_id = _finding_with_records(db, finding_id)
+    return _salesforce(db, http, settings, lambda sf: explorer.records_matching(sf, row.records_object, row.records_where, cursor), org_id)
 
 
 CSV_LIMIT = 10_000
@@ -280,7 +292,7 @@ def finding_records_csv(
     settings: Settings = Depends(settings_dep),
 ):
     """Download the affected records (up to 10,000) as a spreadsheet."""
-    row = _finding_with_records(db, finding_id)
+    row, org_id = _finding_with_records(db, finding_id)
 
     def collect(sf):
         page = explorer.records_matching(sf, row.records_object, row.records_where, page_size=2000)
@@ -290,7 +302,7 @@ def finding_records_csv(
             rows += page["records"]
         return page["columns"], rows[:CSV_LIMIT], page["record_url_prefix"]
 
-    columns, rows, prefix = _salesforce(db, http, settings, collect)
+    columns, rows, prefix = _salesforce(db, http, settings, collect, org_id)
     out = io.StringIO()
     out.write("\ufeff")  # so Excel opens accents correctly
     w = csv.writer(out)
@@ -305,10 +317,8 @@ def finding_records_csv(
 
 
 @router.patch("/findings/{finding_id}", response_model=Finding)
-def update_finding(finding_id: str, body: UpdateFindingRequest, db: Session = Depends(get_db)):
-    row = db.get(FindingRow, finding_id)
-    if row is None:
-        raise HTTPException(404, "Problem not found.")
+def update_finding(finding_id: str, body: UpdateFindingRequest, _: Principal = Depends(require_editor), db: Session = Depends(get_db)):
+    row, _check = _finding(db, finding_id)
     data = body.model_dump(exclude_unset=True)
     if "status" in data and data["status"] is not None:
         row.status = data["status"]

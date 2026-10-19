@@ -1,12 +1,11 @@
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowLeft, ArrowRight, Building2, Check, Eye, EyeOff, KeyRound, Lock, Mail, MailCheck, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, Eye, EyeOff, Lock, Mail, ShieldCheck, UserCog } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { errorMessage, isApiError } from '@/api/client';
 import { userApi } from '@/api/endpoints';
-import { useForgotPassword, useLogin, useMe, useSsoStart } from '@/api/queries';
+import { useAuthStatus, useLogin, useMe, useSetup } from '@/api/queries';
 import { ThemeToggle } from '@/components/layout/Header';
-import { AUTH_REQUIRED } from '@/config/app';
 import { BrandMark, LogoGlyph } from '@/components/ui/Brand';
 import { Button } from '@/components/ui/Button';
 import { CategoryIcon } from '@/components/ui/CategoryIcon';
@@ -15,7 +14,6 @@ import { CATEGORIES, CATEGORY_COLORS, DIAGNOSTIC_AREAS } from '@/config/categori
 import { cx } from '@/lib/format';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-export const SSO_CALLBACK_PATH = '/login';
 
 const LANDING: Record<string, string> = { dashboard: '/dashboard', results: '/results', reports: '/reports' };
 
@@ -105,66 +103,59 @@ function BrandPanel() {
   );
 }
 
-function ForgotPasswordModal({ open, onClose, initialEmail }: { open: boolean; onClose: () => void; initialEmail: string }) {
-  const [email, setEmail] = useState(initialEmail);
-  const [touched, setTouched] = useState(false);
-  const forgot = useForgotPassword();
-  useEffect(() => {
-    if (open) {
-      setEmail(initialEmail);
-      setTouched(false);
-      forgot.reset();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-  const invalid = !EMAIL_RE.test(email.trim());
+function ForgotPasswordModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  return (
+    <Modal open={open} onClose={onClose} title="Forgot your password?" footer={<Button variant="primary" onClick={onClose}>Back to sign in</Button>}>
+      <div className="flex flex-col items-center py-2 text-center">
+        <span className="flex h-12 w-12 items-center justify-center rounded-full bg-brand-soft text-brand">
+          <UserCog className="h-6 w-6" />
+        </span>
+        <p className="mt-3 max-w-sm text-sm text-ink-muted">
+          Ask an admin on your team to reset it in <span className="font-medium text-ink">Settings → Team &amp; access</span>. You’ll get a temporary password and can change it after signing in.
+        </p>
+      </div>
+    </Modal>
+  );
+}
 
+/** First run: create the first admin account (only possible while there are no users). */
+function SetupForm({ onDone }: { onDone: () => void }) {
+  const setup = useSetup();
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [submitted, setSubmitted] = useState(false);
+  const errors = {
+    name: !name.trim() ? 'Your name is required' : null,
+    email: !EMAIL_RE.test(email.trim()) ? 'Enter a valid email address' : null,
+    password: password.length < 10 ? 'Use at least 10 characters' : null,
+    confirm: confirm !== password ? 'Passwords don’t match' : null,
+  };
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    setTouched(true);
-    if (!invalid) forgot.mutate({ email: email.trim() });
+    setSubmitted(true);
+    if (Object.values(errors).some(Boolean)) return;
+    setup.mutate({ name: name.trim(), email: email.trim(), password }, { onSuccess: onDone });
   };
-
+  const field = (label: string, value: string, set: (v: string) => void, err: string | null, props: Record<string, string> = {}) => (
+    <label className="block">
+      <span className="mb-1.5 block text-sm font-medium">{label}</span>
+      <input className={cx('input h-11', submitted && err && 'border-bad')} value={value} onChange={(e) => set(e.target.value)} {...props} />
+      {submitted && err && <span className="mt-1 block text-xs text-bad">{err}</span>}
+    </label>
+  );
   return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title="Reset your password"
-      description={forgot.isSuccess ? undefined : 'Enter your work email and we’ll send you a reset link.'}
-      footer={
-        forgot.isSuccess ? (
-          <Button variant="primary" onClick={onClose}>
-            Back to sign in
-          </Button>
-        ) : (
-          <>
-            <Button onClick={onClose}>Cancel</Button>
-            <Button variant="primary" type="submit" form="forgot-form" disabled={forgot.isPending}>
-              {forgot.isPending ? 'Sending…' : 'Send reset link'}
-            </Button>
-          </>
-        )
-      }
-    >
-      {forgot.isSuccess ? (
-        <div className="flex flex-col items-center py-4 text-center">
-          <span className="flex h-12 w-12 items-center justify-center rounded-full bg-good-soft text-good">
-            <MailCheck className="h-6 w-6" />
-          </span>
-          <p className="mt-3 text-sm font-semibold">Check your inbox</p>
-          <p className="mt-1 max-w-sm text-sm text-ink-muted">If an account exists for {email.trim()}, you’ll receive an email with instructions to reset your password.</p>
-        </div>
-      ) : (
-        <form id="forgot-form" onSubmit={submit} noValidate className="space-y-3">
-          <label className="block">
-            <span className="mb-1.5 block text-sm font-medium">Work email</span>
-            <input type="email" autoComplete="email" className={cx('input h-10', touched && invalid && 'border-bad')} value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />
-            {touched && invalid && <span className="mt-1 block text-xs text-bad">Enter a valid email address</span>}
-          </label>
-          {forgot.error && <p className="rounded-lg bg-bad-soft px-3 py-2 text-sm text-bad">{errorMessage(forgot.error)}</p>}
-        </form>
-      )}
-    </Modal>
+    <form onSubmit={submit} noValidate className="mt-6 space-y-4">
+      {field('Your name', name, setName, errors.name, { autoComplete: 'name' })}
+      {field('Work email', email, setEmail, errors.email, { type: 'email', autoComplete: 'username' })}
+      {field('Password', password, setPassword, errors.password, { type: 'password', autoComplete: 'new-password' })}
+      {field('Confirm password', confirm, setConfirm, errors.confirm, { type: 'password', autoComplete: 'new-password' })}
+      {setup.error && <p role="alert" className="rounded-lg border border-bad/25 bg-bad-soft px-3 py-2.5 text-sm text-bad">{errorMessage(setup.error)}</p>}
+      <Button type="submit" variant="primary" className="h-11 w-full text-[15px]" disabled={setup.isPending} iconRight={<ArrowRight className="h-4 w-4" />}>
+        {setup.isPending ? 'Creating your account…' : 'Create admin account'}
+      </Button>
+    </form>
   );
 }
 
@@ -173,10 +164,9 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const me = useMe();
   const login = useLogin();
-  const sso = useSsoStart();
+  const status = useAuthStatus();
+  const needsSetup = !!status.data?.needsSetup;
   const next = safeNext(params.get('next'));
-
-  const [mode, setMode] = useState<'password' | 'sso'>('password');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [remember, setRemember] = useState(true);
@@ -195,12 +185,12 @@ export default function LoginPage() {
   }, []);
 
   const emailError = !email.trim() ? 'Email is required' : !EMAIL_RE.test(email.trim()) ? 'Enter a valid email address' : null;
-  const passwordError = mode === 'password' && !password ? 'Password is required' : null;
-  const ssoError = params.get('error_description') ?? (params.get('error') ? 'Single sign-on failed. Please try again.' : null);
+  const passwordError = !password ? 'Password is required' : null;
 
   // Already signed in → go straight to the app.
   // (Skipped right after a password login, which navigates itself to the user's preferred landing page.)
-  if (AUTH_REQUIRED && me.data && !login.isPending && !login.isSuccess) return <Navigate to={next ?? '/dashboard'} replace />;
+  if (status.data && !status.data.authRequired) return <Navigate to={next ?? '/dashboard'} replace />;
+  if (me.data && !login.isPending && !login.isSuccess && !needsSetup) return <Navigate to={next ?? '/dashboard'} replace />;
 
   const goToApp = async () => {
     if (next) return navigate(next, { replace: true });
@@ -216,16 +206,11 @@ export default function LoginPage() {
     e.preventDefault();
     setSubmitted(true);
     if (emailError || passwordError) return;
-    if (mode === 'password') {
-      login.mutateAsync({ email: email.trim(), password, rememberMe: remember }).then(goToApp, () => setPassword(''));
-    } else {
-      const redirectUri = `${window.location.origin}${SSO_CALLBACK_PATH}${next ? `?next=${encodeURIComponent(next)}` : ''}`;
-      sso.mutateAsync({ email: email.trim(), redirectUri }).then(({ authorizationUrl }) => window.location.assign(authorizationUrl), () => undefined);
-    }
+    login.mutateAsync({ email: email.trim(), password, rememberMe: remember }).then(goToApp, () => setPassword(''));
   };
 
-  const error = mode === 'password' ? (login.error ? loginErrorText(login.error) : null) : sso.error ? errorMessage(sso.error) : null;
-  const pending = login.isPending || sso.isPending;
+  const error = login.error ? loginErrorText(login.error) : null;
+  const pending = login.isPending;
 
   return (
     <div className="grid min-h-screen bg-bg lg:grid-cols-[1fr,1.05fr]">
@@ -244,35 +229,12 @@ export default function LoginPage() {
             <Link to="/" className="mb-8 inline-block lg:hidden" aria-label="Aquarient — go to the home page">
               <BrandMark />
             </Link>
-            <h1 className="text-2xl font-semibold tracking-tight">Sign in to your workspace</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">{needsSetup ? 'Set up your workspace' : 'Sign in to your workspace'}</h1>
             <p className="mt-1.5 text-sm text-ink-muted">
-              {next ? 'Please sign in to continue.' : 'Welcome back. Use your work email.'}
+              {needsSetup ? 'Create the first admin account. You can add your team afterwards.' : next ? 'Please sign in to continue.' : 'Welcome back. Use your work email.'}
             </p>
-
-            {/* Mode switch */}
-            <div className="mt-6 grid grid-cols-2 rounded-lg border border-line bg-muted p-1" role="tablist" aria-label="Sign-in method">
-              {(
-                [
-                  ['password', 'Email & password', KeyRound],
-                  ['sso', 'Single sign-on', Building2],
-                ] as const
-              ).map(([id, label, Icon]) => (
-                <button
-                  key={id}
-                  role="tab"
-                  aria-selected={mode === id}
-                  onClick={() => {
-                    setMode(id);
-                    setSubmitted(false);
-                  }}
-                  className={cx('relative flex items-center justify-center gap-1.5 rounded-md py-2 text-sm font-medium transition', mode === id ? 'text-ink' : 'text-ink-muted hover:text-ink')}
-                >
-                  {mode === id && <motion.span layoutId="login-mode" className="absolute inset-0 rounded-md bg-surface shadow-card" transition={{ type: 'spring', stiffness: 500, damping: 36 }} />}
-                  <Icon className="relative h-4 w-4" />
-                  <span className="relative">{label}</span>
-                </button>
-              ))}
-            </div>
+            {needsSetup ? <SetupForm onDone={goToApp} /> : (
+            <>
 
             <form onSubmit={submit} noValidate className="mt-6 space-y-4">
               <label className="block">
@@ -301,7 +263,7 @@ export default function LoginPage() {
               </label>
 
               <AnimatePresence initial={false} mode="wait">
-                {mode === 'password' ? (
+                {(
                   <motion.div key="pw" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="space-y-4 overflow-hidden">
                     <label className="block">
                       <span className="mb-1.5 flex items-center justify-between text-sm font-medium">
@@ -339,15 +301,11 @@ export default function LoginPage() {
                       Keep me signed in on this device
                     </label>
                   </motion.div>
-                ) : (
-                  <motion.p key="sso" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden text-sm text-ink-muted">
-                    We’ll send you to your company’s sign-in page.
-                  </motion.p>
                 )}
               </AnimatePresence>
 
               <AnimatePresence>
-                {(error || ssoError) && (
+                {error && (
                   <motion.p
                     role="alert"
                     initial={{ opacity: 0, y: -4 }}
@@ -356,7 +314,7 @@ export default function LoginPage() {
                     transition={{ duration: 0.35 }}
                     className="rounded-lg border border-bad/25 bg-bad-soft px-3 py-2.5 text-sm text-bad"
                   >
-                    {error ?? ssoError}
+                    {error}
                   </motion.p>
                 )}
               </AnimatePresence>
@@ -365,15 +323,15 @@ export default function LoginPage() {
                 {pending ? (
                   <>
                     <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
-                    {mode === 'password' ? 'Signing in…' : 'Redirecting…'}
+                    Signing in…
                   </>
-                ) : mode === 'password' ? (
-                  'Sign in'
                 ) : (
-                  'Continue with SSO'
+                  'Sign in'
                 )}
               </Button>
             </form>
+            </>
+            )}
 
             <div className="mt-8 rounded-xl border border-line bg-surface p-4">
               <p className="flex items-start gap-2.5 text-xs leading-relaxed text-ink-muted">
@@ -382,14 +340,12 @@ export default function LoginPage() {
               </p>
             </div>
 
-            <p className="mt-6 text-center text-sm text-ink-muted">
-              No access? Ask your Aquarient consultant.
-            </p>
+            {!needsSetup && <p className="mt-6 text-center text-sm text-ink-muted">No account? Ask an admin on your team to add you.</p>}
           </motion.div>
         </main>
       </div>
 
-      <ForgotPasswordModal open={forgotOpen} onClose={() => setForgotOpen(false)} initialEmail={email} />
+      <ForgotPasswordModal open={forgotOpen} onClose={() => setForgotOpen(false)} />
     </div>
   );
 }

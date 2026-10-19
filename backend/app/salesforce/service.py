@@ -10,9 +10,9 @@ import httpx
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from .. import crypto
+from .. import auth, crypto
 from ..config import Settings
-from ..models import OAuthStateRow, SalesforceConnectionRow
+from ..models import OAuthStateRow, SalesforceConnectionRow, UserRow
 from ..schemas import OAuthCallbackRequest, OAuthStartRequest, OAuthStartResponse, SalesforceConnection
 from . import oauth
 from .app_config import get_credentials
@@ -43,9 +43,19 @@ def _now() -> datetime:
 
 
 def get_row(db: Session) -> SalesforceConnectionRow | None:
-    """The active org's connection (or the most recently connected one if none is marked active)."""
+    """The org the signed-in user is working on (their active org, else the newest one they can see).
+
+    Without a signed-in user (workers, or sign-in turned off) it's the workspace-wide active org.
+    """
     q = select(SalesforceConnectionRow).order_by(SalesforceConnectionRow.active.desc(), SalesforceConnectionRow.connected_at.desc())
-    return db.scalars(q.limit(1)).first()
+    user = auth.current()
+    if user is None or user.id == "local-user":
+        return db.scalars(q.limit(1)).first()
+    if user.active_org_id and user.sees(user.active_org_id):
+        row = row_for_org(db, user.active_org_id)
+        if row is not None:
+            return row
+    return next((r for r in db.scalars(q) if user.sees(r.org_id)), None)
 
 
 def all_rows(db: Session) -> list[SalesforceConnectionRow]:
@@ -59,13 +69,30 @@ def row_for_org(db: Session, org_id: str | None) -> SalesforceConnectionRow | No
 
 
 def activate(db: Session, org_id: str) -> SalesforceConnectionRow:
+    """Switch the signed-in user's active org (or the workspace-wide one when sign-in is off)."""
     row = row_for_org(db, org_id)
     if row is None:
         raise NotConnected()
-    for other in all_rows(db):
-        other.active = other.id == row.id
+    user = auth.current()
+    me = db.get(UserRow, user.id) if user and user.id != "local-user" else None
+    if me is not None:
+        me.active_org_id = org_id
+    else:
+        for other in all_rows(db):
+            other.active = other.id == row.id
     db.commit()
     return row
+
+
+def _give_access(db: Session, org_id: str | None) -> None:
+    """The person who connects an org can see it and starts working on it."""
+    user = auth.current()
+    me = db.get(UserRow, user.id) if user and user.id != "local-user" and org_id else None
+    if me is None:
+        return
+    me.active_org_id = org_id
+    if not (me.role == "admin" or me.all_orgs) and org_id not in (me.org_ids or []):
+        me.org_ids = sorted({*(me.org_ids or []), org_id})
 
 
 def to_schema(row: SalesforceConnectionRow | None, settings: Settings) -> SalesforceConnection:
@@ -169,6 +196,7 @@ def complete_oauth(db: Session, http: httpx.Client, req: OAuthCallbackRequest, s
                     db.delete(old)
             db.flush()
             row.workspace = f"org-{row.org_id}" if row.org_id else row.workspace
+            _give_access(db, row.org_id)
         sf = SalesforceClient(http, row, settings, creds, db.commit)
         org = sf.query("SELECT Name, OrganizationType FROM Organization LIMIT 1").get("records", [])
         if org:

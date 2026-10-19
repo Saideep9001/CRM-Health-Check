@@ -326,6 +326,43 @@ export interface LoginRequest {
   rememberMe: boolean;
 }
 
+export type UserRole = 'admin' | 'consultant' | 'viewer';
+
+/** Whether this server requires sign-in, and whether the first admin still has to be created. */
+export interface AuthStatus {
+  needsSetup: boolean;
+  authRequired: boolean;
+}
+
+export interface SetupRequest {
+  name: string;
+  email: string;
+  password: string;
+}
+
+/** A person on the team (admin view). */
+export interface TeamMember {
+  id: string;
+  name: string;
+  email: string;
+  title: string | null;
+  role: UserRole;
+  allOrgs: boolean;
+  orgIds: string[];
+  isActive: boolean;
+  createdAt: string | null;
+  lastLoginAt: string | null;
+}
+
+export interface TeamMemberCreate {
+  name: string;
+  email: string;
+  role: UserRole;
+  allOrgs: boolean;
+  orgIds: string[];
+  password: string;
+}
+
 export interface SsoStartRequest {
   email: string;
   redirectUri: string;

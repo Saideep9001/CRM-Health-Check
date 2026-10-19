@@ -3,6 +3,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 
+from ..auth import Principal, require_admin, require_editor
 from ..config import Settings
 from ..db import get_db
 from ..deps import http_dep, settings_dep
@@ -42,7 +43,7 @@ def get_app(db: Session = Depends(get_db), settings: Settings = Depends(settings
 
 
 @router.put("/app", response_model=SalesforceAppConfig)
-def put_app(body: SalesforceAppUpdate, db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep), settings: Settings = Depends(settings_dep)):
+def put_app(body: SalesforceAppUpdate, _: Principal = Depends(require_admin), db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep), settings: Settings = Depends(settings_dep)):
     current = app_config.get_credentials(db, settings)
     client_id, secret = body.client_id.strip(), body.client_secret.strip()
     # Tokens belong to the app that issued them: switching apps ends the current connection.
@@ -53,7 +54,7 @@ def put_app(body: SalesforceAppUpdate, db: Session = Depends(get_db), http: http
 
 
 @router.delete("/app", response_model=SalesforceAppConfig)
-def delete_app(db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep), settings: Settings = Depends(settings_dep)):
+def delete_app(_: Principal = Depends(require_admin), db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep), settings: Settings = Depends(settings_dep)):
     before = app_config.get_credentials(db, settings)
     app_config.clear_credentials(db)
     after = app_config.get_credentials(db, settings)
@@ -68,7 +69,7 @@ def get_connection(db: Session = Depends(get_db), settings: Settings = Depends(s
 
 
 @router.post("/oauth/start", response_model=OAuthStartResponse)
-def start(req: OAuthStartRequest, db: Session = Depends(get_db), settings: Settings = Depends(settings_dep)):
+def start(req: OAuthStartRequest, _: Principal = Depends(require_editor), db: Session = Depends(get_db), settings: Settings = Depends(settings_dep)):
     try:
         return service.start_oauth(db, req, settings)
     except service.NotConfigured:
@@ -78,7 +79,7 @@ def start(req: OAuthStartRequest, db: Session = Depends(get_db), settings: Setti
 
 
 @router.post("/oauth/callback", response_model=SalesforceConnection)
-def callback(req: OAuthCallbackRequest, db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep), settings: Settings = Depends(settings_dep)):
+def callback(req: OAuthCallbackRequest, _: Principal = Depends(require_editor), db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep), settings: Settings = Depends(settings_dep)):
     try:
         return service.complete_oauth(db, http, req, settings)
     except service.NotConfigured:
@@ -97,6 +98,6 @@ def check(db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep),
 
 
 @router.delete("/connection", status_code=204)
-def disconnect(db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep)):
+def disconnect(_: Principal = Depends(require_admin), db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep)):
     service.disconnect(db, http)
     return Response(status_code=204)

@@ -1,7 +1,7 @@
 import { CheckCircle2, ExternalLink, KeyRound, ServerCog, ShieldCheck, Unplug } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { useCheckConnection, useConnection, useDisconnect, useSalesforceApp, useStartOAuth } from '@/api/queries';
+import { useCheckConnection, useConnection, useDisconnect, useSalesforceApp, useStartOAuth, useRole } from '@/api/queries';
 import { SalesforceConnectionCard } from '@/components/connection/SalesforceConnectionCard';
 import { Button } from '@/components/ui/Button';
 import { Field } from '@/components/ui/Form';
@@ -126,6 +126,7 @@ export default function ConnectionPage() {
   const conn = useConnection();
   const check = useCheckConnection();
   const disconnect = useDisconnect();
+  const { canEdit, isAdmin } = useRole();
   const { notify } = useToast();
   const [connectOpen, setConnectOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -166,8 +167,8 @@ export default function ConnectionPage() {
         conn.data && (
           <SalesforceConnectionCard
             connection={conn.data}
-            onConnect={onConnect}
-            onDisconnect={() => setConfirmOpen(true)}
+            onConnect={canEdit ? onConnect : undefined}
+            onDisconnect={isAdmin ? () => setConfirmOpen(true) : undefined}
             checking={check.isPending}
             onCheck={() =>
               check.mutate(undefined, {

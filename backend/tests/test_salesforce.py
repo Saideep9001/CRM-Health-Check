@@ -138,3 +138,15 @@ def test_disconnect_revokes_and_forgets(client, sf):
     assert client.delete(f"{API}/salesforce/connection").status_code == 204
     assert sf.revoked == ["refresh-1"]
     assert client.get(f"{API}/salesforce/connection").json()["status"] == "disconnected"
+
+
+def test_rotated_refresh_token_is_saved(client, sf):
+    """With refresh token rotation, Salesforce retires the old refresh token, so the new one must be stored."""
+    connect(client)
+    sf.valid_access, sf.rotate_refresh = {"access-2"}, True
+    assert client.post(f"{API}/assistant/crm-query", json={"queryId": "accounts.count"}).status_code == 200
+    with SessionLocal() as db:
+        from app import crypto
+
+        row = db.scalar(select(SalesforceConnectionRow))
+        assert crypto.decrypt(row.refresh_token_enc) == "refresh-2" and crypto.decrypt(row.access_token_enc) == "access-2"

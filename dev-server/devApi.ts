@@ -133,17 +133,25 @@ const DISCONNECTED = {
 export function devApiPlugin(env: Env, root: string): Plugin {
   const email = (env.DEV_LOGIN_EMAIL ?? '').trim().toLowerCase();
   const password = env.DEV_LOGIN_PASSWORD ?? '';
-  const sfClientId = env.SF_CLIENT_ID ?? '';
-  const sfClientSecret = env.SF_CLIENT_SECRET ?? '';
+  let sfClientId = env.SF_CLIENT_ID ?? '';
+  let sfClientSecret = env.SF_CLIENT_SECRET ?? '';
   // Mirrors the frontend flag: without it, every request acts as the local user.
   const authRequired = env.VITE_AUTH_REQUIRED === 'true';
   const store = createStore(path.join(root, '.dev-data', 'local-api.json'), email || 'user@localhost');
+
+  const OAUTH_CALLBACK_PATH_DEV = '/connection/callback';
 
   const sessions = new Map<string, Session>();
   const pendingOAuth = new Map<string, PendingOAuth>();
   const attempts = new Map<string, number[]>();
   let sf: SfTokens | null = null;
   let connection: Record<string, unknown> = { ...DISCONNECTED };
+  // Keys saved via the UI during this dev session (in-memory only, not persisted).
+  let devAppKeys: { clientId: string; clientSecret: string; updatedAt: string | null } = {
+    clientId: '',
+    clientSecret: '',
+    updatedAt: null,
+  };
 
   const authed = (req: IncomingMessage) => {
     const sid = parseCookies(req)[SESSION_COOKIE];
@@ -245,6 +253,8 @@ export function devApiPlugin(env: Env, root: string): Plugin {
 
     // Help assistant
     if (is('GET', '/assistant/status')) return send(res, 200, { mode: 'guide', model: null });
+    // The website reads the sign-in mode from here (the real backend serves the same route).
+    if (is('GET', '/auth/setup-status')) return send(res, 200, { needsSetup: false, authRequired });
     if (is('POST', '/assistant/crm-query')) {
       const b = await readJson(req);
       const id = String(b.queryId ?? '');
@@ -376,7 +386,269 @@ export function devApiPlugin(env: Env, root: string): Plugin {
       return send(res, 204);
     }
 
-    // Assessments — no diagnostic engine in local development.
+    // Salesforce Connected App keys — stored in memory for the dev session.
+    if (is('GET', '/salesforce/app')) {
+      const callbackUrl = `${req.headers.origin ?? 'http://localhost:5173'}${OAUTH_CALLBACK_PATH_DEV}`;
+      if (sfClientId) {
+        // Keys already come from .env — report them as configured (env source).
+        return send(res, 200, {
+          configured: true,
+          clientIdPreview: sfClientId.slice(0, 8) + '…',
+          source: 'env',
+          callbackUrl,
+          updatedAt: null,
+        });
+      }
+      // No keys from env: return whatever was saved in memory this session.
+      return send(res, 200, {
+        configured: !!devAppKeys.clientId,
+        clientIdPreview: devAppKeys.clientId ? devAppKeys.clientId.slice(0, 8) + '…' : null,
+        source: devAppKeys.clientId ? 'ui' : null,
+        callbackUrl,
+        updatedAt: devAppKeys.updatedAt ?? null,
+      });
+    }
+    if (is('PUT', '/salesforce/app')) {
+      const b = await readJson(req);
+      const clientId = String(b.clientId ?? '').trim();
+      const clientSecret = String(b.clientSecret ?? '').trim();
+      if (!clientId || !clientSecret) return fail(res, 422, 'clientId and clientSecret are required.');
+      devAppKeys = { clientId, clientSecret, updatedAt: new Date().toISOString() };
+      // Make the keys available for OAuth immediately.
+      sfClientId = clientId;
+      sfClientSecret = clientSecret;
+      const callbackUrl = `${req.headers.origin ?? 'http://localhost:5173'}${OAUTH_CALLBACK_PATH_DEV}`;
+      return send(res, 200, {
+        configured: true,
+        clientIdPreview: clientId.slice(0, 8) + '…',
+        source: 'ui',
+        callbackUrl,
+        updatedAt: devAppKeys.updatedAt,
+      });
+    }
+    if (is('DELETE', '/salesforce/app')) {
+      devAppKeys = { clientId: '', clientSecret: '', updatedAt: null };
+      // Clear only the UI-entered keys; don't touch env keys (there aren't any if we got here).
+      sfClientId = '';
+      sfClientSecret = '';
+      // Also disconnect Salesforce since the app is gone.
+      sf = null;
+      connection = { ...DISCONNECTED };
+      const callbackUrl = `${req.headers.origin ?? 'http://localhost:5173'}${OAUTH_CALLBACK_PATH_DEV}`;
+      return send(res, 200, { configured: false, clientIdPreview: null, source: null, callbackUrl, updatedAt: null });
+    }
+
+    // ---- Data Explorer (read-only Salesforce data browsing) ----
+    // In the local dev server there is no live Salesforce to query, so we return
+    // either the real data (if connected) or an empty/error response that the
+    // page handles gracefully.
+
+    if (is('GET', '/data/objects')) {
+      if (!sf || connection.status !== 'connected') {
+        // Not connected — return an empty list; the page shows "Connect Salesforce"
+        return send(res, 200, []);
+      }
+      try {
+        const described = (await sfFetch(`/services/data/${API_VERSION}/sobjects`)) as { sobjects?: Record<string, unknown>[] };
+        const objects = (described.sobjects ?? [])
+          .filter((o) => o['queryable'] && o['retrieveable'])
+          .map((o) => ({
+            name: o['name'],
+            label: o['label'],
+            labelPlural: o['labelPlural'],
+            custom: !!o['custom'],
+            approxCount: null,
+            searchable: !!o['searchable'],
+            salesforceUrl: null,
+          }))
+          .sort((a, b) => String(a.label).localeCompare(String(b.label)));
+        return send(res, 200, objects);
+      } catch (e) {
+        return fail(res, 502, `Couldn't load objects from Salesforce: ${(e as Error).message}`);
+      }
+    }
+
+    if (method === 'GET' && /^\/data\/objects\/[^/]+$/.test(p)) {
+      if (!sf || connection.status !== 'connected') return fail(res, 409, 'Salesforce is not connected.');
+      const objectName = decodeURIComponent(p.split('/').pop() ?? '');
+      try {
+        const desc = (await sfFetch(`/services/data/${API_VERSION}/sobjects/${encodeURIComponent(objectName)}/describe`)) as Record<string, unknown>;
+        const fields = ((desc['fields'] as Record<string, unknown>[]) ?? []).map((f) => ({
+          name: f['name'],
+          label: f['label'],
+          type: f['type'],
+          required: !f['nillable'] && !f['defaultedOnCreate'],
+          custom: !!f['custom'],
+          sortable: !!f['sortable'],
+          column: !!f['type'] && f['type'] !== 'base64',
+          picklistValues: ((f['picklistValues'] as Record<string, unknown>[]) ?? []).map((p) => String(p['label'] ?? p['value'] ?? '')).filter(Boolean),
+          helpText: f['inlineHelpText'] ?? null,
+        }));
+        const nameField = String((desc['fields'] as Record<string, unknown>[])?.find((f) => f['nameField'])?.['name'] ?? 'Name');
+        const defaultColumns = fields.slice(0, 8).map((f: Record<string, unknown>) => String(f['name']));
+        return send(res, 200, {
+          name: desc['name'],
+          label: desc['label'],
+          labelPlural: desc['labelPlural'],
+          custom: !!desc['custom'],
+          approxCount: null,
+          searchable: !!desc['searchable'],
+          nameField,
+          defaultColumns,
+          fields,
+          childRelationships: ((desc['childRelationships'] as Record<string, unknown>[]) ?? [])
+            .filter((r) => r['relationshipName'])
+            .map((r) => ({ name: r['relationshipName'], object: r['childSObject'], field: r['field'] })),
+          salesforceUrl: sf ? `${sf.instanceUrl}/lightning/setup/ObjectManager/${String(desc['name'])}/Details/view` : null,
+        });
+      } catch (e) {
+        return fail(res, 502, `Couldn't describe ${objectName}: ${(e as Error).message}`);
+      }
+    }
+
+    if (method === 'GET' && /^\/data\/objects\/[^/]+\/records$/.test(p)) {
+      if (!sf || connection.status !== 'connected') return fail(res, 409, 'Salesforce is not connected.');
+      const objectName = decodeURIComponent(p.split('/')[3] ?? '');
+      const fields = url.searchParams.get('fields')?.split(',').filter(Boolean) ?? [];
+      const q = url.searchParams.get('q') ?? '';
+      const sortField = url.searchParams.get('sort') ?? 'Id';
+      const sortDir = url.searchParams.get('dir') === 'asc' ? 'ASC' : 'DESC';
+      const ids = url.searchParams.get('ids')?.split(',').filter(Boolean) ?? [];
+      const pageSize = 50;
+      const cols = fields.length ? fields : ['Id', 'Name'];
+      const selectCols = [...new Set(['Id', ...cols])].join(', ');
+      let where = ids.length ? `Id IN (${ids.map((id) => `'${id}'`).join(',')})` : '';
+      if (q && !ids.length) where = where ? `${where} AND Name LIKE '%${q.replace(/'/g, '')}%'` : `Name LIKE '%${q.replace(/'/g, '')}%'`;
+      const soqlQuery = `SELECT ${selectCols} FROM ${objectName}${where ? ` WHERE ${where}` : ''} ORDER BY ${sortField} ${sortDir} LIMIT ${pageSize}`;
+      try {
+        const result = await soql(soqlQuery);
+        return send(res, 200, {
+          records: (result.records ?? []).map((r) => ({
+            id: r['Id'] ?? null,
+            values: r,
+            refNames: {},
+            salesforceUrl: sf ? `${sf.instanceUrl}/${r['Id']}` : null,
+          })),
+          columns: cols,
+          totalSize: result.totalSize ?? 0,
+          nextCursor: null,
+        });
+      } catch (e) {
+        return fail(res, 502, `Couldn't load records: ${(e as Error).message}`);
+      }
+    }
+
+    if (method === 'GET' && /^\/data\/objects\/[^/]+\/records\/[^/]+$/.test(p)) {
+      if (!sf || connection.status !== 'connected') return fail(res, 409, 'Salesforce is not connected.');
+      const parts = p.split('/');
+      const objectName = decodeURIComponent(parts[3] ?? '');
+      const recordId = decodeURIComponent(parts[5] ?? '');
+      try {
+        const rec = (await sfFetch(`/services/data/${API_VERSION}/sobjects/${encodeURIComponent(objectName)}/${encodeURIComponent(recordId)}`)) as Record<string, unknown>;
+        return send(res, 200, {
+          id: rec['Id'] ?? recordId,
+          values: rec,
+          refNames: {},
+          salesforceUrl: sf ? `${sf.instanceUrl}/${rec['Id'] ?? recordId}` : null,
+        });
+      } catch (e) {
+        return fail(res, 502, `Couldn't load record: ${(e as Error).message}`);
+      }
+    }
+
+    if (is('GET', '/data/search')) {
+      if (!sf || connection.status !== 'connected') return send(res, 200, []);
+      const q = url.searchParams.get('q') ?? '';
+      if (q.trim().length < 2) return send(res, 200, []);
+      try {
+        const result = (await sfFetch(`/services/data/${API_VERSION}/search/?q=${encodeURIComponent(`FIND {${q.replace(/['"{}[\]()\\]/g, '')}} IN ALL FIELDS RETURNING Account(Id,Name),Contact(Id,Name),Lead(Id,Name),Opportunity(Id,Name) LIMIT 5`)}`)) as { searchRecords?: Record<string, unknown>[] };
+        const grouped: Record<string, { id: string; name: string }[]> = {};
+        for (const r of result.searchRecords ?? []) {
+          const type = String(r['attributes'] ? (r['attributes'] as Record<string, unknown>)['type'] : 'Unknown');
+          if (!grouped[type]) grouped[type] = [];
+          grouped[type].push({ id: String(r['Id'] ?? ''), name: String(r['Name'] ?? r['Id'] ?? '') });
+        }
+        return send(res, 200, Object.entries(grouped).map(([object, records]) => ({ object, records })));
+      } catch (e) {
+        return fail(res, 502, `Search failed: ${(e as Error).message}`);
+      }
+    }
+
+    if (is('POST', '/data/ask')) return fail(res, 501, 'AI question answering is not available on the local dev server.');
+    if (is('POST', '/data/refresh')) return send(res, 204);
+    if (method === 'GET' && /^\/data\/objects\/[^/]+\/records\/[^/]+\/related\//.test(p)) return send(res, 200, { records: [], totalSize: 0, nextCursor: null });
+
+    // ---- Portfolio / consultant routes ----
+    // The dev server supports a single connected org, so the portfolio always has
+    // at most one entry (the current connection), and schedule/activation stubs
+    // return sensible responses so the page renders without errors.
+
+    if (is('GET', '/portfolio')) {
+      if (!sf || connection.status !== 'connected') return send(res, 200, []);
+      const conn = connection as Record<string, unknown>;
+      return send(res, 200, [
+        {
+          orgId: conn.orgId ?? 'local-org',
+          organizationName: conn.organizationName ?? 'Your Salesforce Org',
+          edition: conn.edition ?? null,
+          environment: conn.environment ?? 'production',
+          instanceUrl: conn.instanceUrl ?? null,
+          connectionStatus: 'connected',
+          active: true,
+          running: false,
+          score: null,
+          previousScore: null,
+          openProblems: 0,
+          criticalProblems: 0,
+          valueAtRisk: null,
+          trend: [],
+          lastCheckedAt: null,
+          schedule: null,
+        },
+      ]);
+    }
+
+    if (method === 'POST' && /^\/salesforce\/connections\/[^/]+\/activate$/.test(p)) {
+      // Activating the only org is a no-op in dev.
+      return send(res, 200, null);
+    }
+
+    if (method === 'DELETE' && /^\/salesforce\/connections\/[^/]+$/.test(p)) {
+      // Treat as a full disconnect in dev.
+      if (sf) {
+        const token = sf.refreshToken ?? sf.accessToken;
+        await fetch(`https://${sf.loginHost}/services/oauth2/revoke`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ token }),
+        }).catch(() => undefined);
+      }
+      sf = null;
+      connection = { ...DISCONNECTED };
+      return send(res, 204);
+    }
+
+    if (method === 'PUT' && /^\/schedules\/[^/]+$/.test(p)) {
+      const b = await readJson(req);
+      // Return a stub schedule object so the UI doesn't error.
+      return send(res, 200, {
+        orgId: decodeURIComponent(p.split('/').pop() ?? ''),
+        frequency: b.frequency ?? 'weekly',
+        enabled: b.enabled ?? true,
+        alertEmail: b.alertEmail ?? null,
+        scoreDrop: b.scoreDrop ?? 5,
+        alertNewCritical: b.alertNewCritical ?? true,
+        nextRunAt: null,
+      });
+    }
+
+    if (method === 'DELETE' && /^\/schedules\/[^/]+$/.test(p)) return send(res, 204);
+
+    if (method === 'POST' && /^\/schedules\/[^/]+\/test-email$/.test(p)) {
+      return fail(res, 501, 'Email sending is not available on the local dev server.');
+    }
+
+    // ---- Assessments — no diagnostic engine in local development.
     if (is('GET', '/assessments')) {
       const pageSize = Number(url.searchParams.get('pageSize') ?? 100);
       return send(res, 200, { items: [], total: 0, page: 1, pageSize });

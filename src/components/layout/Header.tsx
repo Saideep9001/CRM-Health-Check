@@ -2,8 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { Bell, BellOff, ChevronRight, HelpCircle, LogOut, Menu, Monitor, Moon, Settings, Sun, User } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { errorMessage } from '@/api/client';
-import { useLogout, useMarkNotificationsRead, useMe, useNotifications } from '@/api/queries';
-import { AUTH_REQUIRED } from '@/config/app';
+import { useLogout, useMarkNotificationsRead, useMe, useNotifications, useAuthStatus } from '@/api/queries';
 import { resolveRoute } from '@/config/navigation';
 import { useTheme } from '@/context/ThemeContext';
 import { fmtDateTime } from '@/lib/format';
@@ -46,6 +45,7 @@ export function Header({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const navigate = useNavigate();
   const { pref, setPref } = useTheme();
   const me = useMe();
+  const authRequired = useAuthStatus().data?.authRequired ?? true;
   const notifications = useNotifications();
   const markRead = useMarkNotificationsRead();
   const logout = useLogout();
@@ -188,7 +188,7 @@ export function Header({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
                     ]}
                   />
                 </div>
-                {AUTH_REQUIRED && (
+                {authRequired && (
                 <div className="border-t border-line pt-1">
                     <MenuItem
                       icon={<LogOut className="h-4 w-4" />}

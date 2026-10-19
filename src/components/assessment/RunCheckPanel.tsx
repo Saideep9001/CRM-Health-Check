@@ -9,6 +9,7 @@ import {
   useConnection,
   useCreateAssessment,
   useDataObjects,
+  useRole,
 } from '@/api/queries';
 import { ObjectChooser } from '@/components/data/ObjectList';
 import { Button, LinkButton } from '@/components/ui/Button';
@@ -77,6 +78,7 @@ export function RunCheckPanel({
   /** Let the user choose which Salesforce objects the Data Quality checks look at. */
   objectPicker?: boolean;
 }) {
+  const { canEdit } = useRole();
   const conn = useConnection();
   const health = useApiHealth();
   const list = useAssessments();
@@ -147,6 +149,14 @@ export function RunCheckPanel({
       { onSuccess: (a) => setStartedId(a.id) },
     );
   };
+
+  if (!canEdit && !running) {
+    return checked ? null : (
+      <p className="mb-6 rounded-xl border border-line bg-muted/50 px-4 py-3 text-sm text-ink-muted">
+        You have view-only access, so you can’t start a health check. Ask a consultant or admin to run one.
+      </p>
+    );
+  }
 
   // ---- running: live progress
   if (running && run) {

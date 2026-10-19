@@ -48,7 +48,10 @@ class Settings(BaseSettings):
     smtp_from: str = ""
     smtp_starttls: bool = True
 
-    # --- Local profile (until sign-in is enabled) ---
+    # --- Sign-in. When false, everyone is treated as a local admin (single-user development only). ---
+    auth_required: bool = True
+
+    # --- Local profile (used only when AUTH_REQUIRED=false) ---
     local_user_name: str = "Local User"
     local_user_email: str = "user@localhost"
 

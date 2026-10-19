@@ -165,3 +165,37 @@ class NotificationRow(Base):
     body: Mapped[str] = mapped_column(Text)
     link: Mapped[str | None] = mapped_column(String(512))
     read: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class UserRow(Base):
+    """A person who can sign in. Password is a salted scrypt hash."""
+
+    __tablename__ = "app_user"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)  # stored lower-case
+    name: Mapped[str] = mapped_column(String(120))
+    title: Mapped[str | None] = mapped_column(String(120))
+    password_hash: Mapped[str] = mapped_column(String(255))
+    role: Mapped[str] = mapped_column(String(16), default="consultant")  # admin | consultant | viewer
+    all_orgs: Mapped[bool] = mapped_column(Boolean, default=False)  # admins always see every org
+    org_ids: Mapped[list | None] = mapped_column(JSON)  # orgs this user may see when not all_orgs
+    active_org_id: Mapped[str | None] = mapped_column(String(32))  # the org this user is working on
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    failed_logins: Mapped[int] = mapped_column(Integer, default=0)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class SessionRow(Base):
+    """A signed-in browser. The id is the SHA-256 of the cookie token (the token itself is never stored)."""
+
+    __tablename__ = "user_session"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(36), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    user_agent: Mapped[str | None] = mapped_column(String(255))

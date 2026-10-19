@@ -13,7 +13,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import get_settings
 from .db import init_db
 from .engine import jobs
-from .routers import assessments, assistant, consultant, data, salesforce, workspace
+from fastapi import Depends
+
+from .auth import AuthMiddleware, require_user
+from .routers import assessments, assistant, consultant, data, salesforce, users, workspace
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(name)s: %(message)s")
 log = logging.getLogger("aquarient")
@@ -40,6 +43,9 @@ async def lifespan(api: FastAPI):
 
 app = FastAPI(title="Aquarient CRM Health API", version=get_settings().app_version, lifespan=lifespan)
 
+# Resolves the signed-in user for every request and blocks cross-site writes (added first so CORS stays outermost).
+app.add_middleware(AuthMiddleware)
+
 # The Vite dev server proxies /api, so CORS only matters if the frontend calls the API directly.
 app.add_middleware(
     CORSMiddleware,
@@ -49,5 +55,8 @@ app.add_middleware(
     allow_headers=["Content-Type", "Accept"],
 )
 
-for r in (workspace.router, salesforce.router, assistant.router, data.router, assessments.router, consultant.router):
+# Public: health, sign-in and first-run setup. Everything else needs a signed-in user (roles are checked per route).
+for r in (workspace.router, users.router):
     app.include_router(r, prefix="/api/v1")
+for r in (salesforce.router, assistant.router, data.router, assessments.router, consultant.router):
+    app.include_router(r, prefix="/api/v1", dependencies=[Depends(require_user)])

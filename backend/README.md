@@ -70,6 +70,7 @@ Salesforce permissions decide what the app can read.
 | `TOKEN_ENCRYPTION_KEY` | auto in dev | Fernet key for encrypting tokens. **Set it in production.** |
 | `DATABASE_URL` | `backend/.data/aquarient.db` | SQLAlchemy URL (SQLite locally; Postgres in production) |
 | `LOCAL_USER_NAME`, `LOCAL_USER_EMAIL` | — | Profile shown until sign-in is enabled |
+| `AUTH_REQUIRED` | `true` | Sign-in with roles. `false` treats everyone as a local admin (single-user development only) |
 | `SCHEDULER_ENABLED` | `true` | Workers queue scheduled checks when they're due |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_STARTTLS` | — / `587` / `true` | Alert email. Nothing is emailed unless `SMTP_HOST` and `SMTP_FROM` are set; alerts always appear in the app |
 
@@ -139,6 +140,16 @@ paused 7+ days (area 7); reports filtering on retired picklist values or nearly-
 is gone (permission errors aren't counted), dashboards running as inactive users (area 8); stages mapped to the wrong forecast
 category and open deals counted as Closed (area 10); and a 0–100 sync health score — integrations that stopped writing, duplicates
 created by integration users, failed jobs (area 20).
+
+## Sign-in, roles and access
+
+- Accounts are created by admins (Settings → Team & Access); passwords are scrypt-hashed, sessions are HttpOnly cookies
+  (only a hash of the token is stored), and 5 wrong passwords lock the account for 15 minutes.
+- **Admin**: everything, including the team, Salesforce app keys, disconnecting orgs and report branding.
+  **Consultant**: connects orgs, runs checks, tracks fixes and schedules — for their orgs. **Viewer**: read-only.
+- Each person sees only the orgs they're given (admins and "all orgs" users see every org) and has their own active org.
+  Someone who connects a new org gets access to it.
+- Writes from other websites are blocked (Origin check), and the website reads the sign-in mode from `/auth/setup-status`.
 
 ## Consultant features
 
@@ -211,5 +222,6 @@ tests/                 pytest with a fake Salesforce (httpx MockTransport)
 
 - Set `TOKEN_ENCRYPTION_KEY` from a secret manager and use Postgres (`DATABASE_URL`).
 - Serve over HTTPS and update `FRONTEND_ORIGIN` and the Connected App callback URL.
-- Add sign-in and scope connections per customer workspace (currently one workspace, `default`).
-- Restrict the **Salesforce app setup** endpoints (`PUT`/`DELETE /api/v1/salesforce/app`) to admins.
+- Sign-in is on by default (`AUTH_REQUIRED=true`). The first visit shows a setup screen to create the first admin; create it
+  yourself before the server is reachable by anyone else. Set the session cookie over HTTPS (it's `Secure` automatically when
+  `FRONTEND_ORIGIN` is `https://…`).

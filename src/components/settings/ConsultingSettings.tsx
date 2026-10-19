@@ -1,7 +1,7 @@
 import { ImagePlus, Trash2 } from 'lucide-react';
 import { useEffect, useState, type ChangeEvent } from 'react';
 import { errorMessage } from '@/api/client';
-import { useUpdateSettings } from '@/api/queries';
+import { useRole, useUpdateSettings } from '@/api/queries';
 import { BrandedHeader, DEFAULT_BRANDING } from '@/components/reports/Branding';
 import { Button } from '@/components/ui/Button';
 import { Field, Toggle } from '@/components/ui/Form';
@@ -14,6 +14,7 @@ const MAX_LOGO_BYTES = 300 * 1024;
 /** White-label branding for reports, and proposal defaults. */
 export function ConsultingSettings({ settings }: { settings: AppSettings }) {
   const update = useUpdateSettings();
+  const { isAdmin } = useRole();
   const { notify } = useToast();
   const [draft, setDraft] = useState(settings);
   useEffect(() => setDraft(settings), [settings]);
@@ -100,9 +101,10 @@ export function ConsultingSettings({ settings }: { settings: AppSettings }) {
         </div>
       </div>
 
+      {!isAdmin && <p className="text-right text-xs text-ink-subtle">Only admins can change report branding and proposal defaults.</p>}
       <div className="flex justify-end gap-2">
         <Button onClick={() => setDraft(settings)} disabled={!dirty}>Discard changes</Button>
-        <Button variant="primary" onClick={save} disabled={!dirty || update.isPending}>{update.isPending ? 'Saving…' : 'Save changes'}</Button>
+        <Button variant="primary" onClick={save} disabled={!isAdmin || !dirty || update.isPending}>{update.isPending ? 'Saving…' : 'Save changes'}</Button>
       </div>
     </div>
   );

@@ -60,7 +60,7 @@ class SalesforceClient:
         refresh = crypto.decrypt(self.conn.refresh_token_enc)
         if not refresh or self.creds is None:
             raise SalesforceAuthExpired("Your Salesforce session has expired. Please reconnect.")
-        access, instance = refresh_access_token(
+        access, instance, rotated = refresh_access_token(
             self.http,
             login_host=self.conn.login_host,
             client_id=self.creds.client_id,
@@ -69,6 +69,8 @@ class SalesforceClient:
         )
         self._access = access
         self.conn.access_token_enc = crypto.encrypt(access)
+        if rotated and rotated != refresh:
+            self.conn.refresh_token_enc = crypto.encrypt(rotated)  # the old one no longer works
         if instance:
             self.conn.instance_url = instance
         self._save()

@@ -24,7 +24,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { useMe } from '@/api/queries';
+import { useMe, useAuthStatus } from '@/api/queries';
 import { ThemeToggle } from '@/components/layout/Header';
 import { HeroVisual } from '@/components/marketing/HeroVisual';
 import { ComingSoonBadge, ReleaseBadge } from '@/components/ui/Badges';
@@ -33,7 +33,6 @@ import { InfoTip } from '@/components/ui/HelpTip';
 import { LinkButton } from '@/components/ui/Button';
 import { CategoryTile } from '@/components/ui/CategoryIcon';
 import { CATEGORIES, CATEGORY_COLORS, DIAGNOSTIC_AREAS, getAreaRelease, getAreasForCategory } from '@/config/categories';
-import { APP_ENTRY_PATH, AUTH_REQUIRED } from '@/config/app';
 import { cx } from '@/lib/format';
 
 const NAV = [
@@ -134,6 +133,7 @@ function Reveal({ children, delay = 0, className }: { children: ReactNode; delay
 }
 
 function SiteHeader() {
+  const AUTH_REQUIRED = useAuthStatus().data?.authRequired ?? true;
   const me = useMe();
   const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
@@ -215,6 +215,8 @@ function FaqItem({ q, a, open, onToggle }: { q: string; a: string; open: boolean
 }
 
 export default function HomePage() {
+  const AUTH_REQUIRED = useAuthStatus().data?.authRequired ?? true;
+  const APP_ENTRY_PATH = AUTH_REQUIRED ? '/login' : '/dashboard';
   const [faqOpen, setFaqOpen] = useState<number | null>(0);
   const [activeCat, setActiveCat] = useState(CATEGORIES[0].id);
   const cat = CATEGORIES.find((c) => c.id === activeCat)!;

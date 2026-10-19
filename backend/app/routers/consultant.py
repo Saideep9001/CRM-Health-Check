@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from .. import playbooks
 from ..alerts import email_configured, send_email
+from ..auth import Principal, ensure_org, require_admin, require_editor, require_user
 from ..config import Settings
 from ..db import get_db
 from ..deps import http_dep, settings_dep
@@ -44,8 +45,10 @@ def _latest(db: Session, org_id: str, n: int = 1) -> list[AssessmentRow]:
 @router.get("/portfolio", response_model=list[PortfolioOrg])
 def portfolio(db: Session = Depends(get_db)):
     """Every client org: saved connections plus orgs that only appear in past checks."""
-    conns = {r.org_id: r for r in service.all_rows(db) if r.org_id}
-    names = {r.org_id: r.organization_name for r in db.scalars(select(AssessmentRow).where(AssessmentRow.org_id != "")) if r.org_id}
+    user = require_user()
+    conns = {r.org_id: r for r in service.all_rows(db) if r.org_id and user.sees(r.org_id)}
+    names = {r.org_id: r.organization_name for r in db.scalars(select(AssessmentRow).where(AssessmentRow.org_id != "")) if r.org_id and user.sees(r.org_id)}
+    active = service.get_row(db)
     schedules = {s.org_id: s for s in db.scalars(select(ScanScheduleRow))}
     out = []
     for org_id in sorted(set(conns) | set(names), key=lambda o: ((conns[o].organization_name if o in conns else names.get(o)) or "").lower()):
@@ -68,7 +71,7 @@ def portfolio(db: Session = Depends(get_db)):
             edition=conn.edition if conn else None,
             environment=conn.environment if conn else None,
             connection_status=conn.status if conn else "disconnected",
-            active=bool(conn and conn.active),
+            active=bool(conn and active is not None and conn.id == active.id),
             instance_url=conn.instance_url if conn else None,
             latest_assessment_id=latest.id if latest else None,
             score=latest.overall_score if latest else None,
@@ -86,19 +89,28 @@ def portfolio(db: Session = Depends(get_db)):
 
 @router.post("/salesforce/connections/{org_id}/activate", response_model=PortfolioOrg | None)
 def activate(org_id: str, db: Session = Depends(get_db)):
-    """Make a saved org the active one (data explorer, new checks and the dashboard use it)."""
+    """Make a saved org your active one (data explorer, new checks and the dashboard use it)."""
+    ensure_org(org_id, "That org isn’t connected. Connect it first.")
     try:
         service.activate(db, org_id)
     except service.NotConnected:
         raise HTTPException(404, "That org isn’t connected. Connect it first.")
     from ..salesforce import explorer
 
-    explorer.clear_cache()
+    from .. import auth
+
+    db.expire_all()
+    user = auth.current()
+    if user is not None and user.id != "local-user":
+        from ..models import UserRow
+
+        me = db.get(UserRow, user.id)
+        auth._current.set(auth.principal(me, user.session_id))  # this request now sees the new active org
     return next((o for o in portfolio(db) if o.org_id == org_id), None)
 
 
 @router.delete("/salesforce/connections/{org_id}", status_code=204)
-def remove(org_id: str, db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep)):
+def remove(org_id: str, _: Principal = Depends(require_admin), db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep)):
     """Disconnect a saved org (its past checks are kept)."""
     if service.row_for_org(db, org_id) is None:
         raise HTTPException(404, "That org isn’t connected.")
@@ -123,11 +135,13 @@ def _schedule(s: ScanScheduleRow, conn=None) -> ScanSchedule:
 
 @router.get("/schedules", response_model=list[ScanSchedule])
 def schedules(db: Session = Depends(get_db)):
-    return [_schedule(s, service.row_for_org(db, s.org_id)) for s in db.scalars(select(ScanScheduleRow))]
+    user = require_user()
+    return [_schedule(s, service.row_for_org(db, s.org_id)) for s in db.scalars(select(ScanScheduleRow)) if user.sees(s.org_id)]
 
 
 @router.put("/schedules/{org_id}", response_model=ScanSchedule)
-def put_schedule(org_id: str, body: ScanScheduleUpdate, db: Session = Depends(get_db)):
+def put_schedule(org_id: str, body: ScanScheduleUpdate, _: Principal = Depends(require_editor), db: Session = Depends(get_db)):
+    ensure_org(org_id, "Connect this org before scheduling checks for it.")
     conn = service.row_for_org(db, org_id)
     if conn is None:
         raise HTTPException(404, "Connect this org before scheduling checks for it.")
@@ -152,7 +166,8 @@ def put_schedule(org_id: str, body: ScanScheduleUpdate, db: Session = Depends(ge
 
 
 @router.delete("/schedules/{org_id}", status_code=204)
-def delete_schedule(org_id: str, db: Session = Depends(get_db)):
+def delete_schedule(org_id: str, _: Principal = Depends(require_editor), db: Session = Depends(get_db)):
+    ensure_org(org_id)
     s = db.scalars(select(ScanScheduleRow).where(ScanScheduleRow.org_id == org_id)).first()
     if s:
         db.delete(s)
@@ -161,7 +176,8 @@ def delete_schedule(org_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/schedules/{org_id}/test-email", status_code=204)
-def test_email(org_id: str, db: Session = Depends(get_db), settings: Settings = Depends(settings_dep)):
+def test_email(org_id: str, _: Principal = Depends(require_editor), db: Session = Depends(get_db), settings: Settings = Depends(settings_dep)):
+    ensure_org(org_id)
     s = db.scalars(select(ScanScheduleRow).where(ScanScheduleRow.org_id == org_id)).first()
     if not s or not s.alert_email:
         raise HTTPException(422, "Add an alert email to this schedule first.")
@@ -175,17 +191,20 @@ def test_email(org_id: str, db: Session = Depends(get_db), settings: Settings = 
 
 @router.get("/me/notifications", response_model=list[AppNotification])
 def notifications(db: Session = Depends(get_db)):
-    rows = db.scalars(select(NotificationRow).order_by(NotificationRow.created_at.desc()).limit(50))
+    user = require_user()
+    rows = [r for r in db.scalars(select(NotificationRow).order_by(NotificationRow.created_at.desc()).limit(200)) if r.org_id is None or user.sees(r.org_id)][:50]
     return [AppNotification(id=r.id, title=r.title, body=r.body, created_at=_utc(r.created_at), read=r.read, link=r.link, kind=r.kind) for r in rows]
 
 
 @router.post("/me/notifications/read", status_code=204)
 def mark_read(body: MarkReadRequest | None = None, db: Session = Depends(get_db)):
+    user = require_user()
     q = select(NotificationRow).where(NotificationRow.read.is_(False))
     if body and body.ids:
         q = q.where(NotificationRow.id.in_(body.ids[:200]))
     for r in db.scalars(q):
-        r.read = True
+        if r.org_id is None or user.sees(r.org_id):
+            r.read = True
     db.commit()
     return Response(status_code=204)
 
@@ -207,6 +226,7 @@ def proposal(assessment_id: str, rate: float = Query(150, ge=0, le=5000), curren
     row = db.get(AssessmentRow, assessment_id)
     if row is None or row.status != "completed":
         raise HTTPException(404, "Health check not found or not finished.")
+    ensure_org(row.org_id, "Health check not found or not finished.")
     results, found = combined_view(db, row)
     live = [f for f in found if f.status in OPEN]
     order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
@@ -251,6 +271,7 @@ def benchmarks(assessment_id: str, db: Session = Depends(get_db)):
     row = db.get(AssessmentRow, assessment_id)
     if row is None or row.status != "completed":
         raise HTTPException(404, "Health check not found or not finished.")
+    ensure_org(row.org_id, "Health check not found or not finished.")
     mine, _ = combined_view(db, row)
     peers = []
     for org_id in {r.org_id for r in db.scalars(select(AssessmentRow).where(AssessmentRow.status == "completed", AssessmentRow.org_id != row.org_id)) if r.org_id}:
@@ -278,7 +299,9 @@ def benchmarks(assessment_id: str, db: Session = Depends(get_db)):
 def fix_plan(finding_id: str, db: Session = Depends(get_db)):
     """Step-by-step plan from the built-in playbooks."""
     f = db.get(FindingRow, finding_id)
-    if f is None:
+    check = db.get(AssessmentRow, f.assessment_id) if f else None
+    if f is None or check is None:
         raise HTTPException(404, "Problem not found.")
+    ensure_org(check.org_id, "Problem not found.")
     return FixPlan.model_validate(playbooks.playbook(f))
 

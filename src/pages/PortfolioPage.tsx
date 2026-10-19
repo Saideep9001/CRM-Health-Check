@@ -2,7 +2,7 @@ import { AlarmClock, ArrowDownRight, ArrowUpRight, BellRing, Building2, Calendar
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { errorMessage } from '@/api/client';
-import { useActivateOrg, useDeleteSchedule, usePortfolio, useRemoveOrg, useSaveSchedule, useTestAlertEmail } from '@/api/queries';
+import { useActivateOrg, useDeleteSchedule, usePortfolio, useRemoveOrg, useRole, useSaveSchedule, useTestAlertEmail } from '@/api/queries';
 import { Badge } from '@/components/ui/Badges';
 import { Button } from '@/components/ui/Button';
 import { Field, Toggle } from '@/components/ui/Form';
@@ -108,6 +108,7 @@ function OrgCard({ org, onSchedule }: { org: PortfolioOrg; onSchedule: () => voi
   const { notify } = useToast();
   const activate = useActivateOrg();
   const remove = useRemoveOrg();
+  const { canEdit, isAdmin } = useRole();
   const [reconnect, setReconnect] = useState(false);
   const connected = org.connectionStatus === 'connected';
   const delta = org.score !== null && org.previousScore !== null ? org.score - org.previousScore : null;
@@ -167,7 +168,7 @@ function OrgCard({ org, onSchedule }: { org: PortfolioOrg; onSchedule: () => voi
         <span className="ml-auto text-xs text-ink-subtle">{org.lastCheckedAt ? `Checked ${fmtDate(org.lastCheckedAt)}` : 'Never checked'}</span>
       </div>
 
-      <button onClick={onSchedule} disabled={!connected} className="mt-3 flex items-center gap-2 rounded-lg border border-dashed border-line px-3 py-2 text-left text-xs transition hover:border-brand hover:text-brand disabled:opacity-50">
+      <button onClick={onSchedule} disabled={!connected || !canEdit} title={canEdit ? undefined : 'View-only access'} className="mt-3 flex items-center gap-2 rounded-lg border border-dashed border-line px-3 py-2 text-left text-xs transition hover:border-brand hover:text-brand disabled:opacity-50">
         <CalendarClock className="h-4 w-4 shrink-0" />
         {org.schedule?.enabled
           ? <span>{FREQ_LABEL[org.schedule.frequency]} checks · next {org.schedule.nextRunAt ? fmtDate(org.schedule.nextRunAt) : '—'}{org.schedule.alertEmail ? ` · alerts to ${org.schedule.alertEmail}` : ''}</span>
@@ -180,16 +181,18 @@ function OrgCard({ org, onSchedule }: { org: PortfolioOrg; onSchedule: () => voi
             <Button size="sm" variant="primary" icon={<LayoutDashboard className="h-3.5 w-3.5" />} onClick={() => open('/dashboard')} disabled={activate.isPending}>
               {org.active ? 'Open' : 'Switch & open'}
             </Button>
-            <Button size="sm" icon={<Play className="h-3.5 w-3.5" />} onClick={() => open('/assessment')} disabled={activate.isPending || org.running}>
-              Run check
-            </Button>
+            {canEdit && (
+              <Button size="sm" icon={<Play className="h-3.5 w-3.5" />} onClick={() => open('/assessment')} disabled={activate.isPending || org.running}>
+                Run check
+              </Button>
+            )}
           </>
-        ) : (
+        ) : canEdit ? (
           <Button size="sm" variant="primary" icon={<RefreshCw className="h-3.5 w-3.5" />} onClick={() => setReconnect(true)}>
             Reconnect
           </Button>
-        )}
-        {org.connectionStatus !== 'disconnected' && (
+        ) : null}
+        {isAdmin && org.connectionStatus !== 'disconnected' && (
           <Button
             size="sm"
             variant="ghost"
@@ -210,6 +213,7 @@ function OrgCard({ org, onSchedule }: { org: PortfolioOrg; onSchedule: () => voi
 
 export default function PortfolioPage() {
   const q = usePortfolio();
+  const { canEdit } = useRole();
   const [adding, setAdding] = useState(false);
   const [scheduling, setScheduling] = useState<PortfolioOrg | null>(null);
   const orgs = q.data ?? [];
@@ -224,7 +228,7 @@ export default function PortfolioPage() {
       <PageHeader
         title="Client portfolio"
         description="Every Salesforce org you look after: health, trend, risk and scheduled checks in one place."
-        actions={<Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setAdding(true)}>Connect another org</Button>}
+        actions={canEdit ? <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setAdding(true)}>Connect another org</Button> : undefined}
       />
       {q.isLoading ? (
         <div className="card"><LoadingState rows={6} label="Loading your orgs…" /></div>
@@ -232,7 +236,7 @@ export default function PortfolioPage() {
         <div className="card"><ErrorState error={q.error} onRetry={() => q.refetch()} /></div>
       ) : orgs.length === 0 ? (
         <div className="card">
-          <EmptyState icon={<Building2 className="h-6 w-6" />} title="No orgs yet" description="Connect your first client’s Salesforce to start." action={<Button variant="primary" onClick={() => setAdding(true)}>Connect Salesforce</Button>} />
+          <EmptyState icon={<Building2 className="h-6 w-6" />} title="No orgs yet" description="Connect your first client’s Salesforce to start." action={canEdit ? <Button variant="primary" onClick={() => setAdding(true)}>Connect Salesforce</Button> : undefined} />
         </div>
       ) : (
         <>

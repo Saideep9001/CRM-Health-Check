@@ -60,8 +60,10 @@ export function SalesforceConnectionCard({
   checking,
 }: {
   connection: SalesforceConnection;
-  onConnect: () => void;
-  onDisconnect: () => void;
+  /** Omitted when the signed-in role can't connect orgs. */
+  onConnect?: () => void;
+  /** Omitted when the signed-in role can't disconnect (admins only). */
+  onDisconnect?: () => void;
   onCheck: () => void;
   checking: boolean;
 }) {
@@ -100,7 +102,7 @@ export function SalesforceConnectionCard({
             {status === 'error' && (connection.errorMessage ?? 'The last connection check failed.')}
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
-            {status !== 'connected' && (
+            {status !== 'connected' && onConnect && (
               <Button variant="primary" icon={<PlugZap className="h-4 w-4" />} onClick={onConnect}>
                 {linked ? 'Reconnect Salesforce' : 'Connect Salesforce'}
               </Button>
@@ -110,9 +112,11 @@ export function SalesforceConnectionCard({
                 {checking ? 'Checking…' : 'Check connection'}
               </Button>
             )}
-            <Button variant="danger" icon={<Unplug className="h-4 w-4" />} onClick={onDisconnect} disabled={!linked} title={linked ? undefined : 'Nothing to disconnect'}>
-              Disconnect
-            </Button>
+            {onDisconnect && (
+              <Button variant="danger" icon={<Unplug className="h-4 w-4" />} onClick={onDisconnect} disabled={!linked} title={linked ? undefined : 'Nothing to disconnect'}>
+                Disconnect
+              </Button>
+            )}
           </div>
         </div>
       </div>

@@ -30,6 +30,10 @@ import type {
   SalesforceConnection,
   UpdateFindingRequest,
   UserProfile,
+  AuthStatus,
+  SetupRequest,
+  TeamMember,
+  TeamMemberCreate,
   PortfolioOrg,
   ScanSchedule,
   ScanScheduleUpdate,
@@ -49,6 +53,11 @@ export const systemApi = {
 };
 
 export const authApi = {
+  /** Public: is sign-in required, and does the first admin still need creating? */
+  status: (signal?: AbortSignal) => http.get<AuthStatus>('/auth/setup-status', undefined, signal),
+  /** First run only: create the first admin and sign in. */
+  setup: (body: SetupRequest) => http.post<UserProfile>('/auth/setup', body),
+  changePassword: (body: { currentPassword: string; newPassword: string }) => http.post<void>('/me/password', body),
   /** Creates a session (HttpOnly cookie) and returns the signed-in user. */
   login: (body: LoginRequest) => http.post<UserProfile>('/auth/login', body),
   logout: () => http.post<void>('/auth/logout'),
@@ -130,6 +139,15 @@ export const findingApi = {
     http.get<FindingRecordsPage>(`/findings/${encodeURIComponent(id)}/records`, { cursor: cursor ?? undefined }, signal),
   /** Link that downloads the affected records as a CSV file. */
   recordsCsvUrl: (id: string) => `${API_BASE_URL}/findings/${encodeURIComponent(id)}/records.csv`,
+};
+
+/** Team management (admins only). */
+export const teamApi = {
+  list: (signal?: AbortSignal) => http.get<TeamMember[]>('/users', undefined, signal),
+  create: (body: TeamMemberCreate) => http.post<TeamMember>('/users', body),
+  update: (id: string, body: Partial<Pick<TeamMember, 'name' | 'role' | 'allOrgs' | 'orgIds' | 'isActive'>>) =>
+    http.patch<TeamMember>(`/users/${encodeURIComponent(id)}`, body),
+  resetPassword: (id: string, password: string) => http.post<void>(`/users/${encodeURIComponent(id)}/password`, { password }),
 };
 
 export const consultantApi = {

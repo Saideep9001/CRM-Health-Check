@@ -1,8 +1,9 @@
-import { Bell, Building2, Check, Cloud, Lock, Monitor, Moon, Palette, Save, ShieldCheck, Sparkles, Sun, User } from 'lucide-react';
+import { Bell, Building2, Check, Cloud, Lock, Monitor, Moon, Palette, Save, ShieldCheck, Sparkles, Sun, User, Users } from 'lucide-react';
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { API_BASE_URL } from '@/api/client';
-import { useApiHealth, useConnection, useMe, useSettings, useUpdateMe, useUpdateSettings } from '@/api/queries';
+import { useApiHealth, useAuthStatus, useConnection, useMe, useRole, useSettings, useUpdateMe, useUpdateSettings } from '@/api/queries';
+import { ChangePasswordCard, TeamSettings } from '@/components/settings/TeamSettings';
 import { ConnectionStatusBadge } from '@/components/ui/Badges';
 import { Button } from '@/components/ui/Button';
 import { Field, Select, Toggle } from '@/components/ui/Form';
@@ -16,12 +17,13 @@ import { useToast } from '@/context/ToastContext';
 import { cx, fmtDateTime } from '@/lib/format';
 import type { AppSettings, NotificationPreferences, UserProfile } from '@/types';
 
-type Tab = 'preferences' | 'profile' | 'notifications' | 'branding' | 'security' | 'organizations';
+type Tab = 'preferences' | 'profile' | 'notifications' | 'branding' | 'team' | 'security' | 'organizations';
 const TABS: { id: Tab; label: string; icon: ReactNode }[] = [
   { id: 'preferences', label: 'Application Preferences', icon: <Palette className="h-4 w-4" /> },
   { id: 'profile', label: 'Profile Information', icon: <User className="h-4 w-4" /> },
   { id: 'notifications', label: 'Notification Preferences', icon: <Bell className="h-4 w-4" /> },
   { id: 'branding', label: 'Report Branding', icon: <Sparkles className="h-4 w-4" /> },
+  { id: 'team', label: 'Team & Access', icon: <Users className="h-4 w-4" /> },
   { id: 'security', label: 'Security Information', icon: <Lock className="h-4 w-4" /> },
   { id: 'organizations', label: 'Connected Organizations', icon: <Building2 className="h-4 w-4" /> },
 ];
@@ -51,36 +53,32 @@ function ThemeCard({ id, label, icon, active, onClick }: { id: ThemePref; label:
   );
 }
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
 function ProfileForm({ me }: { me: UserProfile }) {
   const update = useUpdateMe();
   const { notify } = useToast();
-  const [form, setForm] = useState({ name: me.name, email: me.email, title: me.title ?? '', role: me.role ?? '' });
-  useEffect(() => setForm({ name: me.name, email: me.email, title: me.title ?? '', role: me.role ?? '' }), [me]);
+  const [form, setForm] = useState({ name: me.name, title: me.title ?? '' });
+  useEffect(() => setForm({ name: me.name, title: me.title ?? '' }), [me]);
 
-  const errors = {
-    name: !form.name.trim() ? 'Name is required' : null,
-    email: !EMAIL_RE.test(form.email.trim()) ? 'Enter a valid email address' : null,
-  };
-  const dirty = form.name !== me.name || form.email !== me.email || form.title !== (me.title ?? '') || form.role !== (me.role ?? '');
+  const errors = { name: !form.name.trim() ? 'Name is required' : null };
+  const dirty = form.name !== me.name || form.title !== (me.title ?? '');
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (errors.name || errors.email) return;
-    update.mutate(
-      { name: form.name.trim(), email: form.email.trim(), title: form.title.trim() || null, role: form.role.trim() || null },
-      { onSuccess: () => notify('Profile saved', undefined, 'success') },
-    );
+    if (errors.name) return;
+    update.mutate({ name: form.name.trim(), title: form.title.trim() || null }, { onSuccess: () => notify('Profile saved', undefined, 'success') });
   };
 
   return (
     <form onSubmit={submit} className="grid gap-4 sm:grid-cols-2" noValidate>
+      <Field label="Email" hint="Your sign-in email. An admin can change it.">
+        <input className="input" value={me.email} disabled />
+      </Field>
+      <Field label="Role" hint="Set by an admin under Team & Access.">
+        <input className="input capitalize" value={me.role ?? ''} disabled />
+      </Field>
       {(
         [
           ['name', 'Full name', 'text'],
-          ['email', 'Email', 'email'],
           ['title', 'Job title', 'text'],
-          ['role', 'Role', 'text'],
         ] as const
       ).map(([k, label, type]) => (
         <Field key={k} label={label}>
@@ -165,6 +163,8 @@ export default function SettingsPage() {
   const tab = (TABS.find((t) => t.id === params.get('tab'))?.id ?? 'preferences') as Tab;
   const { pref, setPref, reduceMotion, setReduceMotion } = useTheme();
   const me = useMe();
+  const { isAdmin } = useRole();
+  const authRequired = useAuthStatus().data?.authRequired ?? true;
   const settings = useSettings();
   const conn = useConnection();
   const health = useApiHealth();
@@ -200,10 +200,22 @@ export default function SettingsPage() {
       )}
 
       {tab === 'profile' && (
-        <SectionCard title="Profile information">
-          {me.isLoading ? <LoadingState rows={3} /> : me.error ? <ErrorState error={me.error} onRetry={() => me.refetch()} /> : me.data && <ProfileForm me={me.data} />}
-        </SectionCard>
+        <div className="space-y-6">
+          <SectionCard title="Profile information">
+            {me.isLoading ? <LoadingState rows={3} /> : me.error ? <ErrorState error={me.error} onRetry={() => me.refetch()} /> : me.data && <ProfileForm me={me.data} />}
+          </SectionCard>
+          {authRequired && <ChangePasswordCard />}
+        </div>
       )}
+
+      {tab === 'team' &&
+        (isAdmin ? (
+          <TeamSettings />
+        ) : (
+          <SectionCard title="Team & access">
+            <p className="text-sm text-ink-muted">Only admins manage the team. Ask an admin if you need access to another client org.</p>
+          </SectionCard>
+        ))}
 
       {tab === 'notifications' && (
         <SectionCard title="Notification preferences" description="Choose which events notify you.">

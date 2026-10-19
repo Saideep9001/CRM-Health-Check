@@ -3,8 +3,7 @@ import { RotateCw, ServerOff } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { API_BASE_URL, errorMessage, isApiError } from '@/api/client';
-import { useMe } from '@/api/queries';
-import { AUTH_REQUIRED } from '@/config/app';
+import { useAuthStatus, useMe } from '@/api/queries';
 import { BrandMark } from '../ui/Brand';
 import { Button, LinkButton } from '../ui/Button';
 
@@ -18,7 +17,24 @@ function FullScreen({ children }: { children: ReactNode }) {
  * explain that the service can't be reached.
  */
 export function RequireAuth({ children }: { children: ReactNode }) {
-  return AUTH_REQUIRED ? <AuthGate>{children}</AuthGate> : <>{children}</>;
+  const status = useAuthStatus();
+  const location = useLocation();
+  if (status.isLoading) return <Checking />;
+  // Can't tell (API down)? Let AuthGate explain; it shows the "can't reach the service" screen.
+  if (status.data && !status.data.authRequired) return <>{children}</>;
+  if (status.data?.needsSetup) return <Navigate to={`/login?next=${encodeURIComponent(`${location.pathname}${location.search}`)}`} replace />;
+  return <AuthGate>{children}</AuthGate>;
+}
+
+function Checking() {
+  return (
+    <FullScreen>
+      <motion.div animate={{ opacity: [0.5, 1, 0.5] }} transition={{ duration: 1.6, repeat: Infinity }}>
+        <BrandMark />
+      </motion.div>
+      <p className="text-sm text-ink-subtle">Checking your session…</p>
+    </FullScreen>
+  );
 }
 
 function AuthGate({ children }: { children: ReactNode }) {
@@ -27,16 +43,7 @@ function AuthGate({ children }: { children: ReactNode }) {
 
   if (me.data) return <>{children}</>;
 
-  if (me.isLoading) {
-    return (
-      <FullScreen>
-        <motion.div animate={{ opacity: [0.5, 1, 0.5] }} transition={{ duration: 1.6, repeat: Infinity }}>
-          <BrandMark />
-        </motion.div>
-        <p className="text-sm text-ink-subtle">Checking your session…</p>
-      </FullScreen>
-    );
-  }
+  if (me.isLoading) return <Checking />;
 
   if (isApiError(me.error) && (me.error.status === 401 || me.error.status === 403)) {
     const next = `${location.pathname}${location.search}`;

@@ -3,7 +3,7 @@ API = "/api/v1"
 
 def test_profile_round_trip(client):
     me = client.get(f"{API}/me").json()
-    assert me["id"] == "local-user" and me["name"]
+    assert me["email"] == "admin@aquarient.test" and me["role"] == "admin" and me["name"] == "Test Admin"
     r = client.patch(f"{API}/me", json={"name": "Chandra", "title": "RevOps"}).json()
     assert r["name"] == "Chandra" and r["title"] == "RevOps"
     assert client.patch(f"{API}/me", json={"name": "  "}).status_code == 422

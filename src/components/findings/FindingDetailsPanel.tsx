@@ -1,7 +1,7 @@
 import { CircleDollarSign, ExternalLink, Flag, Lightbulb, Save, Target, TrendingDown, Users, Wrench } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useUpdateFinding } from '@/api/queries';
+import { useRole, useUpdateFinding } from '@/api/queries';
 import { getArea, getCategory } from '@/config/categories';
 import { useToast } from '@/context/ToastContext';
 import { fmtDateTime, fmtNumber } from '@/lib/format';
@@ -37,6 +37,7 @@ function Section({ icon, title, children }: { icon: ReactNode; title: string; ch
 
 export function FindingDetailsPanel({ finding, onClose }: { finding: Finding | null; onClose: () => void }) {
   const navigate = useNavigate();
+  const { canEdit } = useRole();
   const { notify } = useToast();
   const update = useUpdateFinding(finding?.assessmentId ?? '');
   const [status, setStatus] = useState<FindingStatus>('open');
@@ -176,6 +177,7 @@ export function FindingDetailsPanel({ finding, onClose }: { finding: Finding | n
             </a>
           )}
 
+          {canEdit && (
           <section className="rounded-xl border border-line p-4">
             <h3 className="mb-3 text-sm font-semibold">Track the fix</h3>
             <div className="space-y-3">
@@ -202,6 +204,7 @@ export function FindingDetailsPanel({ finding, onClose }: { finding: Finding | n
               </Button>
             </div>
           </section>
+          )}
         </div>
       )}
     </Drawer>
