@@ -147,8 +147,8 @@ function SiteHeader() {
 
   return (
     <header className={cx('sticky top-0 z-40 transition-colors', scrolled ? 'border-b border-line bg-surface/85 backdrop-blur-md' : 'bg-transparent')}>
-      <div className="mx-auto flex h-16 max-w-6xl items-center gap-6 px-4 sm:px-6">
-        <Link to="/" aria-label="Aquarient home">
+      <div className="mx-auto flex h-16 max-w-6xl items-center gap-3 px-4 sm:gap-6 sm:px-6">
+        <Link to="/" aria-label="Aquarient home" className="min-w-0 shrink">
           <BrandMark />
         </Link>
         <nav className="hidden flex-1 items-center justify-center gap-1 md:flex" aria-label="Sections">
@@ -158,11 +158,12 @@ function SiteHeader() {
             </a>
           ))}
         </nav>
-        <div className="ml-auto flex items-center gap-2 md:ml-0">
+        <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2 md:ml-0">
           <ThemeToggle />
           {signedIn ? (
             <LinkButton to="/dashboard" variant="primary" size="sm" iconRight={<ArrowRight className="h-3.5 w-3.5" />}>
-              Open dashboard
+              <span className="sm:hidden">Open</span>
+              <span className="hidden sm:inline">Open dashboard</span>
             </LinkButton>
           ) : (
             <>

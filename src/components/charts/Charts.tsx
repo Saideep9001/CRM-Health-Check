@@ -99,7 +99,8 @@ export function FindingsBySeverityChart({ findings, size = 190, onSelect }: { fi
   if (!total) return <NoData text="No problems to show — nice!" />;
 
   return (
-    <div className="flex flex-col items-center gap-5 sm:flex-row">
+    // Wraps by the space it has (not the screen size), so it fits narrow dashboard panels too.
+    <div className="flex flex-wrap items-center justify-center gap-5">
       <div className="relative shrink-0" style={{ width: size, height: size }}>
         <ResponsiveContainer>
           <PieChart>
@@ -131,7 +132,7 @@ export function FindingsBySeverityChart({ findings, size = 190, onSelect }: { fi
           <span className="text-xs capitalize text-ink-subtle">{hover === null ? 'Total findings' : data[hover].name}</span>
         </div>
       </div>
-      <ul className="w-full min-w-0 space-y-2 sm:w-auto sm:flex-1">
+      <ul className="min-w-[12rem] flex-1 space-y-2">
         {data.map((d, i) => (
           <li
             key={d.name}

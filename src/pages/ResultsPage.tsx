@@ -247,10 +247,13 @@ export default function ResultsPage() {
                 {SUMMARY.map((s) => {
                   const active = s.key !== 'total' && severity === s.key;
                   return (
-                    <StaggerItem key={s.key}>
+                    <StaggerItem key={s.key} className="h-full">
                       <button
                         onClick={() => setParam('severity', s.key === 'total' || severity === s.key ? 'all' : s.key)}
-                        className={cx('card card-pad w-full text-left transition hover:-translate-y-0.5 hover:shadow-pop', active && 'ring-2 ring-brand/50')}
+                        className={cx(
+                          'card card-pad flex h-full w-full flex-col items-start text-left transition hover:shadow-pop',
+                          active ? 'ring-2 ring-brand/50' : 'hover:-translate-y-0.5',
+                        )}
                         aria-pressed={active}
                         title={s.hint}
                       >
@@ -261,11 +264,9 @@ export default function ResultsPage() {
                         <p className="mt-1 text-[28px] font-semibold leading-none">
                           {findingsQ.isLoading ? '—' : <AnimatedNumber value={counts[s.key]} duration={0.6} />}
                         </p>
-                        {s.key !== 'total' && (
-                          <p className="mt-1 text-[11px] text-ink-subtle">
-                            {active ? 'Click to clear filter' : 'Click to filter'}
-                          </p>
-                        )}
+                        <p className="mt-1 text-[11px] text-ink-subtle">
+                          {s.key === 'total' ? (severity === 'all' ? 'All urgency levels' : 'Click to show all') : active ? 'Click to clear filter' : 'Click to filter'}
+                        </p>
                       </button>
                     </StaggerItem>
                   );

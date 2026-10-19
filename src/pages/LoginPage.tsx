@@ -229,11 +229,17 @@ export default function LoginPage() {
             <Link to="/" className="mb-8 inline-block lg:hidden" aria-label="Aquarient — go to the home page">
               <BrandMark />
             </Link>
-            <h1 className="text-2xl font-semibold tracking-tight">{needsSetup ? 'Set up your workspace' : 'Sign in to your workspace'}</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">{status.isLoading ? ' ' : needsSetup ? 'Set up your workspace' : 'Sign in to your workspace'}</h1>
             <p className="mt-1.5 text-sm text-ink-muted">
               {needsSetup ? 'Create the first admin account. You can add your team afterwards.' : next ? 'Please sign in to continue.' : 'Welcome back. Use your work email.'}
             </p>
-            {needsSetup ? <SetupForm onDone={goToApp} /> : (
+            {status.isLoading ? (
+              <div className="mt-6 space-y-4" aria-busy="true" aria-label="Loading">
+                <div className="h-11 animate-pulse rounded-lg bg-muted" />
+                <div className="h-11 animate-pulse rounded-lg bg-muted" />
+                <div className="h-11 animate-pulse rounded-lg bg-muted" />
+              </div>
+            ) : needsSetup ? <SetupForm onDone={goToApp} /> : (
             <>
 
             <form onSubmit={submit} noValidate className="mt-6 space-y-4">
