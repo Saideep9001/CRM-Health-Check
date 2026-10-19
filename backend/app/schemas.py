@@ -94,6 +94,7 @@ class CrmAnswer(ApiModel):
     rows: list[CrmRow]
     salesforce_url: str | None
     as_of: datetime
+    app_url: str | None = None  # where to see the full list inside the platform
 
 
 class DataObject(ApiModel):

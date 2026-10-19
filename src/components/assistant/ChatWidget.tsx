@@ -4,7 +4,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent, typ
 import { useLocation, useNavigate } from 'react-router-dom';
 import { assistantApi } from '@/api/assistant';
 import { useAssessments, useConnection } from '@/api/queries';
-import { answer, welcomeMessage, type GuideContext } from '@/assistant/guide';
+import { answer, isDataQuestion, welcomeMessage, type GuideContext } from '@/assistant/guide';
 import { useLatestAssessment } from '@/hooks/useLatestAssessment';
 import { errorMessage } from '@/api/client';
 import { cx, fmtDateTime } from '@/lib/format';
@@ -29,8 +29,10 @@ function formatCrmAnswer(a: CrmAnswer): string {
     const label = r.url ? `[${r.label.replace(/[[\]]/g, '')}](${r.url})` : `**${r.label}**`;
     lines.push(`- ${label}${r.detail ? ` — ${r.detail}` : ''}`);
   }
-  if (a.total !== null && a.rows.length && a.total > a.rows.length) lines.push(`Showing ${a.rows.length} of ${a.total.toLocaleString('en-US')}.`);
-  if (a.salesforceUrl) lines.push(`[Open in Salesforce](${a.salesforceUrl})`);
+  if (a.id === 'group') lines.push(a.total !== null && a.rows.length >= 8 ? 'Showing the 8 largest groups.' : '');
+  else if (a.total !== null && a.rows.length && a.total > a.rows.length) lines.push(`Showing ${a.rows.length} of ${a.total.toLocaleString('en-US')}.`);
+  const links = [a.appUrl ? `[See all in Your Data](${a.appUrl})` : '', a.salesforceUrl ? `[Open in Salesforce](${a.salesforceUrl})` : ''].filter(Boolean);
+  if (links.length) lines.push(links.join(' · '));
   lines.push(`Live from Salesforce · ${fmtDateTime(a.asOf)}`);
   return lines.join('\n');
 }
@@ -130,7 +132,7 @@ export function ChatWidget() {
 
   const conn = useConnection();
   const all = useAssessments();
-  const { latest, findings } = useLatestAssessment();
+  const { latest, findings, results } = useLatestAssessment();
 
   const ctx: GuideContext = useMemo(
     () => ({
@@ -138,9 +140,10 @@ export function ChatWidget() {
       connection: conn.data ?? null,
       latest,
       findings,
+      results: results ?? null,
       running: (all.data ?? []).some((a) => a.status === 'running' || a.status === 'queued'),
     }),
-    [pathname, conn.data, latest, findings, all.data],
+    [pathname, conn.data, latest, findings, results, all.data],
   );
 
   // Greet on first open.
@@ -190,8 +193,35 @@ export function ChatWidget() {
       patch(botId, { text: a.text, suggestions: a.suggestions, pending: false, source: 'guide' });
     };
 
-    // Live Salesforce data questions always use the exact read-only lookup, in either mode.
+    // Questions about the org's own records go to the read-only data engine first; anything the
+    // guide doesn't recognise gets a second chance there too.
     const guided = answer(q, ctx);
+    const isConnected = ctx.connection?.status === 'connected';
+    const dataFirst = isConnected && isDataQuestion(q, ctx);
+    if (dataFirst || (isConnected && guided.fallback)) {
+      const onObject = pathname.match(/^\/data\/([^/?#]+)/);
+      try {
+        const res = await assistantApi.answer({ question: q, context: onObject ? decodeURIComponent(onObject[1]) : undefined });
+        if (res) {
+          patch(botId, { text: formatCrmAnswer(res), suggestions: ['What can I ask about my data?', 'Open deals by stage', 'What should I fix first?'], pending: false, source: 'data' });
+          setBusy(false);
+          return;
+        }
+      } catch (e) {
+        if (dataFirst && !guided.crm) {
+          patch(botId, {
+            text: `I couldn’t get that from Salesforce. ${errorMessage(e)}`,
+            suggestions: ['Is my Salesforce connected?', 'What can I ask about my data?'],
+            pending: false,
+            source: 'guide',
+          });
+          setBusy(false);
+          return;
+        }
+      }
+    }
+
+    // Fixed read-only lookups (also explain what's possible when Salesforce isn't connected).
     if (guided.crm) {
       try {
         const res = await assistantApi.crmQuery(guided.crm);
@@ -272,7 +302,7 @@ export function ChatWidget() {
               <div className="min-w-0 flex-1 leading-tight">
                 <p className="text-sm font-semibold">Aqua · Help assistant</p>
                 <p className="flex items-center gap-1 text-[11px] text-white/75">
-                  Built-in guide · answers instantly
+                  Platform, results & your live data
                 </p>
               </div>
               <button onClick={reset} className="rounded-md p-1.5 text-white/80 hover:bg-white/10 hover:text-white" aria-label="Start a new conversation" title="New conversation">

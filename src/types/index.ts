@@ -394,6 +394,8 @@ export interface CrmAnswer {
   rows: CrmRow[];
   /** Link to the matching list in Salesforce. */
   salesforceUrl: string | null;
+  /** The same list in Your Data. */
+  appUrl?: string | null;
   asOf: string;
 }
 
