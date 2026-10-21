@@ -18,9 +18,10 @@ import {
   UserRound,
   type LucideIcon,
 } from 'lucide-react';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useId, useState, type ReactNode } from 'react';
 import { cx, fmtAgo, fmtDateTime, fmtNumber } from '@/lib/format';
 import type { ConnectionSnapshot, SalesforceConnection } from '@/types';
+import { LogoGlyph } from '../ui/Brand';
 import { Button } from '../ui/Button';
 
 type Status = SalesforceConnection['status'];
@@ -41,71 +42,73 @@ function useTick(ms = 30_000) {
   }, [ms]);
 }
 
-/** Platform ⇄ Salesforce with data packets flowing while connected (faster while checking). */
+/** Platform ⇄ Salesforce: one clean line with a single soft glow travelling along it while connected. */
 function LinkVisual({ status, checking, orgLabel }: { status: Status; checking: boolean; orgLabel: string | null }) {
+  const id = useId().replace(/:/g, '');
   const active = status === 'connected';
   const broken = status === 'expired' || status === 'error';
-  const line = active ? 'rgb(var(--good))' : broken ? 'rgb(var(--warn))' : 'rgb(var(--line))';
-  const speed = checking ? 0.9 : 2.6;
+  const W = 140;
+  const Y = 36;
+
   return (
-    <div className="flex shrink-0 items-start justify-center gap-1">
-      <div className="flex w-20 flex-col items-center gap-2">
-        <motion.span
-          className="relative flex h-16 w-16 items-center justify-center rounded-2xl bg-brand text-white shadow-lg shadow-brand/30"
-          animate={active ? { y: [0, -3, 0] } : undefined}
-          transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
-        >
-          <svg viewBox="0 0 32 32" className="h-9 w-9" aria-hidden="true">
-            <path d="M9 21.5 16 8l7 13.5h-3.3L16 14l-3.7 7.5z" fill="currentColor" />
-            <circle cx="16" cy="23.5" r="1.8" fill="#5eead4" />
-          </svg>
-        </motion.span>
-        <span className="text-[11px] font-medium text-ink-muted">Aquarient</span>
+    <div className="flex shrink-0 items-start justify-center">
+      <div className="flex w-24 flex-col items-center gap-2">
+        <span className="flex h-[72px] w-[72px] items-center justify-center rounded-2xl border border-line bg-white shadow-md">
+          <LogoGlyph className="h-12 w-12" />
+        </span>
+        <span className="text-[11px] font-semibold text-ink-muted">Aquarient</span>
       </div>
 
-      <svg width="132" height="64" viewBox="0 0 132 64" className="mt-0 shrink-0" aria-hidden="true">
-        <line x1="4" y1="24" x2="128" y2="24" stroke={line} strokeWidth="2" strokeDasharray="6 6" className={active ? 'animate-flow' : ''} opacity={active ? 0.55 : 1} />
-        <line x1="4" y1="40" x2="128" y2="40" stroke={line} strokeWidth="2" strokeDasharray="6 6" className={active ? 'animate-flow' : ''} opacity={active ? 0.3 : 0.6} style={{ animationDirection: 'reverse' }} />
-        {active &&
-          [0, 1, 2].map((i) => (
-            <motion.circle
-              key={`out${i}`}
-              r="3.5"
-              cy="24"
-              fill="rgb(var(--good))"
-              initial={{ cx: 4, opacity: 0 }}
-              animate={{ cx: [4, 128], opacity: [0, 1, 1, 0] }}
-              transition={{ duration: speed, repeat: Infinity, delay: (i * speed) / 3, ease: 'linear' }}
-            />
-          ))}
-        {active &&
-          [0, 1].map((i) => (
-            <motion.rect
-              key={`in${i}`}
-              width="7"
-              height="5"
-              rx="1.5"
-              y="37.5"
-              fill="#00a1e0"
-              initial={{ x: 124, opacity: 0 }}
-              animate={{ x: [124, 2], opacity: [0, 1, 1, 0] }}
-              transition={{ duration: speed * 1.2, repeat: Infinity, delay: (i * speed) / 2 + 0.4, ease: 'linear' }}
-            />
-          ))}
+      <svg width={W} height="72" viewBox={`0 0 ${W} 72`} className="shrink-0" aria-hidden="true">
+        <defs>
+          <linearGradient id={`line-${id}`} gradientUnits="userSpaceOnUse" x1="8" y1={Y} x2={W - 8} y2={Y}>
+            <stop offset="0" stopColor="#058CC9" />
+            <stop offset="1" stopColor="#00a1e0" />
+          </linearGradient>
+          <radialGradient id={`glow-${id}`}>
+            <stop offset="0" stopColor="#fff" stopOpacity="1" />
+            <stop offset="0.35" stopColor="#5fd3ff" stopOpacity="0.9" />
+            <stop offset="1" stopColor="#00a1e0" stopOpacity="0" />
+          </radialGradient>
+        </defs>
+
+        <line
+          x1="8"
+          y1={Y}
+          x2={W - 8}
+          y2={Y}
+          stroke={active ? `url(#line-${id})` : broken ? 'rgb(var(--warn))' : 'rgb(var(--line))'}
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeDasharray={active ? undefined : '4 6'}
+        />
+
+        {active && (
+          <motion.circle
+            cy={Y}
+            r="9"
+            fill={`url(#glow-${id})`}
+            initial={{ cx: 8 }}
+            animate={{ cx: [8, W - 8] }}
+            transition={{ duration: checking ? 1 : 3.2, repeat: Infinity, repeatType: 'reverse', ease: 'easeInOut' }}
+          />
+        )}
+
         {broken && (
-          <g transform="translate(58 24)">
-            <circle r="10" fill="rgb(var(--warn-soft))" stroke="rgb(var(--warn))" strokeWidth="1.5" />
+          <g transform={`translate(${W / 2} ${Y})`}>
+            <circle r="10" fill="rgb(var(--surface))" stroke="rgb(var(--warn))" strokeWidth="1.5" />
             <path d="M-3.5 -3.5 3.5 3.5M3.5 -3.5-3.5 3.5" stroke="rgb(var(--warn))" strokeWidth="2" strokeLinecap="round" />
           </g>
         )}
       </svg>
 
-      <div className="flex w-20 flex-col items-center gap-2">
-        <span className={cx('relative flex h-16 w-16 items-center justify-center rounded-2xl shadow-lg', active ? 'bg-[#00a1e0] text-white shadow-[#00a1e0]/30' : 'bg-muted text-ink-subtle shadow-none')}>
-          {active && <span className="absolute inset-0 animate-pulse-ring rounded-2xl border-2 border-[#00a1e0]" />}
-          {active ? <Cloud className="h-8 w-8" /> : <CloudOff className="h-8 w-8" />}
+      <div className="flex w-24 flex-col items-center gap-2">
+        <span className={cx('flex h-[72px] w-[72px] items-center justify-center rounded-2xl shadow-md', active ? 'bg-[#00a1e0] text-white' : 'bg-muted text-ink-subtle shadow-none')}>
+          {active ? <Cloud className="h-9 w-9" /> : <CloudOff className="h-9 w-9" />}
         </span>
-        <span className="max-w-[5rem] truncate text-[11px] font-medium text-ink-muted" title={orgLabel ?? undefined}>{orgLabel ?? 'Salesforce'}</span>
+        <span className="max-w-[6rem] truncate text-[11px] font-semibold text-ink-muted" title={orgLabel ?? undefined}>
+          {orgLabel ?? 'Salesforce'}
+        </span>
       </div>
     </div>
   );
