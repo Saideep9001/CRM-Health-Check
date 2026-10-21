@@ -7,7 +7,6 @@ import { objectLabel } from '@/components/category/DiagnosticAreaCard';
 import { cx, fmtDate, fmtNumber } from '@/lib/format';
 import type { DiagnosticArea, Finding, IndicatorValue, Severity } from '@/types';
 import { Drawer } from '../ui/Overlay';
-import { ScoreRing } from '../ui/Visuals';
 import { RecordsTable } from './RecordsTable';
 
 /** Same thresholds the engine uses (backend/app/engine/core.py → severity_for, finding min_score). */
@@ -147,14 +146,24 @@ export function IndicatorDetailsPanel({
               <p className="mt-1 text-xs text-ink-muted">{v.direction === 'higher-better' ? 'Higher is better' : 'Lower is better'}</p>
             </div>
             {scored && (
-              <div className="flex items-center gap-4">
-                <ScoreRing score={Math.round(v.score!)} size={88} stroke={8} label="Score" showBand={false} />
+              <div className="w-full sm:w-64">
+                <p className="text-xs font-medium uppercase tracking-wide text-ink-subtle">Score</p>
+                <p className="mt-1 text-4xl font-semibold tabular-nums tracking-tight" style={{ color: urgency ? SEVERITY_COLORS[urgency.severity] : 'rgb(var(--good))' }}>
+                  {Math.round(v.score!)}
+                  <span className="text-xl font-medium text-ink-subtle"> / 100</span>
+                </p>
+                <div className="relative mt-2 h-2 rounded-full bg-gradient-to-r from-[#dc2626] via-[#f59e0b] to-[#16a34a]">
+                  <span
+                    className="absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-[3px] border-surface shadow"
+                    style={{ left: `${Math.max(0, Math.min(100, v.score!))}%`, background: urgency ? SEVERITY_COLORS[urgency.severity] : 'rgb(var(--good))' }}
+                  />
+                </div>
                 <span
-                  className={cx('inline-flex items-center gap-1.5 text-xs font-semibold', !urgency && 'text-good')}
+                  className={cx('mt-2 inline-flex items-center gap-1.5 text-xs font-semibold', !urgency && 'text-good')}
                   style={urgency ? { color: SEVERITY_COLORS[urgency.severity] } : undefined}
                 >
                   {urgency && <AlertTriangle className="h-3.5 w-3.5" />}
-                  {urgency ? `${urgency.label} problem` : 'No problem raised'}
+                  {urgency ? `${urgency.label} problem (score ${urgency.range})` : `No problem raised (${PROBLEM_BELOW} or more)`}
                 </span>
               </div>
             )}
