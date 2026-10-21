@@ -125,6 +125,7 @@ class FindingRow(Base):
     records_where: Mapped[str | None] = mapped_column(Text)
     value_at_risk: Mapped[float | None] = mapped_column(Float)  # e.g. total Amount of the deals involved
     fix_url: Mapped[str | None] = mapped_column(String(512))  # Salesforce page where it can be fixed
+    measure: Mapped[str | None] = mapped_column(String(200))  # the measure ("What we measure") that raised it
     # Same problem across checks: fingerprint = area + name + object. previous_affected is from the last check.
     fingerprint: Mapped[str | None] = mapped_column(String(64), index=True)
     previous_affected: Mapped[int | None] = mapped_column(Integer)

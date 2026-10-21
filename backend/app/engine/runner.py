@@ -136,6 +136,22 @@ def _fail(db, row: AssessmentRow, message: str) -> None:
     db.commit()
 
 
+def _link_measures(metrics: list, findings: list) -> None:
+    """Tie each problem a check raised to the measure the same check produced (so one panel shows both)."""
+    if not metrics:
+        return
+    for f in findings:
+        if f.measure:
+            continue
+        objs = {f.records_object, f.object_name} - {None}
+
+        def fit(m) -> tuple:
+            m_objs = {r.get("object") for r in (m.records or [])}
+            return (m.label == f.name, bool(objs & m_objs), m.score is not None)
+
+        f.measure = max(metrics, key=fit).label
+
+
 def _run(db, http: httpx.Client, row: AssessmentRow) -> None:
     sf = service.client_for(db, http, get_settings(), org_id=row.org_id or None)  # this check's org, not the active one
     _check_api_budget(sf)
@@ -156,6 +172,7 @@ def _run(db, http: httpx.Client, row: AssessmentRow) -> None:
         row.current_step = AREAS[area_id][2].get(check, "Checking your data")
         db.commit()
         ctx.area_id = area_id
+        before_m, before_f = len(ctx.metrics.get(area_id, [])), len(ctx.findings)
         try:
             check(ctx)
             ran.add(area_id)
@@ -172,6 +189,7 @@ def _run(db, http: httpx.Client, row: AssessmentRow) -> None:
         except Exception:  # noqa: BLE001 — one broken check shouldn't stop the others
             log.exception("Check %s crashed", check.__name__)
             failures.setdefault(area_id, []).append(f"{row.current_step}: unexpected error")
+        _link_measures(ctx.metrics.get(area_id, [])[before_m:], ctx.findings[before_f:])
 
     db.refresh(row)
     if row.status == "cancelled":
@@ -229,6 +247,7 @@ def _run(db, http: httpx.Client, row: AssessmentRow) -> None:
             object_name=f.object_name,
             records_object=f.records_object,
             records_where=f.records_where,
+            measure=f.measure,
             value_at_risk=f.value_at_risk,
             fix_url=f.fix_url,
             fingerprint=fp,

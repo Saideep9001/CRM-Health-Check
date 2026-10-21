@@ -251,6 +251,8 @@ export interface Finding {
   recordsAvailable?: boolean;
   /** Money involved, e.g. the total Amount of the deals affected. */
   valueAtRisk?: number | null;
+  /** The "What we measure" item that raised this problem. */
+  measure?: string | null;
   /** Salesforce page where this can be fixed. */
   fixUrl?: string | null;
   /** Affected records in the previous check (null = new problem). */

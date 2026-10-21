@@ -92,6 +92,7 @@ def to_finding(row: FindingRow) -> Finding:
         records_available=bool(row.records_object),
         value_at_risk=row.value_at_risk,
         fix_url=row.fix_url,
+        measure=row.measure,
         previous_affected=row.previous_affected,
         change=_change(row),
     )

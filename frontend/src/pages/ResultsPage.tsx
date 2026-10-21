@@ -353,7 +353,7 @@ export default function ResultsPage() {
         </>
       )}
 
-      <FindingDetailsPanel finding={selected} onClose={closePanel} />
+      <FindingDetailsPanel finding={selected} onClose={closePanel} others={all} onOpenFinding={(f) => setSelectedId(f.id)} />
     </div>
   );
 }

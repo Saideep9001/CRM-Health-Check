@@ -325,3 +325,14 @@ def test_second_check_compares_and_keeps_triage(client, sf):
     assert f2["Duplicate Accounts"]["change"] == "same" and f2["Duplicate Accounts"]["status"] == "open"  # came back: reopened
     resolved = client.get(f"{API}/assessments/{second}/results").json()["resolved"]
     assert [r["name"] for r in resolved] == ["Open Leads without an email"] and resolved[0]["previousAffected"] == 10
+
+
+def test_every_problem_links_to_the_measure_that_raised_it(client, sf):
+    connect(client)
+    aid = start(client, areas=("area-1", "area-2")).json()["id"]
+    res = client.get(f"{API}/assessments/{aid}/results").json()
+    labels = {(a["areaId"], i["label"]) for a in res["areas"] for i in a["indicators"]}
+    found = client.get(f"{API}/assessments/{aid}/findings", params={"pageSize": 500}).json()["items"]
+    assert found and all((f["areaId"], f["measure"]) in labels for f in found)
+    dup = next(f for f in found if f["name"] == "Duplicate Accounts")
+    assert dup["measure"] == "Duplicate Accounts"

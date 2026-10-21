@@ -67,6 +67,7 @@ class FindingDraft:
     records_where: str | None = None
     value_at_risk: float | None = None
     fix_url: str | None = None
+    measure: str | None = None  # label of the measure that raised it (set by the runner)
 
 
 @dataclass

@@ -396,6 +396,7 @@ class Finding(ApiModel):
     records_available: bool = False  # the affected records can be listed / exported
     value_at_risk: float | None = None
     fix_url: str | None = None
+    measure: str | None = None  # the "What we measure" item that raised it
     previous_affected: int | None = None  # in the previous check; None = new problem
     change: Literal["new", "worse", "better", "same"] = "new"
 

@@ -253,7 +253,7 @@ export default function DiagnosticAreaPage() {
           setSelectedId(f.id);
         }}
       />
-      <FindingDetailsPanel finding={selected} onClose={() => setSelectedId(null)} />
+      <FindingDetailsPanel finding={selected} onClose={() => setSelectedId(null)} others={areaFindings} onOpenFinding={(f) => setSelectedId(f.id)} />
     </div>
   );
 }

@@ -195,7 +195,7 @@ export default function CategoryPage() {
           setSelectedId(f.id);
         }}
       />
-      <FindingDetailsPanel finding={selected} onClose={() => setSelectedId(null)} />
+      <FindingDetailsPanel finding={selected} onClose={() => setSelectedId(null)} others={findings} onOpenFinding={(f) => setSelectedId(f.id)} />
     </div>
   );
 }
