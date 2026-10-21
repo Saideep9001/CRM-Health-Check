@@ -200,7 +200,7 @@ export default function ConnectionPage() {
 
   const isConnected = conn.data?.status === 'connected';
   const orgId = conn.data?.orgId ?? null;
-  const snapshotLoaded = !!useConnectionSnapshot(orgId, isConnected).data;
+  const snapshot = useConnectionSnapshot(orgId, isConnected).data ?? null;
 
   // Without app keys, Connect can't work yet: go to the setup page first.
   const onConnect = () => {
@@ -230,7 +230,7 @@ export default function ConnectionPage() {
             onConnect={canEdit ? onConnect : undefined}
             onDisconnect={isAdmin ? () => setConfirmOpen(true) : undefined}
             checking={check.isPending}
-            hideUsage={snapshotLoaded}
+            snapshot={snapshot}
             onCheck={() =>
               check.mutate(undefined, {
                 onSuccess: (c) => notify(c.status === 'connected' ? 'Connection healthy' : 'Connection needs attention', c.errorMessage ?? undefined, c.status === 'connected' ? 'success' : 'warning'),
