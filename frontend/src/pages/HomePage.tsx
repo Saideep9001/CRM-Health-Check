@@ -27,6 +27,7 @@ import { Link } from 'react-router-dom';
 import { useMe, useAuthStatus } from '@/api/queries';
 import { ThemeToggle } from '@/components/layout/Header';
 import { HeroVisual } from '@/components/marketing/HeroVisual';
+import { SiteFooter } from '@/components/marketing/SiteFooter';
 import { ComingSoonBadge, ReleaseBadge } from '@/components/ui/Badges';
 import { BrandMark } from '@/components/ui/Brand';
 import { InfoTip } from '@/components/ui/HelpTip';
@@ -513,50 +514,7 @@ export default function HomePage() {
       </section>
 
       {/* ---------------- Footer ---------------- */}
-      <footer className="border-t border-line bg-surface px-4 py-12 sm:px-6">
-        <div className="mx-auto grid max-w-6xl gap-8 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="lg:col-span-2">
-            <BrandMark />
-            <p className="mt-3 max-w-sm text-sm text-ink-muted">Salesforce health checks by Aquarient Technologies.</p>
-          </div>
-          <div>
-            <p className="label">Product</p>
-            <ul className="mt-3 space-y-2 text-sm">
-              {NAV.slice(0, 3).map((n) => (
-                <li key={n.href}>
-                  <a href={n.href} className="text-ink-muted hover:text-ink">
-                    {n.label}
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </div>
-          <div>
-            <p className="label">Account</p>
-            <ul className="mt-3 space-y-2 text-sm">
-              <li>
-                <Link to={APP_ENTRY_PATH} className="text-ink-muted hover:text-ink">
-                  {AUTH_REQUIRED ? 'Sign in' : 'Open the platform'}
-                </Link>
-              </li>
-              <li>
-                <a href="#security" className="text-ink-muted hover:text-ink">
-                  Security
-                </a>
-              </li>
-              <li>
-                <a href="#faq" className="text-ink-muted hover:text-ink">
-                  FAQ
-                </a>
-              </li>
-            </ul>
-          </div>
-        </div>
-        <div className="mx-auto mt-10 flex max-w-6xl flex-wrap justify-between gap-2 border-t border-line pt-6 text-xs text-ink-subtle">
-          <span>© {new Date().getFullYear()} Aquarient Technologies LLC. All rights reserved.</span>
-          <span>Salesforce and Sales Cloud are trademarks of Salesforce, Inc.</span>
-        </div>
-      </footer>
+      <SiteFooter nav={NAV} entryPath={APP_ENTRY_PATH} entryLabel={AUTH_REQUIRED ? 'Sign in' : 'Open the platform'} />
     </div>
   );
 }

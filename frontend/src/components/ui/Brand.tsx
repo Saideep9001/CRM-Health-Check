@@ -30,24 +30,25 @@ export function LogoGlyph({ className }: { className?: string }) {
 }
 
 /** The Aquarient wave, drawn as a heartbeat — sits under the wordmark like the wave in the Aquarient logo. */
-function PulseWave({ className }: { className?: string }) {
+function PulseWave({ className, color = '#058CC9' }: { className?: string; color?: string }) {
   return (
     <svg viewBox="0 0 44 8" className={className} aria-hidden="true" preserveAspectRatio="none">
-      <path d="M1 5.2h13l2.2-3.6 2.8 5.2 2.4-4.1 1.4 2.5H43" fill="none" stroke="#058CC9" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M1 5.2h13l2.2-3.6 2.8 5.2 2.4-4.1 1.4 2.5H43" fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
 
-export function BrandMark({ compact, className }: { compact?: boolean; className?: string }) {
+/** `onDark` uses white text for dark backgrounds (e.g. the site footer). */
+export function BrandMark({ compact, className, onDark }: { compact?: boolean; className?: string; onDark?: boolean }) {
   return (
     <div className={cx('flex items-center gap-2.5', className)}>
       <LogoGlyph className="h-9 w-9 shrink-0 drop-shadow-sm" />
       {!compact && (
         <div className="min-w-0 leading-none">
-          <p className="truncate text-[17px] font-semibold tracking-tight text-[#043D72] dark:text-white">aquarient</p>
+          <p className={cx('truncate text-[17px] font-semibold tracking-tight', onDark ? 'text-white' : 'text-[#043D72] dark:text-white')}>aquarient</p>
           <p className="mt-1 flex items-center gap-1.5">
-            <PulseWave className="h-2 w-7 shrink-0" />
-            <span className="truncate text-[9.5px] font-semibold uppercase tracking-[0.2em] text-ink-subtle">CRM Health</span>
+            <PulseWave className="h-2 w-7 shrink-0" color={onDark ? '#5fd3ff' : undefined} />
+            <span className={cx('truncate text-[9.5px] font-semibold uppercase tracking-[0.2em]', onDark ? 'text-white/60' : 'text-ink-subtle')}>CRM Health</span>
           </p>
         </div>
       )}
