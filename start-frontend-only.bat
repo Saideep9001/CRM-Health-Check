@@ -8,7 +8,7 @@ echo   Frontend Dev Server  ^|  Built-in Mock API
 echo  ===============================================
 echo.
 
-cd /d "%~dp0"
+cd /d "%~dp0frontend"
 
 :: ---- Check Node ----
 where node >nul 2>&1

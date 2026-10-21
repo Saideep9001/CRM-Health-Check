@@ -8,8 +8,8 @@ echo   Local Development Server
 echo  ===============================================
 echo.
 
-:: Move into the project folder (works even if you run the bat from elsewhere)
-cd /d "%~dp0"
+:: Move into the website folder (works even if you run the bat from elsewhere)
+cd /d "%~dp0frontend"
 
 :: Already running? Just open it instead of starting a second copy on another port.
 netstat -ano | findstr "LISTENING" | findstr ":5173 " >nul

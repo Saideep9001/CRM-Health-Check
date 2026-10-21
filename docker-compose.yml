@@ -42,7 +42,7 @@ services:
 
   web:
     build:
-      context: .
+      context: ./frontend
       dockerfile: deploy/Dockerfile.web
     ports: ["8080:80"]
     depends_on: [api]
