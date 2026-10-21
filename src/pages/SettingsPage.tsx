@@ -3,7 +3,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { API_BASE_URL } from '@/api/client';
 import { useApiHealth, useAuthStatus, useConnection, useMe, useRole, useSettings, useUpdateMe, useUpdateSettings } from '@/api/queries';
-import { ChangePasswordCard, TeamSettings } from '@/components/settings/TeamSettings';
+import { ChangePasswordCard, RequestAccessCard } from '@/components/settings/TeamSettings';
 import { ConnectionStatusBadge } from '@/components/ui/Badges';
 import { Button } from '@/components/ui/Button';
 import { Field, Select, Toggle } from '@/components/ui/Form';
@@ -210,11 +210,16 @@ export default function SettingsPage() {
 
       {tab === 'team' &&
         (isAdmin ? (
-          <TeamSettings />
-        ) : (
           <SectionCard title="Team & access">
-            <p className="text-sm text-ink-muted">Only admins manage the team. Ask an admin if you need access to another client org.</p>
+            <p className="text-sm text-ink-muted">People, roles, org access and access requests are managed in the Admin Panel.</p>
+            <Button variant="primary" className="mt-3" icon={<ShieldCheck className="h-4 w-4" />} onClick={() => navigate('/admin')}>Open the Admin Panel</Button>
           </SectionCard>
+        ) : !authRequired ? (
+          <SectionCard title="Team & access">
+            <p className="text-sm text-ink-muted">Sign-in is turned off, so there’s no team to manage.</p>
+          </SectionCard>
+        ) : (
+          <RequestAccessCard />
         ))}
 
       {tab === 'notifications' && (

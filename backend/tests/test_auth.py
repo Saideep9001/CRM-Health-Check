@@ -14,11 +14,15 @@ API = "/api/v1"
 ORG_A = "00Dxx0000001"
 
 
-def _user(client, role: str, org_ids=(), all_orgs=False, email=None) -> dict:
+def _user(client, role: str, org_ids=(), all_orgs=False, email=None, keep_temporary=False) -> dict:
     body = {"name": f"{role.title()} Person", "email": email or f"{role}@aquarient.test", "role": role,
             "orgIds": list(org_ids), "allOrgs": all_orgs, "password": "a long safe password"}
     r = client.post(f"{API}/users", json=body)
     assert r.status_code == 201, r.text
+    if not keep_temporary:  # as if they'd already chosen their own password
+        with SessionLocal() as db:
+            db.get(UserRow, r.json()["id"]).must_change_password = False
+            db.commit()
     return {**r.json(), "password": body["password"]}
 
 

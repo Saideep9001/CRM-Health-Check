@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   ListChecks,
   Settings,
+  ShieldCheck,
   type LucideIcon,
 } from 'lucide-react';
 import { getArea, getCategory } from './categories';
@@ -17,6 +18,8 @@ export interface NavItem {
   to: string;
   label: string;
   icon: LucideIcon;
+  /** Only shown to admins (the server enforces it too). */
+  adminOnly?: boolean;
 }
 
 export const NAV_ITEMS: NavItem[] = [
@@ -28,6 +31,7 @@ export const NAV_ITEMS: NavItem[] = [
   { to: '/results',    label: 'My Results',          icon: ListChecks },
   { to: '/reports',    label: 'Reports',             icon: FileBarChart },
   { to: '/history',    label: 'Check History',       icon: History },
+  { to: '/admin',     label: 'Admin Panel',         icon: ShieldCheck, adminOnly: true },
   { to: '/settings',  label: 'Settings',            icon: Settings },
   { to: '/help',      label: 'Help & guide',        icon: HelpCircle },
 ];

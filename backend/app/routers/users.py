@@ -8,7 +8,7 @@ from pydantic import Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .. import auth
+from .. import audit, auth
 from ..auth import Principal, require_admin, require_user
 from ..config import Settings
 from ..db import get_db
@@ -56,6 +56,8 @@ class TeamMember(ApiModel):
     all_orgs: bool
     org_ids: list[str] = []
     is_active: bool
+    must_change_password: bool = False
+    locked: bool = False
     created_at: datetime | None = None
     last_login_at: datetime | None = None
 
@@ -100,12 +102,14 @@ def profile(p: Principal) -> UserProfile:
         with SessionLocal() as db:
             row = db.get(UserRow, p.id)
             with_title = row.title if row else None
-    return UserProfile(id=p.id, name=p.name, email=p.email, title=with_title, role=p.role)
+    return UserProfile(id=p.id, name=p.name, email=p.email, title=with_title, role=p.role, must_change_password=p.must_change_password)
 
 
 def _member(u: UserRow) -> TeamMember:
     return TeamMember(id=u.id, name=u.name, email=u.email, title=u.title, role=u.role, all_orgs=u.role == "admin" or bool(u.all_orgs),
-                      org_ids=list(u.org_ids or []), is_active=u.is_active, created_at=_utc(u.created_at), last_login_at=_utc(u.last_login_at))
+                      org_ids=list(u.org_ids or []), is_active=u.is_active, must_change_password=bool(u.must_change_password),
+                      locked=bool(_utc(u.locked_until) and _utc(u.locked_until) > datetime.now(timezone.utc)),
+                      created_at=_utc(u.created_at), last_login_at=_utc(u.last_login_at))
 
 
 def _start_session(db: Session, user: UserRow, remember: bool, request: Request, response: Response, settings: Settings) -> None:
@@ -150,11 +154,13 @@ def login(body: LoginRequest, request: Request, response: Response, db: Session 
         user.failed_logins = (user.failed_logins or 0) + 1
         if user.failed_logins >= auth.MAX_FAILED:
             user.locked_until, user.failed_logins = now + timedelta(minutes=auth.LOCK_MINUTES), 0
+            audit.record(db, audit.who(user), "account.locked", audit.who(user), f"{auth.MAX_FAILED} wrong passwords in a row")
         db.commit()
         raise wrong
     if not user.is_active:
         raise HTTPException(403, "This account has been deactivated. Ask an admin.")
     user.failed_logins, user.locked_until, user.last_login_at = 0, None, now
+    audit.record(db, audit.who(user), "signed.in")
     db.commit()
     _start_session(db, user, body.remember_me, request, response, settings)
     return profile(auth.principal(user))
@@ -209,7 +215,11 @@ def change_password(body: PasswordChange, user: Principal = Depends(require_user
     if row is None or not auth.verify_password(body.current_password, row.password_hash):
         raise HTTPException(422, "Your current password isn’t right.")
     auth.check_password_rules(body.new_password, row.email)
+    if body.new_password == body.current_password:
+        raise HTTPException(422, "Choose a new password that’s different from the current one.")
     row.password_hash = auth.hash_password(body.new_password)
+    row.must_change_password = False
+    audit.record(db, audit.who(row), "password.changed")
     db.commit()
     auth.end_sessions(db, row.id, keep=user.session_id)  # sign out everywhere else
     return Response(status_code=204)
@@ -236,15 +246,16 @@ def list_users(_: Principal = Depends(require_admin), db: Session = Depends(get_
 
 
 @router.post("/users", response_model=TeamMember, status_code=201)
-def create_user(body: TeamMemberCreate, _: Principal = Depends(require_admin), db: Session = Depends(get_db)):
+def create_user(body: TeamMemberCreate, me_: Principal = Depends(require_admin), db: Session = Depends(get_db)):
     email = _email(body.email)
     if db.scalars(select(UserRow).where(UserRow.email == email)).first():
         raise HTTPException(409, "Someone with that email already has an account.")
     auth.check_password_rules(body.password, email)
     role = _check_role(body.role)
     user = UserRow(id=str(uuid.uuid4()), email=email, name=body.name.strip(), password_hash=auth.hash_password(body.password), role=role,
-                   all_orgs=role == "admin" or body.all_orgs, org_ids=sorted(set(body.org_ids)), is_active=True)
+                   all_orgs=role == "admin" or body.all_orgs, org_ids=sorted(set(body.org_ids)), is_active=True, must_change_password=True)
     db.add(user)
+    audit.record(db, audit.who(me_), "user.added", audit.who(user), f"Role: {role}")
     db.commit()
     return _member(user)
 
@@ -257,6 +268,7 @@ def update_user(user_id: str, body: TeamMemberUpdate, me_: Principal = Depends(r
     losing_admin = (body.role is not None and body.role != "admin") or body.is_active is False
     if user.role == "admin" and losing_admin and _active_admins(db, excluding=user.id) == 0:
         raise HTTPException(409, "Keep at least one active admin.")
+    before = (user.role, bool(user.all_orgs), sorted(user.org_ids or []), user.is_active)
     if body.name is not None:
         user.name = body.name.strip()
     if body.role is not None:
@@ -269,6 +281,15 @@ def update_user(user_id: str, body: TeamMemberUpdate, me_: Principal = Depends(r
         user.all_orgs = True
     if body.is_active is not None:
         user.is_active = body.is_active
+    changes = []
+    if before[0] != user.role:
+        changes.append(f"role {before[0]} → {user.role}")
+    if (before[1], before[2]) != (bool(user.all_orgs), sorted(user.org_ids or [])):
+        changes.append("org access: " + ("all orgs" if user.all_orgs else f"{len(user.org_ids or [])} org(s)"))
+    if before[3] != user.is_active:
+        changes.append("reactivated" if user.is_active else "deactivated")
+    if changes:
+        audit.record(db, audit.who(me_), "user.updated", audit.who(user), "; ".join(changes))
     db.commit()
     if body.is_active is False or body.role is not None or body.org_ids is not None or body.all_orgs is not None:
         if user.id != me_.id:
@@ -277,12 +298,37 @@ def update_user(user_id: str, body: TeamMemberUpdate, me_: Principal = Depends(r
 
 
 @router.post("/users/{user_id}/password", status_code=204)
-def reset_password(user_id: str, body: PasswordReset, _: Principal = Depends(require_admin), db: Session = Depends(get_db)):
+def reset_password(user_id: str, body: PasswordReset, me_: Principal = Depends(require_admin), db: Session = Depends(get_db)):
     user = db.get(UserRow, user_id)
     if user is None:
         raise HTTPException(404, "User not found.")
     auth.check_password_rules(body.password, user.email)
     user.password_hash, user.failed_logins, user.locked_until = auth.hash_password(body.password), 0, None
+    user.must_change_password = True
+    audit.record(db, audit.who(me_), "password.reset", audit.who(user), "Temporary password; they must change it at sign-in")
     db.commit()
     auth.end_sessions(db, user.id)
+    return Response(status_code=204)
+
+
+@router.post("/users/{user_id}/unlock", status_code=204)
+def unlock_user(user_id: str, me_: Principal = Depends(require_admin), db: Session = Depends(get_db)):
+    user = db.get(UserRow, user_id)
+    if user is None:
+        raise HTTPException(404, "User not found.")
+    user.failed_logins, user.locked_until = 0, None
+    audit.record(db, audit.who(me_), "account.unlocked", audit.who(user))
+    db.commit()
+    return Response(status_code=204)
+
+
+@router.post("/users/{user_id}/sign-out", status_code=204)
+def sign_out_user(user_id: str, me_: Principal = Depends(require_admin), db: Session = Depends(get_db)):
+    """End every session of this person (they must sign in again)."""
+    user = db.get(UserRow, user_id)
+    if user is None:
+        raise HTTPException(404, "User not found.")
+    auth.end_sessions(db, user.id, keep=me_.session_id if user.id == me_.id else None)
+    audit.record(db, audit.who(me_), "user.signed_out", audit.who(user), "All sessions ended")
+    db.commit()
     return Response(status_code=204)

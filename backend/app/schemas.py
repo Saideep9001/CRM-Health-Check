@@ -227,6 +227,7 @@ class UserProfile(ApiModel):
     email: str
     title: str | None = None
     role: str | None = None
+    must_change_password: bool = False
 
 
 class UserProfileUpdate(ApiModel):

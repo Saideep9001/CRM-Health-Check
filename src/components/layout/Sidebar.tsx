@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Link, NavLink, useLocation } from 'react-router-dom';
 import { CATEGORIES } from '@/config/categories';
 import { NAV_ITEMS } from '@/config/navigation';
-import { useApiHealth, useConnection } from '@/api/queries';
+import { useAdminOverview, useApiHealth, useConnection, useRole } from '@/api/queries';
 import { CONNECTION_STATUS_LABEL } from '../ui/Badges';
 import { cx } from '@/lib/format';
 import { CategoryIcon } from '../ui/CategoryIcon';
@@ -31,6 +31,9 @@ export function Sidebar({
   const dot = (ok: boolean, loading: boolean) => cx('h-2 w-2 shrink-0 rounded-full', loading ? 'animate-pulse bg-ink-subtle' : ok ? 'bg-good' : 'bg-warn');
   const [catsOpen, setCatsOpen] = useState(true);
   const inAssessment = pathname.startsWith('/assessment');
+  const { isAdmin } = useRole();
+  const pendingRequests = useAdminOverview(isAdmin).data?.pendingRequests ?? 0;
+  const navItems = NAV_ITEMS.filter((n) => !n.adminOnly || isAdmin);
 
   const content = (compact: boolean, mobile: boolean) => (
     <div className="flex h-full flex-col">
@@ -53,7 +56,7 @@ export function Sidebar({
 
       <nav className="scrollbar-thin flex-1 space-y-0.5 overflow-y-auto p-3" aria-label="Primary">
         {!compact && <p className="label px-2.5 pb-2 pt-1">Workspace</p>}
-        {NAV_ITEMS.map((item) => {
+        {navItems.map((item) => {
           const Icon = item.icon;
           const isAssessment = item.to === '/assessment';
           const link = (
@@ -85,6 +88,14 @@ export function Sidebar({
                     {active && <span className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r bg-brand" />}
                     <Icon className="relative h-[18px] w-[18px] shrink-0" />
                     {!compact && <span className="relative flex-1 truncate">{item.label}</span>}
+                    {item.to === '/admin' && pendingRequests > 0 && (
+                      <span
+                        className={cx('relative grid min-w-[18px] place-items-center rounded-full bg-brand px-1 text-[10px] font-semibold leading-[18px] text-white', compact && 'absolute right-1 top-0.5')}
+                        aria-label={`${pendingRequests} access requests waiting`}
+                      >
+                        {pendingRequests}
+                      </span>
+                    )}
                     {!compact && isAssessment && (
                       <span
                         role="button"

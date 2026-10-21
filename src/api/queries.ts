@@ -1,7 +1,7 @@
 import { QueryCache, QueryClient, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { AppSettings, Assessment, CreateAssessmentRequest, DataRecordQuery, Finding, Paginated, SalesforceAppConfig, SalesforceAppUpdate, ScanScheduleUpdate, TeamMember, TeamMemberCreate, UpdateFindingRequest, UserProfile, UserRole } from '@/types';
+import type { AccessRequestStatus, AppSettings, Assessment, CreateAssessmentRequest, DataRecordQuery, Finding, Paginated, SalesforceAppConfig, SalesforceAppUpdate, ScanScheduleUpdate, TeamMember, TeamMemberCreate, UpdateFindingRequest, UserProfile, UserRole } from '@/types';
 import { isApiError } from './client';
-import { assessmentApi, authApi, connectionApi, consultantApi, dataApi, findingApi, reportApi, systemApi, teamApi, userApi } from './endpoints';
+import { accessApi, adminApi, assessmentApi, authApi, connectionApi, consultantApi, dataApi, findingApi, reportApi, systemApi, teamApi, userApi } from './endpoints';
 
 export const queryClient: QueryClient = new QueryClient({
   queryCache: new QueryCache({
@@ -311,7 +311,10 @@ export function useSetup() {
   });
 }
 
-export const useChangePassword = () => useMutation({ mutationFn: authApi.changePassword });
+export function useChangePassword() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: authApi.changePassword, onSuccess: () => qc.invalidateQueries({ queryKey: qk.me }) });
+}
 
 /** What the signed-in person may do (the server enforces the same rules). */
 export function useRole() {
@@ -324,7 +327,7 @@ export const useTeam = (enabled = true) => useQuery({ queryKey: ['team'], queryF
 
 export function useCreateMember() {
   const qc = useQueryClient();
-  return useMutation({ mutationFn: (body: TeamMemberCreate) => teamApi.create(body), onSuccess: () => qc.invalidateQueries({ queryKey: ['team'] }) });
+  return useMutation({ mutationFn: (body: TeamMemberCreate) => teamApi.create(body), onSuccess: () => invalidateTeam(qc) });
 }
 
 export function useUpdateMember() {
@@ -333,6 +336,50 @@ export function useUpdateMember() {
     mutationFn: ({ id, body }: { id: string; body: Partial<Pick<TeamMember, 'name' | 'role' | 'allOrgs' | 'orgIds' | 'isActive'>> }) => teamApi.update(id, body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['team'] }),
   });
+}
+
+const invalidateTeam = (qc: QueryClient) => {
+  qc.invalidateQueries({ queryKey: ['team'] });
+  qc.invalidateQueries({ queryKey: ['admin'] });
+};
+
+export function useUnlockMember() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: (id: string) => teamApi.unlock(id), onSuccess: () => invalidateTeam(qc) });
+}
+
+export function useSignOutMember() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: (id: string) => teamApi.signOut(id), onSuccess: () => invalidateTeam(qc) });
+}
+
+// ---------------- Admin Panel ----------------
+
+export const useAdminOverview = (enabled = true) =>
+  useQuery({ queryKey: ['admin', 'overview'], queryFn: ({ signal }) => adminApi.overview(signal), enabled, refetchInterval: 60_000 });
+export const useAccessRequests = (status?: AccessRequestStatus) =>
+  useQuery({ queryKey: ['admin', 'requests', status ?? 'all'], queryFn: ({ signal }) => adminApi.requests(status, signal) });
+export const useAuditLog = () => useQuery({ queryKey: ['admin', 'activity'], queryFn: ({ signal }) => adminApi.activity(signal) });
+
+export function useDecideRequest() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, approve, ...body }: { id: string; approve: boolean; orgIds?: string[]; allOrgs?: boolean; role?: UserRole; note?: string }) =>
+      approve ? adminApi.approve(id, body) : adminApi.reject(id, body.note),
+    onSuccess: () => invalidateTeam(qc),
+  });
+}
+
+export const useMyAccessRequests = () => useQuery({ queryKey: ['access-requests', 'mine'], queryFn: ({ signal }) => accessApi.mine(signal) });
+
+export function useRequestAccess() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: accessApi.create, onSuccess: () => qc.invalidateQueries({ queryKey: ['access-requests'] }) });
+}
+
+export function useCancelAccessRequest() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: accessApi.cancel, onSuccess: () => qc.invalidateQueries({ queryKey: ['access-requests'] }) });
 }
 
 export const useResetMemberPassword = () => useMutation({ mutationFn: ({ id, password }: { id: string; password: string }) => teamApi.resetPassword(id, password) });

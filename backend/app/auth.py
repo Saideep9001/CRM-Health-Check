@@ -34,6 +34,9 @@ LOCK_MINUTES = 15
 SESSION_SHORT = timedelta(hours=12)
 SESSION_LONG = timedelta(days=30)
 UNSAFE = {"POST", "PUT", "PATCH", "DELETE"}
+# All someone with a default/temporary password may do until they choose their own.
+BEFORE_PASSWORD_CHANGE = {"/api/v1/me", "/api/v1/me/password", "/api/v1/auth/logout", "/api/v1/auth/login",
+                          "/api/v1/auth/setup-status", "/api/v1/health"}
 
 
 def _now() -> datetime:
@@ -90,6 +93,7 @@ class Principal:
     org_ids: frozenset[str] = field(default_factory=frozenset)
     active_org_id: str | None = None
     session_id: str | None = None
+    must_change_password: bool = False
 
     @property
     def is_admin(self) -> bool:
@@ -116,7 +120,8 @@ def current() -> Principal | None:
 
 def principal(user: UserRow, session_id: str | None = None) -> Principal:
     return Principal(id=user.id, name=user.name, email=user.email, role=user.role, all_orgs=bool(user.all_orgs),
-                     org_ids=frozenset(user.org_ids or []), active_org_id=user.active_org_id, session_id=session_id)
+                     org_ids=frozenset(user.org_ids or []), active_org_id=user.active_org_id, session_id=session_id,
+                     must_change_password=bool(user.must_change_password))
 
 
 def token_hash(token: str) -> str:
@@ -193,6 +198,8 @@ class AuthMiddleware:
         if scope.get("method") in UNSAFE and not _origin_ok(_header(scope, b"origin"), settings, _header(scope, b"host")):
             return await _json(send, 403, "This request came from another website, so it was blocked.")
         user = _user_for_token(_cookie(scope)) if settings.auth_required else _local_admin()
+        if user and user.must_change_password and scope.get("path", "").rstrip("/") not in BEFORE_PASSWORD_CHANGE:
+            return await _json(send, 403, "Please choose your own password first.")
         token = _current.set(user)
         try:
             await self.app(scope, receive, send)

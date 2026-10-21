@@ -182,6 +182,8 @@ class UserRow(Base):
     org_ids: Mapped[list | None] = mapped_column(JSON)  # orgs this user may see when not all_orgs
     active_org_id: Mapped[str | None] = mapped_column(String(32))  # the org this user is working on
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Set for default/temporary passwords: the person must choose their own before using the app.
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
     failed_logins: Mapped[int] = mapped_column(Integer, default=0)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -199,3 +201,34 @@ class SessionRow(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     user_agent: Mapped[str | None] = mapped_column(String(255))
+
+
+class AccessRequestRow(Base):
+    """A person asking an admin for more access: another client org, or a different role."""
+
+    __tablename__ = "access_request"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(36), index=True)
+    kind: Mapped[str] = mapped_column(String(8))  # org | role
+    requested_role: Mapped[str | None] = mapped_column(String(16))
+    org_note: Mapped[str | None] = mapped_column(String(200))  # which client they mean, in their words
+    message: Mapped[str | None] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(String(12), default="pending", index=True)  # pending | approved | rejected | cancelled
+    decided_by: Mapped[str | None] = mapped_column(String(120))
+    decision_note: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AuditEventRow(Base):
+    """Who changed access or signed in, and when (shown to admins in the Admin Panel)."""
+
+    __tablename__ = "audit_event"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    actor: Mapped[str] = mapped_column(String(255))  # name and email, kept even if the account is later removed
+    action: Mapped[str] = mapped_column(String(40))
+    target: Mapped[str | None] = mapped_column(String(255))
+    detail: Mapped[str | None] = mapped_column(String(500))

@@ -8,6 +8,7 @@ import { RequireAuth } from './components/auth/RequireAuth';
 import { AppLayout } from './components/layout/AppLayout';
 import { ThemeProvider, useTheme } from './context/ThemeContext';
 import { ToastProvider } from './context/ToastContext';
+import AdminPage from './pages/AdminPage';
 import AssessmentOverviewPage from './pages/AssessmentOverviewPage';
 import CategoryPage from './pages/CategoryPage';
 import ConnectionPage from './pages/ConnectionPage';
@@ -65,6 +66,7 @@ export default function App() {
                   <Route path="results" element={<ResultsPage />} />
                   <Route path="reports" element={<ReportsPage />} />
                   <Route path="history" element={<HistoryPage />} />
+                  <Route path="admin" element={<AdminPage />} />
                   <Route path="settings" element={<SettingsPage />} />
                   <Route path="help" element={<HelpPage />} />
                   <Route path="*" element={<NotFoundPage />} />

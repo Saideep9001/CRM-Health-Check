@@ -1,4 +1,9 @@
 import type {
+  AccessRequest,
+  AccessRequestStatus,
+  AdminOverview,
+  AuditEvent,
+  UserRole,
   ApiHealth,
   AppNotification,
   AppSettings,
@@ -148,6 +153,25 @@ export const teamApi = {
   update: (id: string, body: Partial<Pick<TeamMember, 'name' | 'role' | 'allOrgs' | 'orgIds' | 'isActive'>>) =>
     http.patch<TeamMember>(`/users/${encodeURIComponent(id)}`, body),
   resetPassword: (id: string, password: string) => http.post<void>(`/users/${encodeURIComponent(id)}/password`, { password }),
+  unlock: (id: string) => http.post<void>(`/users/${encodeURIComponent(id)}/unlock`),
+  signOut: (id: string) => http.post<void>(`/users/${encodeURIComponent(id)}/sign-out`),
+};
+
+/** Admin Panel (admins only). */
+export const adminApi = {
+  overview: (signal?: AbortSignal) => http.get<AdminOverview>('/admin/overview', undefined, signal),
+  requests: (status?: AccessRequestStatus, signal?: AbortSignal) => http.get<AccessRequest[]>('/admin/requests', status ? { status } : undefined, signal),
+  approve: (id: string, body: { orgIds?: string[]; allOrgs?: boolean; role?: UserRole; note?: string }) =>
+    http.post<AccessRequest>(`/admin/requests/${encodeURIComponent(id)}/approve`, body),
+  reject: (id: string, note?: string) => http.post<AccessRequest>(`/admin/requests/${encodeURIComponent(id)}/reject`, { note }),
+  activity: (signal?: AbortSignal) => http.get<AuditEvent[]>('/admin/activity', { limit: 200 }, signal),
+};
+
+/** Asking an admin for more access (anyone signed in). */
+export const accessApi = {
+  mine: (signal?: AbortSignal) => http.get<AccessRequest[]>('/access-requests/mine', undefined, signal),
+  create: (body: { kind: 'org' | 'role'; requestedRole?: UserRole; orgNote?: string; message?: string }) => http.post<AccessRequest>('/access-requests', body),
+  cancel: (id: string) => http.delete<void>(`/access-requests/${encodeURIComponent(id)}`),
 };
 
 export const consultantApi = {

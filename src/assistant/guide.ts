@@ -558,8 +558,8 @@ const FEATURES: { when: (string | RegExp)[]; text: string; suggestions?: string[
     text: 'In [Settings → Report Branding](/settings?tab=branding) an admin can add your logo, company name, accent colour, “prepared by” and a footer, and hide “Prepared with Aquarient”. Every report and proposal uses it.',
   },
   {
-    when: ['team', 'add a user', 'add user', 'add a person', 'invite', 'new user', 'team member', 'colleague', 'give access', 'remove access', 'deactivate'],
-    text: 'Admins manage people in [Settings → Team & Access](/settings?tab=team): **Add person** (name, email, role, which client orgs, temporary password), edit roles and org access, reset passwords, or deactivate someone. Changes apply at their next sign-in.',
+    when: ['team', 'add a user', 'add user', 'add a person', 'invite', 'new user', 'team member', 'colleague', 'give access', 'remove access', 'deactivate', 'admin panel', 'approve', 'reject', 'access request', 'request access', 'more access', 'activity log', 'audit'],
+    text: 'Admins use the [Admin Panel](/admin):\n- **People & permissions** — add people (they choose their own password at first sign-in), change roles and org access, reset passwords, unlock, sign out or deactivate.\n- **Access requests** — approve or reject requests for another client org or a different role.\n- **Activity log** — every sign-in and access change.\n\nNot an admin? Ask for more access in [Settings → Team & Access](/settings?tab=team).',
     suggestions: ['What can each role do?'],
   },
   {
@@ -568,7 +568,7 @@ const FEATURES: { when: (string | RegExp)[]; text: string; suggestions?: string[
   },
   {
     when: ['change my password', 'change password', 'new password', 'reset my password', 'forgot', 'locked out', 'locked'],
-    text: 'To change your password, open [Settings → Profile Information](/settings?tab=profile) and use **Change password**. Forgot it, or locked out after 5 wrong tries? Ask an admin to reset it in **Team & Access** — the lock also clears by itself after 15 minutes.',
+    text: 'To change your password, open [Settings → Profile Information](/settings?tab=profile) and use **Change password**. Forgot it, or locked out after 5 wrong tries? Ask an admin to reset or unlock it in the **Admin Panel** — the lock also clears by itself after 15 minutes.',
   },
   {
     when: ['sign out', 'log out', 'logout', 'signout'],

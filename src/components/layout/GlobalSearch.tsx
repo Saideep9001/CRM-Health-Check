@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CATEGORIES, DIAGNOSTIC_AREAS, getCategory } from '@/config/categories';
 import { NAV_ITEMS } from '@/config/navigation';
+import { useRole } from '@/api/queries';
 import { useLatestAssessment } from '@/hooks/useLatestAssessment';
 import type { Finding } from '@/types';
 import { cx } from '@/lib/format';
@@ -18,9 +19,9 @@ interface Result {
   icon: React.ReactNode;
 }
 
-function buildIndex(findings: Finding[], assessmentId: string | null): Result[] {
+function buildIndex(findings: Finding[], assessmentId: string | null, isAdmin: boolean): Result[] {
   return [
-    ...NAV_ITEMS.map<Result>((n) => ({
+    ...NAV_ITEMS.filter((n) => !n.adminOnly || isAdmin).map<Result>((n) => ({
       key: `p-${n.to}`,
       group: 'Pages',
       label: n.label,
@@ -62,7 +63,8 @@ export function GlobalSearch() {
   const boxRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   const { findings, latest } = useLatestAssessment();
-  const index = useMemo(() => buildIndex(findings, latest?.id ?? null), [findings, latest]);
+  const { isAdmin } = useRole();
+  const index = useMemo(() => buildIndex(findings, latest?.id ?? null, isAdmin), [findings, latest, isAdmin]);
 
   const results = useMemo(() => {
     const term = q.trim().toLowerCase();

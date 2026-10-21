@@ -6,6 +6,7 @@ import { API_BASE_URL, errorMessage, isApiError } from '@/api/client';
 import { useAuthStatus, useMe } from '@/api/queries';
 import { BrandMark } from '../ui/Brand';
 import { Button, LinkButton } from '../ui/Button';
+import { ChooseOwnPassword } from './ChooseOwnPassword';
 
 function FullScreen({ children }: { children: ReactNode }) {
   return <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-bg px-4 text-center">{children}</div>;
@@ -41,7 +42,7 @@ function AuthGate({ children }: { children: ReactNode }) {
   const me = useMe();
   const location = useLocation();
 
-  if (me.data) return <>{children}</>;
+  if (me.data) return me.data.mustChangePassword ? <ChooseOwnPassword me={me.data} /> : <>{children}</>;
 
   if (me.isLoading) return <Checking />;
 

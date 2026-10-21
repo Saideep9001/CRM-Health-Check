@@ -280,6 +280,8 @@ export interface UserProfile {
   email: string;
   title: string | null;
   role: string | null;
+  /** Signed in with a default/temporary password: must choose their own before anything else. */
+  mustChangePassword?: boolean;
 }
 
 export interface NotificationPreferences {
@@ -350,8 +352,54 @@ export interface TeamMember {
   allOrgs: boolean;
   orgIds: string[];
   isActive: boolean;
+  mustChangePassword?: boolean;
+  locked?: boolean;
   createdAt: string | null;
   lastLoginAt: string | null;
+}
+
+// ---- Admin Panel ----
+
+export interface AdminOverview {
+  users: number;
+  admins: number;
+  consultants: number;
+  viewers: number;
+  deactivated: number;
+  locked: number;
+  neverSignedIn: number;
+  mustChangePassword: number;
+  pendingRequests: number;
+  orgsConnected: number;
+  activeSessions: number;
+}
+
+export type AccessRequestStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
+
+export interface AccessRequest {
+  id: string;
+  userId: string;
+  userName: string;
+  userEmail: string;
+  userRole: string;
+  kind: 'org' | 'role';
+  requestedRole: UserRole | null;
+  orgNote: string | null;
+  message: string | null;
+  status: AccessRequestStatus;
+  decidedBy: string | null;
+  decisionNote: string | null;
+  createdAt: string | null;
+  decidedAt: string | null;
+}
+
+export interface AuditEvent {
+  id: string;
+  at: string | null;
+  actor: string;
+  action: string;
+  target: string | null;
+  detail: string | null;
 }
 
 export interface TeamMemberCreate {
