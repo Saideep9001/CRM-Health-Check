@@ -7,14 +7,15 @@ from ..auth import Principal, require_admin, require_editor
 from ..config import Settings
 from ..db import get_db
 from ..deps import http_dep, settings_dep
-from ..salesforce import app_config, service
-from ..salesforce.errors import SalesforceError
+from ..salesforce import app_config, service, snapshot
+from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
 from ..schemas import (
     OAuthCallbackRequest,
     OAuthStartRequest,
     OAuthStartResponse,
     SalesforceAppConfig,
     SalesforceAppUpdate,
+    ConnectionSnapshot,
     SalesforceConnection,
 )
 
@@ -66,6 +67,24 @@ def delete_app(_: Principal = Depends(require_admin), db: Session = Depends(get_
 @router.get("/connection", response_model=SalesforceConnection)
 def get_connection(db: Session = Depends(get_db), settings: Settings = Depends(settings_dep)):
     return service.to_schema(service.get_row(db), settings)
+
+
+@router.get("/connection/snapshot", response_model=ConnectionSnapshot)
+def connection_snapshot(db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep), settings: Settings = Depends(settings_dep)):
+    """Live, read-only facts about the active org: limits, users, record counts and response time."""
+    try:
+        sf = service.client_for(db, http, settings)
+    except service.NotConnected:
+        raise HTTPException(409, "Salesforce isn’t connected.")
+    try:
+        return snapshot.snapshot(sf)
+    except SalesforceAuthExpired as exc:
+        service.mark_expired(db, str(exc))
+        raise HTTPException(409, "Your Salesforce connection has timed out. Please reconnect.")
+    except SalesforceError as exc:
+        raise HTTPException(424, f"Salesforce couldn’t answer. {exc}")
+    except httpx.HTTPError:
+        raise HTTPException(424, "Couldn’t reach Salesforce. Please try again.")
 
 
 @router.post("/oauth/start", response_model=OAuthStartResponse)

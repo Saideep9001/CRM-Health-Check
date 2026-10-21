@@ -1,8 +1,9 @@
 import { motion } from 'framer-motion';
-import { Cloud, CloudOff, PlugZap, RefreshCw, Unplug } from 'lucide-react';
-import { cx, fmtDateTime, fmtNumber } from '@/lib/format';
+import { Check, Cloud, CloudOff, Copy, ExternalLink, PlugZap, RefreshCw, Unplug } from 'lucide-react';
+import { useState } from 'react';
+import { cx, fmtAgo, fmtDateTime, fmtNumber } from '@/lib/format';
 import type { SalesforceConnection } from '@/types';
-import { ConnectionStatusBadge } from '../ui/Badges';
+import { Badge, ConnectionStatusBadge } from '../ui/Badges';
 import { Button } from '../ui/Button';
 
 /** Animated link between the platform and Salesforce; flows only when connected. */
@@ -52,12 +53,33 @@ function LinkVisual({ status }: { status: SalesforceConnection['status'] }) {
   );
 }
 
+function CopyButton({ value, label }: { value: string; label: string }) {
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        navigator.clipboard?.writeText(value).then(() => {
+          setDone(true);
+          setTimeout(() => setDone(false), 1500);
+        });
+      }}
+      className="shrink-0 rounded p-1 text-ink-subtle opacity-0 transition hover:bg-muted hover:text-ink focus:opacity-100 group-hover:opacity-100"
+      aria-label={`Copy ${label}`}
+      title={done ? 'Copied' : `Copy ${label}`}
+    >
+      {done ? <Check className="h-3.5 w-3.5 text-good" /> : <Copy className="h-3.5 w-3.5" />}
+    </button>
+  );
+}
+
 export function SalesforceConnectionCard({
   connection,
   onConnect,
   onDisconnect,
   onCheck,
   checking,
+  hideUsage,
 }: {
   connection: SalesforceConnection;
   /** Omitted when the signed-in role can't connect orgs. */
@@ -66,19 +88,22 @@ export function SalesforceConnectionCard({
   onDisconnect?: () => void;
   onCheck: () => void;
   checking: boolean;
+  /** The live snapshot shows API usage itself, so the card can skip it. */
+  hideUsage?: boolean;
 }) {
   const { status } = connection;
   const linked = status !== 'disconnected';
 
-  const rows: [string, string | null][] = [
-    ['Organization name', connection.organizationName],
-    ['Salesforce Org ID', connection.orgId],
-    ['Instance URL', connection.instanceUrl],
-    ['Edition', connection.edition],
-    ['API version', connection.apiVersion],
-    ['Connected by', connection.connectedBy],
-    ['Connected at', connection.connectedAt ? fmtDateTime(connection.connectedAt) : null],
-    ['Last connection check', connection.lastCheckedAt ? fmtDateTime(connection.lastCheckedAt) : null],
+  // [label, shown value, full value for the tooltip, copyable]
+  const rows: [string, string | null, string | null, boolean][] = [
+    ['Organization name', connection.organizationName, connection.organizationName, false],
+    ['Salesforce Org ID', connection.orgId, connection.orgId, true],
+    ['Instance URL', connection.instanceUrl?.replace(/^https:\/\//, '') ?? null, connection.instanceUrl, true],
+    ['Edition', connection.edition, connection.edition, false],
+    ['API version', connection.apiVersion, connection.apiVersion, false],
+    ['Connected by', connection.connectedBy, connection.connectedBy, false],
+    ['Connected', connection.connectedAt ? fmtAgo(connection.connectedAt) : null, connection.connectedAt ? fmtDateTime(connection.connectedAt) : null, false],
+    ['Last connection check', connection.lastCheckedAt ? fmtAgo(connection.lastCheckedAt) : null, connection.lastCheckedAt ? fmtDateTime(connection.lastCheckedAt) : null, false],
   ];
 
   const usage =
@@ -94,6 +119,9 @@ export function SalesforceConnectionCard({
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-lg font-semibold">Salesforce connection</h2>
             <ConnectionStatusBadge status={status} />
+            {linked && connection.environment && (
+              <Badge tone={connection.environment === 'sandbox' ? 'warn' : 'neutral'}>{connection.environment === 'sandbox' ? 'Sandbox' : 'Production'}</Badge>
+            )}
           </div>
           <p className="mt-1 text-sm text-ink-muted">
             {status === 'connected' && `Connected to ${connection.organizationName}. We can read (but never change) your data.`}
@@ -112,6 +140,11 @@ export function SalesforceConnectionCard({
                 {checking ? 'Checking…' : 'Check connection'}
               </Button>
             )}
+            {linked && connection.instanceUrl && (
+              <a href={connection.instanceUrl} target="_blank" rel="noopener noreferrer" className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-line bg-surface px-4 text-sm font-medium text-ink transition-all duration-150 hover:border-ink-subtle/40 hover:bg-muted active:scale-[0.98]">
+                <ExternalLink className="h-4 w-4" /> Open in Salesforce
+              </a>
+            )}
             {onDisconnect && (
               <Button variant="danger" icon={<Unplug className="h-4 w-4" />} onClick={onDisconnect} disabled={!linked} title={linked ? undefined : 'Nothing to disconnect'}>
                 Disconnect
@@ -122,17 +155,18 @@ export function SalesforceConnectionCard({
       </div>
 
       <dl className="grid gap-px border-t border-line bg-line sm:grid-cols-2 lg:grid-cols-4">
-        {rows.map(([label, value]) => (
-          <div key={label} className="bg-surface px-6 py-4">
+        {rows.map(([label, value, full, copy]) => (
+          <div key={label} className="group bg-surface px-6 py-4">
             <dt className="label">{label}</dt>
-            <dd className={cx('mt-1 truncate text-sm', value ? 'font-medium' : 'text-ink-subtle')} title={value ?? undefined}>
-              {value ?? 'Not available'}
+            <dd className={cx('mt-1 flex items-center gap-1 text-sm', value ? 'font-medium' : 'text-ink-subtle')} title={full ?? undefined}>
+              <span className="min-w-0 truncate">{value ?? 'Not available'}</span>
+              {copy && full && <CopyButton value={full} label={label} />}
             </dd>
           </div>
         ))}
       </dl>
 
-      {usage !== null && (
+      {usage !== null && !hideUsage && (
         <div className="border-t border-line px-6 py-4">
           <div className="mb-1.5 flex justify-between text-xs">
             <span className="label">Daily API requests used</span>

@@ -1,9 +1,11 @@
-import { CheckCircle2, ExternalLink, KeyRound, ServerCog, ShieldCheck, Unplug } from 'lucide-react';
-import { useEffect, useState, type FormEvent } from 'react';
+import { ArrowRight, CheckCircle2, ExternalLink, KeyRound, Play, ServerCog, ShieldCheck, Unplug } from 'lucide-react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { useCheckConnection, useConnection, useDisconnect, useSalesforceApp, useStartOAuth, useRole } from '@/api/queries';
+import { useAssessments, useCheckConnection, useConnection, useConnectionSnapshot, useDisconnect, useSalesforceApp, useStartOAuth, useRole } from '@/api/queries';
+import { OrgSnapshot } from '@/components/connection/OrgSnapshot';
+import { ScoreRing } from '@/components/ui/Visuals';
 import { SalesforceConnectionCard } from '@/components/connection/SalesforceConnectionCard';
-import { Button } from '@/components/ui/Button';
+import { Button, LinkButton } from '@/components/ui/Button';
 import { Field } from '@/components/ui/Form';
 import { InfoTip } from '@/components/ui/HelpTip';
 import { OAUTH_CALLBACK_PATH, OAUTH_STATE_KEY } from '@/config/oauth';
@@ -11,7 +13,7 @@ import { Modal } from '@/components/ui/Overlay';
 import { PageHeader, SectionCard } from '@/components/ui/Page';
 import { ErrorState, InlineError, LoadingState } from '@/components/ui/States';
 import { useToast } from '@/context/ToastContext';
-import { cx } from '@/lib/format';
+import { cx, fmtAgo, scoreBand } from '@/lib/format';
 import type { SalesforceEnvironment } from '@/types';
 
 
@@ -122,6 +124,50 @@ export function ConnectModal({ open, onClose }: { open: boolean; onClose: () => 
   );
 }
 
+/** This org's latest health checks, with a quick way to run another. */
+function RecentChecks({ orgId, canRun }: { orgId: string; canRun: boolean }) {
+  const all = useAssessments();
+  const mine = (all.data ?? []).filter((a) => a.orgId === orgId && a.status === 'completed').slice(0, 3);
+  const running = (all.data ?? []).find((a) => a.orgId === orgId && (a.status === 'running' || a.status === 'queued'));
+  return (
+    <SectionCard
+      className="mt-6"
+      title="Health checks for this org"
+      actions={canRun && <LinkButton to="/assessment" size="sm" variant="primary" icon={<Play className="h-3.5 w-3.5" />}>Run a health check</LinkButton>}
+      bodyClassName="p-0"
+    >
+      {running && (
+        <Link to="/history" className="flex items-center gap-3 border-b border-line bg-brand-soft/60 px-6 py-3 text-sm">
+          <span className="relative flex h-2.5 w-2.5"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-60" /><span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-brand" /></span>
+          <span className="flex-1"><span className="font-medium">{running.name}</span> is running now</span>
+          <ArrowRight className="h-4 w-4 text-brand" />
+        </Link>
+      )}
+      {all.isLoading ? (
+        <div className="p-6"><LoadingState rows={2} /></div>
+      ) : !mine.length ? (
+        <p className="px-6 py-6 text-sm text-ink-muted">No health checks for this org yet. Run one to get a score and a list of fixes.</p>
+      ) : (
+        <ul className="divide-y divide-line">
+          {mine.map((a) => (
+            <li key={a.id}>
+              <Link to={`/results?assessment=${encodeURIComponent(a.id)}`} className="flex items-center gap-4 px-6 py-3 hover:bg-muted/60">
+                <ScoreRing score={a.overallScore} size={44} stroke={5} showBand={false} />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">{a.name}</p>
+                  <p className="text-xs text-ink-subtle">{a.completedAt ? fmtAgo(a.completedAt) : ''}</p>
+                </div>
+                <span className="text-xs font-medium" style={{ color: scoreBand(a.overallScore).color }}>{scoreBand(a.overallScore).label}</span>
+                <ArrowRight className="h-4 w-4 text-ink-subtle" />
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </SectionCard>
+  );
+}
+
 export default function ConnectionPage() {
   const conn = useConnection();
   const check = useCheckConnection();
@@ -141,6 +187,20 @@ export default function ConnectionPage() {
       setParams({}, { replace: true });
     }
   }, [params, setParams]);
+
+  // Re-check quietly on open when the last check is over an hour old, so the status shown is current.
+  const autoChecked = useRef(false);
+  useEffect(() => {
+    const c = conn.data;
+    if (autoChecked.current || !c || c.status !== 'connected') return;
+    autoChecked.current = true;
+    const last = c.lastCheckedAt ? new Date(c.lastCheckedAt).getTime() : 0;
+    if (Date.now() - last > 60 * 60_000) check.mutate();
+  }, [conn.data]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const isConnected = conn.data?.status === 'connected';
+  const orgId = conn.data?.orgId ?? null;
+  const snapshotLoaded = !!useConnectionSnapshot(orgId, isConnected).data;
 
   // Without app keys, Connect can't work yet: go to the setup page first.
   const onConnect = () => {
@@ -170,6 +230,7 @@ export default function ConnectionPage() {
             onConnect={canEdit ? onConnect : undefined}
             onDisconnect={isAdmin ? () => setConfirmOpen(true) : undefined}
             checking={check.isPending}
+            hideUsage={snapshotLoaded}
             onCheck={() =>
               check.mutate(undefined, {
                 onSuccess: (c) => notify(c.status === 'connected' ? 'Connection healthy' : 'Connection needs attention', c.errorMessage ?? undefined, c.status === 'connected' ? 'success' : 'warning'),
@@ -180,6 +241,10 @@ export default function ConnectionPage() {
         )
       )}
 
+      {isConnected && orgId && <OrgSnapshot orgId={orgId} />}
+      {isConnected && orgId && <RecentChecks orgId={orgId} canRun={canEdit} />}
+
+      {!isConnected && (
       <SectionCard className="mt-6" title="What happens when you connect" description="Takes about a minute">
         <ol className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {STEPS.map((s, i) => (
@@ -195,6 +260,7 @@ export default function ConnectionPage() {
           ))}
         </ol>
       </SectionCard>
+      )}
 
       <ConnectModal open={connectOpen} onClose={() => setConnectOpen(false)} />
 

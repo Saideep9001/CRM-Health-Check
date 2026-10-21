@@ -72,6 +72,17 @@ export const useApiHealth = () =>
 export const useConnection = () =>
   useQuery({ queryKey: qk.connection, queryFn: ({ signal }) => connectionApi.get(signal) });
 
+/** Live facts about the active org; refreshes every 5 minutes while the page is open. */
+export const useConnectionSnapshot = (orgId: string | null, enabled: boolean) =>
+  useQuery({
+    queryKey: ['connection', 'snapshot', orgId],
+    queryFn: ({ signal }) => connectionApi.snapshot(signal),
+    enabled: enabled && !!orgId,
+    staleTime: 60_000,
+    refetchInterval: 5 * 60_000,
+    retry: 1,
+  });
+
 export const useStartOAuth = () => useMutation({ mutationFn: connectionApi.startOAuth });
 
 export function useCompleteOAuth() {

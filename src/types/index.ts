@@ -77,6 +77,23 @@ export interface SalesforceConnection {
   errorMessage: string | null;
 }
 
+/** Live, read-only facts about the connected org. */
+export interface ConnectionSnapshot {
+  asOf: string;
+  /** How long one small Salesforce query took, in milliseconds. */
+  responseMs: number;
+  isSandbox: boolean;
+  instanceName: string | null;
+  orgCreated: string | null;
+  timeZone: string | null;
+  locale: string | null;
+  activeUsers: number | null;
+  limits: { key: string; label: string; unit: string; used: number; max: number }[];
+  records: { name: string; label: string; count: number }[];
+  totalRecords: number | null;
+  objectCount: number | null;
+}
+
 /** Salesforce Connected App setup status. The secret is never sent back. */
 export interface SalesforceAppConfig {
   configured: boolean;

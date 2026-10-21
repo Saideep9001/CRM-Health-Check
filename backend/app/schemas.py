@@ -564,3 +564,33 @@ class FixPlan(ApiModel):
     effort_hours: float | None = None
 
 PortfolioOrg.model_rebuild()
+
+
+class OrgLimit(ApiModel):
+    key: str
+    label: str
+    unit: str
+    used: int
+    max: int
+
+
+class OrgRecordCount(ApiModel):
+    name: str
+    label: str
+    count: int
+
+
+class ConnectionSnapshot(ApiModel):
+    """Live facts about the connected org (read-only)."""
+    as_of: datetime
+    response_ms: int
+    is_sandbox: bool = False
+    instance_name: str | None = None
+    org_created: str | None = None
+    time_zone: str | None = None
+    locale: str | None = None
+    active_users: int | None = None
+    limits: list[OrgLimit] = []
+    records: list[OrgRecordCount] = []
+    total_records: int | None = None
+    object_count: int | None = None

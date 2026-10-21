@@ -150,3 +150,12 @@ def test_rotated_refresh_token_is_saved(client, sf):
 
         row = db.scalar(select(SalesforceConnectionRow))
         assert crypto.decrypt(row.refresh_token_enc) == "refresh-2" and crypto.decrypt(row.access_token_enc) == "access-2"
+
+
+def test_connection_snapshot(client, sf):
+    assert client.get(f"{API}/salesforce/connection/snapshot").status_code == 409
+    connect(client)
+    s = client.get(f"{API}/salesforce/connection/snapshot").json()
+    assert s["activeUsers"] == 42 and s["responseMs"] >= 0
+    assert s["limits"] == [{"key": "DailyApiRequests", "label": "API calls today", "unit": "calls", "used": 750, "max": 15000}]
+    assert [r["name"] for r in s["records"]] == ["Account", "Lead"] and s["totalRecords"] == 162
