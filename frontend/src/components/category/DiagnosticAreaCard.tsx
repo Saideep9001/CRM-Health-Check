@@ -33,6 +33,8 @@ export function DiagnosticAreaCard({
   findings = [],
   objects = [],
   assessmentId,
+  onSelectFinding,
+  onSelectObject,
 }: {
   area: DiagnosticArea;
   color: string;
@@ -44,6 +46,10 @@ export function DiagnosticAreaCard({
   /** Per-object results (Data Quality); the card shows the number that belongs to this area. */
   objects?: ObjectResult[];
   assessmentId?: string;
+  /** Open a problem in place (side panel) instead of going to My Results. */
+  onSelectFinding?: (f: Finding) => void;
+  /** Open one object's problems in this area in place. */
+  onSelectObject?: (o: ObjectChip) => void;
 }) {
   const navigate = useNavigate();
   const release = getAreaRelease(area);
@@ -103,7 +109,7 @@ export function DiagnosticAreaCard({
         </div>
       )}
 
-      {assessed && assessmentId && <AreaExtras areaId={area.id} findings={findings} objects={objects} assessmentId={assessmentId} />}
+      {assessed && assessmentId && <AreaExtras areaId={area.id} findings={findings} objects={objects} assessmentId={assessmentId} onSelectFinding={onSelectFinding} onSelectObject={onSelectObject} />}
 
       <div className="flex-1" />
 
@@ -137,13 +143,78 @@ const OBJECT_METRIC: Record<string, (o: ObjectResult) => { text: string; tone: '
   'area-2': (o) => (o.completeness === null ? null : { text: `${Math.round(o.completeness)}% filled in`, tone: o.completeness >= 90 ? 'good' : o.completeness >= 70 ? 'warn' : 'bad' }),
 };
 
-function AreaExtras({ areaId, findings, objects, assessmentId }: { areaId: string; findings: Finding[]; objects: ObjectResult[]; assessmentId: string }) {
+/** One object in an area's "By object" list. */
+export interface ObjectChip {
+  name: string;
+  label: string;
+  text: string;
+  tone: 'good' | 'warn' | 'bad';
+}
+
+/** Plain names for Salesforce objects that aren't in the per-object results. */
+const OBJECT_LABELS: Record<string, string> = {
+  Account: 'Accounts', Contact: 'Contacts', Lead: 'Leads', Opportunity: 'Opportunities', Case: 'Cases', Task: 'Tasks', Event: 'Events',
+  Campaign: 'Campaigns', Contract: 'Contracts', Order: 'Orders', Quote: 'Quotes', QuoteLineItem: 'Quote lines', User: 'Users',
+  Product2: 'Products', Pricebook2: 'Price books', PricebookEntry: 'Price book entries', OpportunityLineItem: 'Opportunity products',
+  Report: 'Reports', Dashboard: 'Dashboards', Flow: 'Flows', ApexTrigger: 'Apex triggers', ApexClass: 'Apex classes',
+  PermissionSet: 'Permission sets', Profile: 'Profiles', ContentVersion: 'Files', EmailTemplate: 'Email templates',
+};
+
+export function objectLabel(name: string, known?: string) {
+  return known ?? OBJECT_LABELS[name] ?? name.replace(/__c$/, '').replace(/_/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2');
+}
+
+const OPEN = (f: Finding) => f.status !== 'resolved' && f.status !== 'accepted-risk';
+
+/** Data Quality areas use their measured numbers; every other area groups its open problems by object. */
+function objectChips(areaId: string, findings: Finding[], objects: ObjectResult[]): ObjectChip[] {
+  const metric = OBJECT_METRIC[areaId];
+  if (metric) {
+    return objects.flatMap((o) => {
+      const m = metric(o);
+      return m ? [{ name: o.name, label: o.label, ...m }] : [];
+    });
+  }
+  const labels = new Map(objects.map((o) => [o.name, o.label]));
+  const groups = new Map<string, Finding[]>();
+  for (const f of findings.filter(OPEN)) {
+    if (f.objectName) groups.set(f.objectName, [...(groups.get(f.objectName) ?? []), f]);
+  }
+  return [...groups.entries()]
+    .map(([name, fs]) => {
+      const worst = Math.max(...fs.map((f) => SEVERITY_RANK[f.severity]));
+      return {
+        name,
+        label: objectLabel(name, labels.get(name)),
+        text: `${fs.length} problem${fs.length === 1 ? '' : 's'}`,
+        tone: (worst >= SEVERITY_RANK.high ? 'bad' : worst >= SEVERITY_RANK.medium ? 'warn' : 'good') as ObjectChip['tone'],
+        n: fs.length,
+      };
+    })
+    .sort((a, b) => b.n - a.n)
+    .map(({ n: _n, ...c }) => c);
+}
+
+function AreaExtras({
+  areaId,
+  findings,
+  objects,
+  assessmentId,
+  onSelectFinding,
+  onSelectObject,
+}: {
+  areaId: string;
+  findings: Finding[];
+  objects: ObjectResult[];
+  assessmentId: string;
+  onSelectFinding?: (f: Finding) => void;
+  onSelectObject?: (o: ObjectChip) => void;
+}) {
   const top = findings
     .filter((f) => f.status !== 'resolved' && f.status !== 'accepted-risk')
     .sort((a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity] || b.affectedRecords - a.affectedRecords)
     .slice(0, 3);
-  const metric = OBJECT_METRIC[areaId];
-  const perObject = metric ? objects.map((o) => ({ o, m: metric(o) })).filter((x) => x.m) : [];
+  const perObject = objectChips(areaId, findings, objects);
   const base = `/results?assessment=${encodeURIComponent(assessmentId)}`;
   if (!top.length && !perObject.length) return null;
 
@@ -153,15 +224,29 @@ function AreaExtras({ areaId, findings, objects, assessmentId }: { areaId: strin
         <div>
           <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">Fix first</p>
           <ul>
-            {top.map((f) => (
-              <li key={f.id}>
-                <Link to={`${base}&finding=${encodeURIComponent(f.id)}`} className="group/row -mx-2 flex items-center gap-2 rounded-md px-2 py-1 text-xs hover:bg-muted">
+            {top.map((f) => {
+              const row = (
+                <>
                   <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: SEVERITY_COLORS[f.severity] }} title={f.severity} />
                   <span className="min-w-0 flex-1 truncate group-hover/row:text-brand">{f.name}</span>
                   {f.affectedRecords > 0 && <span className="shrink-0 tabular-nums text-ink-subtle">{fmtNumber(f.affectedRecords)}</span>}
-                </Link>
-              </li>
-            ))}
+                </>
+              );
+              const cls = 'group/row -mx-2 flex w-[calc(100%+1rem)] items-center gap-2 rounded-md px-2 py-1 text-left text-xs hover:bg-muted';
+              return (
+                <li key={f.id}>
+                  {onSelectFinding ? (
+                    <button type="button" onClick={() => onSelectFinding(f)} className={cls} title="See this problem">
+                      {row}
+                    </button>
+                  ) : (
+                    <Link to={`${base}&finding=${encodeURIComponent(f.id)}`} className={cls}>
+                      {row}
+                    </Link>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}
@@ -169,18 +254,25 @@ function AreaExtras({ areaId, findings, objects, assessmentId }: { areaId: strin
         <div>
           <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">By object</p>
           <div className="flex flex-wrap gap-1.5">
-            {perObject.map(({ o, m }) => (
-              <Link
-                key={o.name}
-                to={`${base}&object=${encodeURIComponent(o.name)}`}
-                className="inline-flex items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-xs transition hover:border-brand/40 hover:text-brand"
-                title={`See problems for ${o.label}`}
-              >
-                <span className={cx('h-1.5 w-1.5 rounded-full', DOT[m!.tone])} />
-                <span className="font-medium">{o.label}</span>
-                <span className="text-ink-subtle">{m!.text}</span>
-              </Link>
-            ))}
+            {perObject.map((o) => {
+              const cls = 'inline-flex items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-xs transition hover:border-brand/40 hover:text-brand';
+              const chip = (
+                <>
+                  <span className={cx('h-1.5 w-1.5 rounded-full', DOT[o.tone])} />
+                  <span className="font-medium">{o.label}</span>
+                  <span className="text-ink-subtle">{o.text}</span>
+                </>
+              );
+              return onSelectObject ? (
+                <button key={o.name} type="button" onClick={() => onSelectObject(o)} className={cls} title={`See ${o.label} problems in this area`}>
+                  {chip}
+                </button>
+              ) : (
+                <Link key={o.name} to={`${base}&object=${encodeURIComponent(o.name)}`} className={cls} title={`See problems for ${o.label}`}>
+                  {chip}
+                </Link>
+              );
+            })}
           </div>
         </div>
       )}

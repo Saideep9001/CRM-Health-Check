@@ -73,7 +73,7 @@ export function FindingDetailsPanel({ finding, onClose }: { finding: Finding | n
       subtitle={
         finding && (
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-mono text-xs text-ink-subtle">{finding.id}</span>
+            {getArea(finding.areaId) && <span className="text-xs text-ink-subtle">Area {getArea(finding.areaId)!.number}: {getArea(finding.areaId)!.name}</span>}
             <SeverityBadge severity={finding.severity} />
             <FindingStatusBadge status={finding.status} />
             <ChangeBadge finding={finding} />

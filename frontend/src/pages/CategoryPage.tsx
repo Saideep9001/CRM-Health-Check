@@ -3,7 +3,9 @@ import { ArrowLeft, Hourglass, SearchX } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { RunCheckPanel } from '@/components/assessment/RunCheckPanel';
-import { DiagnosticAreaCard } from '@/components/category/DiagnosticAreaCard';
+import { DiagnosticAreaCard, type ObjectChip } from '@/components/category/DiagnosticAreaCard';
+import { ObjectProblemsDrawer } from '@/components/category/ObjectProblemsDrawer';
+import { FindingDetailsPanel } from '@/components/findings/FindingDetailsPanel';
 import { MeasurePreview } from '@/components/category/MeasurePreview';
 import { TopicHero } from '@/components/category/TopicHero';
 import { Button, LinkButton } from '@/components/ui/Button';
@@ -26,6 +28,11 @@ export default function CategoryPage() {
   const [q, setQ] = useState('');
   const [assessedFilter, setAssessedFilter] = useState<AssessedFilter>('all');
   const [findingFilter, setFindingFilter] = useState<FindingFilter>('all');
+  // A problem opened from a card's "Fix first" list, shown in a side panel on this page.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = findings.find((f) => f.id === selectedId) ?? null;
+  // An object opened from a card's "By object" chips.
+  const [objectView, setObjectView] = useState<{ areaId: string; object: ObjectChip } | null>(null);
 
   const areas = useMemo(() => (category ? getAreasForCategory(category.id) : []), [category]);
   if (!category) return <NotFoundPage />;
@@ -158,8 +165,10 @@ export default function CategoryPage() {
                 findingsCount={findingsForArea(findings, a.id).length}
                 lastAssessed={lastAssessed}
                 findings={findingsForArea(findings, a.id)}
-                objects={category.id === 'data-quality' ? (results?.objects ?? []) : []}
+                objects={results?.objects ?? []}
                 assessmentId={latest?.id}
+                onSelectFinding={(f) => setSelectedId(f.id)}
+                onSelectObject={(o) => setObjectView({ areaId: a.id, object: o })}
               />
             ))}
           </AnimatePresence>
@@ -176,6 +185,17 @@ export default function CategoryPage() {
           </LinkButton>
         )}
       </div>
+      <ObjectProblemsDrawer
+        view={objectView}
+        findings={findings}
+        assessmentId={latest?.id}
+        onClose={() => setObjectView(null)}
+        onSelectFinding={(f) => {
+          setObjectView(null);
+          setSelectedId(f.id);
+        }}
+      />
+      <FindingDetailsPanel finding={selected} onClose={() => setSelectedId(null)} />
     </div>
   );
 }
