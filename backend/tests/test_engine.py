@@ -132,7 +132,8 @@ def test_full_data_quality_run(client, sf):
     ind = {i["label"]: i for i in areas["area-1"]["indicators"]}
     assert set(ind) == {"Duplicate Accounts", "Duplicate Contacts", "Duplicate Leads", "Missing Email", "Missing Phone", "Data standardization issues"}
     assert ind["Duplicate Accounts"]["value"] == 3 and ind["Duplicate Contacts"]["value"] == 1
-    assert ind["Missing Email"] == {"label": "Missing Email", "value": 20.0, "unit": "%", "direction": "lower-better"}
+    me = ind["Missing Email"]
+    assert {k: me[k] for k in ("label", "value", "unit", "direction")} == {"label": "Missing Email", "value": 20.0, "unit": "%", "direction": "lower-better"}
     assert ind["Data standardization issues"]["value"] == 15  # "United States" + "US" differ from "USA"
     ind2 = {i["label"]: i for i in areas["area-2"]["indicators"]}
     assert set(ind2) == {"Field completeness", "Missing field values", "Redundant fields", "Accounts without Contacts", "Data quality scorecard", "Empty fields others depend on"}

@@ -149,6 +149,18 @@ export const findingApi = {
   recordsCsvUrl: (id: string) => `${API_BASE_URL}/findings/${encodeURIComponent(id)}/records.csv`,
 };
 
+/** The records one measure ("What we measure") counted, live from Salesforce. */
+export const indicatorApi = {
+  records: (assessmentId: string, areaId: string, label: string, object: string, cursor: string | null, signal?: AbortSignal) =>
+    http.get<FindingRecordsPage>(
+      `/assessments/${encodeURIComponent(assessmentId)}/areas/${encodeURIComponent(areaId)}/indicator-records`,
+      { label, object, cursor: cursor ?? undefined },
+      signal,
+    ),
+  csvUrl: (assessmentId: string, areaId: string, label: string, object: string) =>
+    `${API_BASE_URL}/assessments/${encodeURIComponent(assessmentId)}/areas/${encodeURIComponent(areaId)}/indicator-records.csv?${new URLSearchParams({ label, object })}`,
+};
+
 /** Team management (admins only). */
 export const teamApi = {
   list: (signal?: AbortSignal) => http.get<TeamMember[]>('/users', undefined, signal),

@@ -172,6 +172,16 @@ export interface IndicatorValue {
   value: number;
   unit: 'count' | '%';
   direction: 'lower-better' | 'higher-better';
+  /** 0–100 for this measure; null = shown for information only. */
+  score?: number | null;
+  /** What we count. */
+  how?: string | null;
+  /** How the number becomes the score. */
+  rule?: string | null;
+  /** The exact rules, as [name, detail] rows. */
+  criteria?: [string, string][];
+  /** Objects whose records can be listed for this measure. */
+  recordObjects?: string[];
 }
 
 export interface AreaResult {
@@ -268,6 +278,8 @@ export interface FindingRecordsPage {
   nextCursor: string | null;
   /** + record id = link to the record in Salesforce. */
   recordUrlPrefix: string;
+  /** Field the rows are sorted by (e.g. the one duplicates were matched on). */
+  sortedBy?: string | null;
 }
 
 export interface UpdateFindingRequest {

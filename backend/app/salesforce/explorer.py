@@ -333,11 +333,18 @@ def list_records(
     }
 
 
-def records_matching(sf: SalesforceClient, name: str, where: str | None, cursor: str | None = None, page_size: int = PAGE_SIZE) -> dict:
-    """Records of `name` matching a filter the health check engine built (never user input)."""
+def records_matching(sf: SalesforceClient, name: str, where: str | None, cursor: str | None = None, page_size: int = PAGE_SIZE,
+                     columns: list[str] | None = None, order: str | None = None) -> dict:
+    """Records of `name` matching a filter the health check engine built (never user input).
+
+    `columns` (shown first) and `order` come from the engine too; any the object doesn't have are skipped.
+    """
     desc = _describe(sf, name)
     fields = _fields(desc)
-    cols = default_columns(desc)[:8]
+    descending = bool(order and order.startswith("-"))  # "-Amount" = biggest first
+    order_field = (order or "").lstrip("-") or None
+    first = [c for c in (columns or []) if c in fields]
+    cols = (first + [c for c in default_columns(desc) if c not in first])[: max(8, len(first) + 2)]
     refs = _ref_paths(fields, cols)
     headers = {"Sforce-Query-Options": f"batchSize={max(200, min(page_size, 2000))}"}
     if cursor:
@@ -345,8 +352,12 @@ def records_matching(sf: SalesforceClient, name: str, where: str | None, cursor:
             raise ValueError("Invalid page cursor.")
         body = sf.get(cursor, headers=headers)
     else:
-        order = next((f for f in ("LastModifiedDate", "CreatedDate") if f in fields and fields[f].get("sortable")), None)
-        soql = f"SELECT {', '.join(cols + list(refs.values()))} FROM {name}" + (f" WHERE {where}" if where else "") + (f" ORDER BY {order} DESC" if order else "")
+        if order_field in fields and fields[order_field].get("sortable"):
+            sort = f" ORDER BY {order_field} {'DESC' if descending else 'ASC'} NULLS LAST"
+        else:
+            latest = next((f for f in ("LastModifiedDate", "CreatedDate") if f in fields and fields[f].get("sortable")), None)
+            sort = f" ORDER BY {latest} DESC" if latest else ""
+        soql = f"SELECT {', '.join(cols + list(refs.values()))} FROM {name}" + (f" WHERE {where}" if where else "") + sort
         body = sf.get(f"{_api(sf)}/query?q={quote(soql)}", headers=headers)
     next_url = body.get("nextRecordsUrl")
     return {
@@ -356,6 +367,7 @@ def records_matching(sf: SalesforceClient, name: str, where: str | None, cursor:
         "total_size": body.get("totalSize"),
         "next_cursor": next_url if next_url and _CURSOR_RE.match(next_url) else None,
         "record_url_prefix": f"{sf.base}/",
+        "sorted_by": order_field if order_field in fields and fields[order_field].get("sortable") else None,
     }
 
 

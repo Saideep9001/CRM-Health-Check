@@ -2,7 +2,7 @@
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import model_validator, BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 
@@ -316,6 +316,24 @@ class IndicatorValue(ApiModel):
     value: float
     unit: Literal["count", "%"]
     direction: Literal["lower-better", "higher-better"]
+    score: float | None = None
+    how: str | None = None  # what we count
+    rule: str | None = None  # how it becomes the score
+    criteria: list[list[str]] = []  # the exact rules, as [name, detail] rows
+
+    @model_validator(mode="before")
+    @classmethod
+    def _no_null_criteria(cls, data):
+        return {**data, "criteria": data.get("criteria") or []} if isinstance(data, dict) else data
+    # Objects whose records can be listed for this measure (the filters themselves stay on the server).
+    record_objects: list[str] = []
+
+    @model_validator(mode="before")
+    @classmethod
+    def _record_objects(cls, data):
+        if isinstance(data, dict) and data.get("records") and not data.get("recordObjects"):
+            data = {**data, "recordObjects": [r["object"] for r in data["records"] if r.get("object")]}
+        return data
 
 
 class AreaResult(ApiModel):
@@ -400,6 +418,7 @@ class FindingRecordsPage(ApiModel):
     total_size: int | None
     next_cursor: str | None
     record_url_prefix: str  # + record id = link to the record in Salesforce
+    sorted_by: str | None = None  # field the rows are sorted by (e.g. the field duplicates were matched on)
 
 
 class UpdateFindingRequest(ApiModel):

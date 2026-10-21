@@ -15,6 +15,7 @@ from .workflows import _days_since
 OPEN_OPPS = "IsClosed = false"
 BIG_DISCOUNT = 0.20  # a line sold 20%+ below list price
 APPROVAL_LATE_DAYS = 3
+OPP_COLUMNS = ["Name", "StageName", "Amount", "CloseDate", "OwnerId", "LastModifiedDate"]
 
 SETTING_FIX = {
     "No products set up": "/lightning/o/Product2/home",
@@ -65,7 +66,17 @@ def opps_without_products(ctx: Ctx) -> None:
     share = pct(bare, total)
     score = rate_score(share / 100, 0.7)
     ctx.totals["Opportunity"] = total
-    ctx.metric("Opportunities without products", share, "%", "lower-better", score)
+    ctx.metric("Opportunities without products", share, "%", "lower-better", score,
+               how=f"The share of open Opportunities that have no products added: {bare:,} of {total:,}.",
+               rule="100 when every open deal has products, falling evenly to 0 when 70% have none.",
+               records=("Opportunity", OPEN_OPPS, "HasOpportunityLineItem = false"), recent=False,
+               columns=["Name", "StageName", "Amount", "CloseDate", "HasOpportunityLineItem", "OwnerId"], order="CloseDate",
+               criteria=[
+                   ("Records checked", f"{total:,} open Opportunities (not Closed Won or Closed Lost), any age."),
+                   ("Field checked", "“Has products” on the Opportunity"),
+                   ("What's counted", f"{bare:,} of {total:,} open deals ({share:.0f}%) have no products added."),
+                   ("Records listed", "Every open deal with no products, soonest close date first."),
+               ])
     value = ctx.amount("Opportunity", OPEN_OPPS, "HasOpportunityLineItem = false")
     ctx.finding(
         name="Open deals with no products",
@@ -84,7 +95,13 @@ def product_config(ctx: Ctx) -> None:
     active = ctx.count("Product2", "IsActive = true", recent=False)
     ctx.totals["Product2"] = active
     if not active:
-        ctx.metric("Product configuration concerns", 1, "count", "lower-better", 50)
+        ctx.metric("Product configuration concerns", 1, "count", "lower-better", 50,
+                   how="Active Products in the catalogue. There are none, which counts as one concern.",
+                   rule="Set to 50 when there are no active products at all.",
+                   criteria=[
+                       ("Records checked", "Active Products"),
+                       ("What's counted", "0 active products, which counts as 1 concern: there’s no catalogue to sell or quote from."),
+                   ])
         _setting(ctx, "No products set up", "There are no active products.",
                  "Products are how you track what you sell and quote consistently.",
                  "Create your product catalogue (with product codes and families) and a standard price for each product.",
@@ -99,7 +116,25 @@ def product_config(ctx: Ctx) -> None:
     no_code = ctx.count("Product2", "IsActive = true", "ProductCode = null", recent=False) if ctx.has_field("Product2", "ProductCode") else 0
     concerns += (no_price or 0) + no_code
     score = rate_score(concerns / active, 0.5)
-    ctx.metric("Product configuration concerns", concerns, "count", "lower-better", score)
+    ctx.metric("Product configuration concerns", concerns, "count", "lower-better", score,
+               how=f"Active Products with no active price in the standard price book, plus active Products with no product code, "
+                   f"out of {active:,} active products.",
+               rule="100 when there are no gaps, falling evenly to 0 when the gaps add up to half the number of active products.",
+               records=[r for r in (
+                   ("Product2", "IsActive = true", f"Id NOT IN (SELECT Product2Id FROM PricebookEntry WHERE Pricebook2Id = '{std[0]['Id']}' AND IsActive = true)")
+                   if no_price is not None else None,
+                   ("Product2", "IsActive = true", "ProductCode = null") if ctx.has_field("Product2", "ProductCode") else None,
+               ) if r], recent=False,
+               columns=["Name", "ProductCode", "Family", "IsActive", "CreatedDate"], order="Name",
+               criteria=[
+                   ("Records checked", f"{active:,} active Products"),
+                   ("Missing price", (f"{no_price:,} active products have no active price in the Standard Price Book."
+                                      if no_price is not None else "Not checked (the Standard Price Book or its prices can’t be read).")),
+                   ("Missing product code", f"{no_code:,} active products have a blank Product Code."
+                    if ctx.has_field("Product2", "ProductCode") else "Not checked (this org has no Product Code field)."),
+                   ("What's counted", f"{concerns:,} gaps in total (a product missing both is counted twice)."),
+                   ("Records listed", "Active products missing a standard price, and active products with no product code, by name."),
+               ])
     if no_price:
         ctx.finding(
             name="Active products missing a price",
@@ -152,7 +187,20 @@ def pricebook_config(ctx: Ctx) -> None:
         _setting(ctx, "Products priced at zero", f"{zero} active price book entries have a price of 0.",
                  "Zero prices let products go onto deals for free unless someone notices.",
                  "Set real prices, or mark free items clearly (e.g. a ‘Free of charge’ product family).", severity="low", affected=zero, obj="PricebookEntry")
-    ctx.metric("Pricebook configuration", concerns, "count", "lower-better", 100 - 25 * min(concerns, 4))
+    ctx.metric("Pricebook configuration", concerns, "count", "lower-better", 100 - 25 * min(concerns, 4),
+               how="Price book setup: whether the Standard Price Book is turned off, whether any active price books have no active prices, "
+                   "and whether any active products have a price of 0. Each of these found counts as one concern.",
+               rule="100 with no concerns, minus 25 points for each concern, down to 0 at 4 concerns.",
+               criteria=[
+                   ("Records checked", f"{len(books):,} price books and their active prices."),
+                   ("Standard Price Book", "Counts as a concern when it’s turned off."
+                    + (" It’s off here." if std and not std.get("IsActive") else " Not a problem here.")),
+                   ("Empty price books", "Counts as one concern when any active custom price book has no active prices"
+                    + (f": {len(empty):,} found." if empty else ". None found.")),
+                   ("Zero prices", "Counts as one concern when any active price on an active product is 0"
+                    + (f": {zero:,} found." if zero else ". None found.")),
+                   ("What's counted", f"{concerns} concern{'s' if concerns != 1 else ''} found."),
+               ])
 
 
 def product_reporting(ctx: Ctx) -> None:
@@ -161,7 +209,17 @@ def product_reporting(ctx: Ctx) -> None:
     bare = ctx.count("Opportunity", "IsWon = true", "CloseDate = LAST_N_DAYS:365", "HasOpportunityLineItem = false", recent=False)
     share = pct(bare, won)
     score = rate_score(share / 100, 0.7)
-    ctx.metric("Product reporting gaps", share, "%", "lower-better", score)
+    ctx.metric("Product reporting gaps", share, "%", "lower-better", score,
+               how=f"The share of Opportunities won in the last 12 months that have no products recorded: {bare:,} of {won:,}.",
+               rule="100 when every won deal has products, falling evenly to 0 when 70% have none.",
+               records=("Opportunity", "IsWon = true", "CloseDate = LAST_N_DAYS:365", "HasOpportunityLineItem = false"), recent=False,
+               columns=["Name", "StageName", "Amount", "CloseDate", "HasOpportunityLineItem", "OwnerId"], order="CloseDate",
+               criteria=[
+                   ("Records checked", f"{won:,} Opportunities won (Closed Won) with a close date in the last 365 days."),
+                   ("Field checked", "“Has products” on the Opportunity"),
+                   ("What's counted", f"{bare:,} of {won:,} won deals ({share:.0f}%) have no products recorded."),
+                   ("Records listed", "Every won deal from the last 12 months with no products, by close date."),
+               ])
     value = ctx.amount("Opportunity", "IsWon = true", "CloseDate = LAST_N_DAYS:365", "HasOpportunityLineItem = false")
     no_family = ""
     if ctx.has_object("Product2") and ctx.has_field("Product2", "Family"):
@@ -234,7 +292,17 @@ def quote_config(ctx: Ctx) -> None:
                  "Salesforce Quotes are switched off, so quotes are built outside Salesforce (documents or spreadsheets).",
                  "Quotes made outside Salesforce can’t be tracked, synced to the deal, or approved, and pricing drifts.",
                  "Turn on Quotes, add a quote template with your branding, and create quotes from the Opportunity.", severity="medium")
-    ctx.metric("Quote configuration", concerns, "count", "lower-better", 100 - 30 * min(concerns, 3))
+    ctx.metric("Quote configuration", concerns, "count", "lower-better", 100 - 30 * min(concerns, 3),
+               how="How quoting is set up: running Salesforce CPQ (no longer sold, so a move to Revenue Cloud is needed) "
+                   "or having Salesforce Quotes switched off each counts as one concern.",
+               rule="100 with no concerns, minus 30 points for each concern.",
+               criteria=[
+                   ("Setup checked", "Whether Salesforce CPQ is installed, and whether standard Quotes are turned on."),
+                   ("CPQ in use", "Counts as one concern: CPQ is no longer sold, so a move to Revenue Cloud needs planning."
+                    + (" CPQ is installed here." if ctx.has_object("SBQQ__Quote__c") else " Not installed here.")),
+                   ("Quotes turned off", "Counts as one concern when there’s no CPQ and standard Quotes are switched off."),
+                   ("What's counted", f"{concerns} concern{'s' if concerns != 1 else ''} found."),
+               ])
 
 
 def quote_sync(ctx: Ctx) -> None:
@@ -255,7 +323,22 @@ def quote_sync(ctx: Ctx) -> None:
     bad = _safe_count(ctx, "Opportunity", OPEN_OPPS, *cond) or 0
     with_quotes = _safe_count(ctx, "Opportunity", OPEN_OPPS, f"Id IN (SELECT {link} FROM {obj})") or 0
     score = rate_score(bad / with_quotes, 0.5) if with_quotes else 100
-    ctx.metric("Quote synchronization concerns", bad, "count", "lower-better", score)
+    ctx.metric("Quote synchronization concerns", bad, "count", "lower-better", score,
+               how=("Open Opportunities that have Quotes but none of them synced to the deal"
+                    if obj == "Quote" else "Open Opportunities that have CPQ quotes but no primary quote")
+                   + f", out of {with_quotes:,} open deals with quotes.",
+               rule="100 when every deal with quotes is in sync, falling evenly to 0 when 50% aren’t. "
+                    "Scores 100 when no open deals have quotes.",
+               records=("Opportunity", OPEN_OPPS, *cond), recent=False,
+               columns=["Name", "StageName", "Amount", "SyncedQuoteId", "SBQQ__PrimaryQuote__c", "CloseDate", "OwnerId"], order="CloseDate",
+               criteria=[
+                   ("Records checked", f"{with_quotes:,} open Opportunities that have at least one "
+                    + ("Quote." if obj == "Quote" else "CPQ quote.")),
+                   ("Field checked", "Synced Quote on the Opportunity" if obj == "Quote" else "Primary Quote on the Opportunity (CPQ)"),
+                   ("Out of sync means", "The deal has quotes but none is synced." if obj == "Quote" else "The deal has CPQ quotes but none is marked primary."),
+                   ("What's counted", f"{bad:,} of {with_quotes:,} open deals with quotes are out of sync."),
+                   ("Records listed", "Every open deal with quotes that’s out of sync, by close date."),
+               ])
     value = ctx.amount("Opportunity", OPEN_OPPS, *cond)
     ctx.finding(
         name="Deals out of sync with their quotes",
@@ -277,7 +360,17 @@ def quote_visibility(ctx: Ctx) -> None:
     bare = _safe_count(ctx, "Opportunity", OPEN_OPPS, "Probability >= 50", f"Id NOT IN (SELECT {link} FROM {obj})") or 0
     share = pct(bare, late)
     score = rate_score(share / 100, 0.8)
-    ctx.metric("Missing Quote visibility", share, "%", "lower-better", score)
+    ctx.metric("Missing Quote visibility", share, "%", "lower-better", score,
+               how=f"The share of open Opportunities at 50% probability or higher that have no quote in Salesforce: {bare:,} of {late:,}.",
+               rule="100 when every late-stage deal has a quote, falling evenly to 0 when 80% have none.",
+               records=("Opportunity", OPEN_OPPS, "Probability >= 50", f"Id NOT IN (SELECT {link} FROM {obj})"), recent=False,
+               columns=["Name", "StageName", "Probability", "Amount", "CloseDate", "OwnerId"], order="CloseDate",
+               criteria=[
+                   ("Records checked", f"{late:,} open Opportunities at 50% probability or higher."),
+                   ("Quotes looked at", "Standard Quotes" if obj == "Quote" else "CPQ quotes"),
+                   ("What's counted", f"{bare:,} of {late:,} late-stage deals ({share:.0f}%) have no quote at all."),
+                   ("Records listed", "Every late-stage open deal with no quote, by close date."),
+               ])
     value = ctx.amount("Opportunity", OPEN_OPPS, "Probability >= 50", f"Id NOT IN (SELECT {link} FROM {obj})")
     ctx.finding(
         name="Late-stage deals with no quote",
@@ -313,7 +406,32 @@ def quote_process(ctx: Ctx) -> None:
         if expired:
             gaps += expired
             parts.append(f"{expired} primary CPQ quotes on open deals have expired")
-    ctx.metric("Quote process gaps", gaps, "count", "lower-better", rate_score(min(gaps, 50) / 50, 1.0))
+    ctx.metric("Quote process gaps", gaps, "count", "lower-better", rate_score(min(gaps, 50) / 50, 1.0),
+               how="Open Opportunities synced to a Quote that has expired, plus Quotes on open deals still in Draft after 30 days "
+                   "(or, with CPQ, primary CPQ quotes on open deals that have expired).",
+               rule="100 with no gaps, losing 2 points for each gap, down to 0 at 50 gaps.",
+               records=[r for r in (
+                   ("Opportunity", OPEN_OPPS, "SyncedQuote.ExpirationDate < TODAY")
+                   if obj == "Quote" and ctx.has_field("Opportunity", "SyncedQuoteId") else None,
+                   ("Quote", "Status = 'Draft'", "CreatedDate < LAST_N_DAYS:30", "Opportunity.IsClosed = false")
+                   if obj == "Quote" and ctx.has_field("Quote", "Status") else None,
+                   (obj, "SBQQ__Primary__c = true", "SBQQ__ExpirationDate__c < TODAY", "SBQQ__Opportunity2__r.IsClosed = false")
+                   if obj == "SBQQ__Quote__c" and ctx.has_field(obj, "SBQQ__ExpirationDate__c") else None,
+               ) if r], recent=False,
+               columns=["Name", "Status", "ExpirationDate", "SBQQ__ExpirationDate__c", "StageName", "CloseDate", "CreatedDate", "OwnerId"],
+               order="CreatedDate",
+               criteria=[
+                   ("Records checked", "Open Opportunities and their Quotes" if obj == "Quote" else "Primary CPQ quotes on open Opportunities"),
+                   ("Expired synced quotes", "An open deal synced to a Quote whose expiration date has passed."
+                    if obj == "Quote" and ctx.has_field("Opportunity", "SyncedQuoteId") else ""),
+                   ("Forgotten drafts", "A Quote on an open deal still in Draft status and created more than 30 days ago."
+                    if obj == "Quote" and ctx.has_field("Quote", "Status") else ""),
+                   ("Expired CPQ quotes", "A primary CPQ quote on an open deal whose expiration date has passed."
+                    if obj == "SBQQ__Quote__c" and ctx.has_field(obj, "SBQQ__ExpirationDate__c") else ""),
+                   ("What's counted", ("; ".join(parts) + ".") if parts else "No gaps found."),
+                   ("Flagged when", "At least one gap is found."),
+                   ("Records listed", "The deals and quotes behind each gap, oldest first."),
+               ])
     if parts:
         _setting(ctx, "Expired or forgotten quotes", "; ".join(parts) + ".",
                  "Customers holding an expired quote may buy at old prices — or stall because nobody followed up.",
@@ -381,9 +499,30 @@ def pending_approvals(ctx: Ctx) -> None:
         raise Unavailable("Approvals can’t be read in this org.")
     rows = ctx.rows("SELECT Id, TargetObject.Name, TargetObject.Type, CreatedDate FROM ProcessInstance WHERE Status = 'Pending' ORDER BY CreatedDate", limit=2000)
     late = [(r, d) for r in rows if (d := _days_since(r.get("CreatedDate"))) is not None and d > APPROVAL_LATE_DAYS]
-    ctx.metric("Pending approvals", len(rows), "count", "lower-better", None)
+    ctx.metric("Pending approvals", len(rows), "count", "lower-better", None,
+               how="Approval requests (on any kind of record) that are still waiting for a decision.",
+               rule="Shown for information only; it doesn’t change the area score.",
+               records=("ProcessInstance", "Status = 'Pending'"), recent=False,
+               columns=["TargetObjectId", "Status", "CreatedDate"], order="CreatedDate",
+               criteria=[
+                   ("Records checked", "Approval requests on any kind of record (deals, quotes, discounts and others)."),
+                   ("What's counted", f"{len(rows):,} requests with status Pending."),
+                   ("Records listed", "Every pending approval request, oldest first."),
+               ])
     score = rate_score(len(late) / len(rows), 0.6) if rows else 100
-    ctx.metric("Delayed approvals", len(late), "count", "lower-better", score)
+    ctx.metric("Delayed approvals", len(late), "count", "lower-better", score,
+               how=f"Pending approval requests that have waited more than {APPROVAL_LATE_DAYS} days, out of {len(rows):,} pending.",
+               rule="100 when no approval is late, falling evenly to 0 when 60% of pending approvals are late. "
+                    "Scores 100 when nothing is pending.",
+               records=("ProcessInstance", "Status = 'Pending'", f"CreatedDate < LAST_N_DAYS:{APPROVAL_LATE_DAYS}"), recent=False,
+               columns=["TargetObjectId", "Status", "CreatedDate"], order="CreatedDate",
+               criteria=[
+                   ("Records checked", f"{len(rows):,} pending approval requests."),
+                   ("Field checked", "The date each request was submitted"),
+                   ("Delayed means", f"Waiting more than {APPROVAL_LATE_DAYS} days for a decision."),
+                   ("What's counted", f"{len(late):,} of {len(rows):,} pending requests are delayed."),
+                   ("Records listed", f"Pending requests submitted more than {APPROVAL_LATE_DAYS} days ago, oldest first."),
+               ])
     oldest = ", ".join(f"{(r.get('TargetObject') or {}).get('Name') or 'record'} ({d} days)" for r, d in late[:5])
     ctx.finding(
         name="Approvals waiting more than 3 days",
@@ -417,7 +556,25 @@ def discount_config(ctx: Ctx) -> None:
     given = sum(_given_away(ln)[1] for ln in lines)
     leak = given / list_total if list_total else 0
     score = min(100 - 40 * concerns, rate_score(leak, 0.3))
-    ctx.metric("Discount approval configuration", concerns, "count", "lower-better", score)
+    ctx.metric("Discount approval configuration", concerns, "count", "lower-better", score,
+               how="Whether discounts were given on deals won in the last 12 months without any active approval process on "
+                   "Opportunities or Quotes (that counts as one concern), and how far below list price those won deals were sold "
+                   f"({leak:.0%} overall).",
+               rule="100 when won deals were sold at list price, falling evenly to 0 when discounts reach 30% of list value. "
+                    "Capped at 60 when discounts were given with no approval process in place.",
+               records=("Opportunity", ctx.ids_in(sorted({ln.get("OpportunityId") for ln in discounted}))), recent=False,
+               columns=OPP_COLUMNS, order="-Amount",
+               criteria=[
+                   ("Records checked", f"{len(lines):,} product lines on Opportunities won in the last 365 days."),
+                   ("Compared on", "List price × quantity versus the line’s sold total."),
+                   ("Discount means", "The line sold for less than its list value."),
+                   ("Approval setup", "Looks for an active approval process on Opportunities, Quotes or CPQ quotes, or CPQ Advanced Approvals. "
+                    + (f"Found {len(on_deals):,}." if on_deals else "None found.")),
+                   ("What's counted", f"{concerns} concern{'s' if concerns != 1 else ''}: discounts given with no approval process in place."
+                    if concerns else "0 concerns: an approval process is in place, or no discounts were given."),
+                   ("Discount leakage", f"{_money(given)} given away below list price out of {_money(list_total)} of list value ({leak:.0%})."),
+                   ("Records listed", f"The {len({ln.get('OpportunityId') for ln in discounted}):,} won deals that had a discount, biggest first (up to 200)."),
+               ])
     if given <= 0:
         return
     by_rep: dict[str, float] = defaultdict(float)
@@ -453,14 +610,36 @@ def approval_gaps(ctx: Ctx) -> None:
         names[ln.get("OpportunityId")] = (ln.get("Opportunity") or {}).get("Name") or ln.get("OpportunityId")
     big = [oid for oid, (lv, g) in per_deal.items() if lv and g / lv >= BIG_DISCOUNT]
     if not big:
-        ctx.metric("Approval workflow gaps", 0, "count", "lower-better", 100)
+        ctx.metric("Approval workflow gaps", 0, "count", "lower-better", 100,
+                   how=f"Opportunities won in the last 12 months with a discount of {BIG_DISCOUNT:.0%} or more off list price "
+                       "that have no approval on record. There were no such big discounts.",
+                   rule="Scores 100 because no won deal had a big discount.",
+                   criteria=[
+                       ("Records checked", f"{len(per_deal):,} Opportunities won in the last 365 days, with their product lines."),
+                       ("Big discount means", f"The deal’s lines sold at least {BIG_DISCOUNT:.0%} below their total list value."),
+                       ("What's counted", "No won deal had a big discount, so there’s nothing to check for approval."),
+                   ])
         return
     approved = _approved_targets(ctx, big) if ctx.has_object("ProcessInstance") else set()
     approved |= _approved_by_quote(ctx, big)
     skipped = [oid for oid in big if oid not in approved]
     given = sum(per_deal[o][1] for o in skipped)
     score = rate_score(len(skipped) / len(big), 0.5)
-    ctx.metric("Approval workflow gaps", len(skipped), "count", "lower-better", score)
+    ctx.metric("Approval workflow gaps", len(skipped), "count", "lower-better", score,
+               how=f"Opportunities won in the last 12 months with {BIG_DISCOUNT:.0%} or more off list price that have no approval on record "
+                   f"(no approved request on the deal or its quotes, and no quote marked Approved), out of {len(big):,} such deals.",
+               rule="100 when every big discount was approved, falling evenly to 0 when 50% skipped approval.",
+               records=("Opportunity", ctx.ids_in(skipped)), recent=False,
+               columns=OPP_COLUMNS, order="-Amount",
+               criteria=[
+                   ("Records checked", f"{len(per_deal):,} Opportunities won in the last 365 days, with their product lines."),
+                   ("Big discount means", f"The deal’s lines sold at least {BIG_DISCOUNT:.0%} below their total list value. "
+                    f"{len(big):,} deals qualify."),
+                   ("Approval counts when", "There’s an approved approval request on the deal or one of its quotes, "
+                    "or one of its quotes (standard or CPQ) has the status Approved."),
+                   ("What's counted", f"{len(skipped):,} of {len(big):,} big-discount deals had no approval, giving away {_money(given)}."),
+                   ("Records listed", "Every big-discount deal with no approval, biggest first (up to 200)."),
+               ])
     ctx.finding(
         name="Big discounts that skipped approval",
         obj="Opportunity", records=("Opportunity", ctx.ids_in(skipped)), recent=False,

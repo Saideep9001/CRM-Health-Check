@@ -86,6 +86,7 @@ export function Drawer({
   subtitle,
   children,
   footer,
+  wide,
 }: {
   open: boolean;
   onClose: () => void;
@@ -93,6 +94,8 @@ export function Drawer({
   subtitle?: ReactNode;
   children: ReactNode;
   footer?: ReactNode;
+  /** Room for a data table. */
+  wide?: boolean;
 }) {
   useEscape(open, onClose);
   return createPortal(
@@ -113,7 +116,7 @@ export function Drawer({
             animate={{ x: 0 }}
             exit={{ x: '100%' }}
             transition={{ type: 'spring', stiffness: 320, damping: 34 }}
-            className="absolute right-0 top-0 flex h-full w-full max-w-xl flex-col border-l border-line bg-surface shadow-pop"
+            className={`absolute right-0 top-0 flex h-full w-full flex-col border-l border-line bg-surface shadow-pop ${wide ? 'max-w-4xl' : 'max-w-xl'}`}
           >
             <div className="flex items-start justify-between gap-4 border-b border-line px-6 py-4">
               <div className="min-w-0">

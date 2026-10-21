@@ -77,7 +77,21 @@ def unassigned_leads(ctx: Ctx) -> None:
     ctx.totals["Lead"] = total
     n = ctx.count("Lead", OPEN_LEADS, "Owner.Type = 'Queue'") if total else 0
     score = rate_score(n / total, 0.2) if total else 100
-    ctx.metric("Unassigned Leads", n, "count", "lower-better", score)
+    ctx.metric(
+        "Unassigned Leads", n, "count", "lower-better", score,
+        how="Open Leads (not yet converted) that are still owned by a queue instead of a person.",
+        rule="100 when no open Leads sit in a queue, falling evenly to 0 when 20% of open Leads do.",
+        columns=["Name", "Company", "OwnerId", "Status", "CreatedDate", "LeadSource"],
+        order="CreatedDate",
+        criteria=[
+            ("Records checked", f"{total:,} open Leads (not converted)"),
+            ("Field checked", "Lead Owner"),
+            ("Unassigned", "The Lead is owned by a queue, not by a person"),
+            ("What's counted", f"{n:,} of {total:,} open Leads ({pct(n, total):.0f}%) are owned by a queue"),
+            ("Records listed", "Every open Lead owned by a queue, oldest first"),
+        ],
+        records=("Lead", OPEN_LEADS, "Owner.Type = 'Queue'"),
+    )
     if n:
         oldest = ctx.rows("SELECT Name, Company, CreatedDate FROM Lead WHERE IsConverted = false AND Owner.Type = 'Queue' ORDER BY CreatedDate ASC LIMIT 3", 3)
         waits = [f"{r.get('Name')} ({d} days)" for r in oldest if (d := _days_since(r.get("CreatedDate"))) is not None]
@@ -103,7 +117,21 @@ def stale_leads(ctx: Ctx) -> None:
     conds = (OPEN_LEADS, f"LastModifiedDate < LAST_N_DAYS:{days}", f"(LastActivityDate = null OR LastActivityDate < LAST_N_DAYS:{days})")
     n = ctx.count("Lead", *conds) if total else 0
     score = rate_score(n / total, 0.5) if total else 100
-    ctx.metric("Stale Leads", n, "count", "lower-better", score)
+    ctx.metric(
+        "Stale Leads", n, "count", "lower-better", score,
+        how=f"Open Leads that nobody has edited and that have no logged activity in the last {days} days.",
+        rule="100 when no open Leads are stale, falling evenly to 0 when 50% of open Leads are.",
+        columns=["Name", "Company", "LastModifiedDate", "LastActivityDate", "Status", "OwnerId"],
+        order="LastModifiedDate",
+        criteria=[
+            ("Records checked", f"{total:,} open Leads (not converted)"),
+            ("Fields checked", "Last Modified Date and Last Activity Date"),
+            ("Stale", f"Not edited in the last {days} days AND no activity logged in the last {days} days (or never)"),
+            ("What's counted", f"{n:,} of {total:,} open Leads ({pct(n, total):.0f}%) are stale"),
+            ("Records listed", "Every stale open Lead, least recently edited first"),
+        ],
+        records=("Lead", *conds),
+    )
     owners = ctx.by_owner("Lead", *conds) if n else []
     ctx.finding(
         name="Stale open Leads",
@@ -125,7 +153,21 @@ def overdue_opportunities(ctx: Ctx) -> None:
     ctx.totals["Opportunity"] = total
     n = ctx.count("Opportunity", OPEN_OPPS, "CloseDate < TODAY") if total else 0
     score = rate_score(n / total, 0.3) if total else 100
-    ctx.metric("Overdue Opportunities", n, "count", "lower-better", score)
+    ctx.metric(
+        "Overdue Opportunities", n, "count", "lower-better", score,
+        how="Open Opportunities whose close date is already in the past.",
+        rule="100 when no open deals are overdue, falling evenly to 0 when 30% of open deals are.",
+        columns=["Name", "CloseDate", "StageName", "Amount", "NextStep", "OwnerId"],
+        order="CloseDate",
+        criteria=[
+            ("Records checked", f"{total:,} open Opportunities (not Closed Won or Closed Lost)"),
+            ("Field checked", "Close Date"),
+            ("Overdue", "The Close Date is before today"),
+            ("What's counted", f"{n:,} of {total:,} open Opportunities ({pct(n, total):.0f}%) are overdue"),
+            ("Records listed", "Every overdue open Opportunity, oldest close date first"),
+        ],
+        records=("Opportunity", OPEN_OPPS, "CloseDate < TODAY"),
+    )
     if n:
         value = ctx.amount("Opportunity", OPEN_OPPS, "CloseDate < TODAY")
         owners = ctx.by_owner("Opportunity", OPEN_OPPS, "CloseDate < TODAY")
@@ -172,7 +214,18 @@ def escalation_processes(ctx: Ctx) -> None:
             )
     except Unavailable:
         pass  # older orgs or limited access: assignment rules alone still tell us something
-    ctx.metric("Missing escalation processes", len(missing), "count", "lower-better", [100, 50, 15][min(len(missing), 2)])
+    ctx.metric(
+        "Missing escalation processes", len(missing), "count", "lower-better", [100, 50, 15][min(len(missing), 2)],
+        how="We check two things: is there an active lead assignment rule, and does any active flow or process run on Leads? The number is how many of these are missing.",
+        rule="100 when both are in place, 50 when one is missing, and 15 when both are missing.",
+        criteria=[
+            ("Assignment rules", f"Lead Assignment Rules in Setup: {len(rules)} found, "
+             + ("at least one is active" if any(r.get("Active") for r in rules) else "none is active")),
+            ("Lead automation", "Active Flows or Processes whose trigger object is Lead: "
+             + ("none found" if "lead automation" in missing else "at least one found (or this couldn't be checked with this user)")),
+            ("What's counted", f"{len(missing)} of 2 missing" + (f": {', '.join(missing)}" if missing else "")),
+        ],
+    )
 
 
 def sales_progression(ctx: Ctx) -> None:
@@ -192,7 +245,22 @@ def sales_progression(ctx: Ctx) -> None:
             )
     except Unavailable:
         pass
-    ctx.metric("Sales progression issues", no_amount, "count", "lower-better", score)
+    ctx.metric(
+        "Sales progression issues", no_amount, "count", "lower-better", score,
+        how="Open Opportunities with no Amount. We also check whether Opportunities have any active validation rules guiding how deals move through stages.",
+        rule="100 when every open deal has an Amount, falling evenly to 0 when 30% have none. If Opportunities have no active validation rules, the score can't go above 70.",
+        columns=["Name", "Amount", "StageName", "CloseDate", "NextStep", "OwnerId"],
+        order="CloseDate",
+        criteria=[
+            ("Records checked", f"{total:,} open Opportunities"),
+            ("Field checked", "Amount"),
+            ("Missing", "Amount is empty"),
+            ("Stage rules", "Active validation rules on Opportunity in Setup. With none, the score is capped at 70"),
+            ("What's counted", f"{no_amount:,} of {total:,} open Opportunities ({pct(no_amount, total):.0f}%) have no Amount"),
+            ("Records listed", "Every open Opportunity with no Amount, by close date"),
+        ],
+        records=("Opportunity", OPEN_OPPS, "Amount = null"),
+    )
     ctx.finding(
         name="Open deals with no Amount",
         records=("Opportunity", OPEN_OPPS, "Amount = null"),
@@ -217,7 +285,21 @@ def account_relationships(ctx: Ctx) -> None:
         "Id NOT IN (SELECT AccountId FROM Opportunity WHERE AccountId != null)",
     ) if total else 0
     score = rate_score(empty / total, 0.5) if total else 100
-    ctx.metric("Missing Account relationships", empty, "count", "lower-better", score)
+    ctx.metric(
+        "Missing Account relationships", empty, "count", "lower-better", score,
+        how="Accounts that have no Contacts and no Opportunities linked to them.",
+        rule="100 when every Account has people or deals, falling evenly to 0 when 50% of Accounts have neither.",
+        columns=["Name", "Type", "Industry", "OwnerId", "CreatedDate"],
+        order="CreatedDate",
+        criteria=[
+            ("Records checked", f"{total:,} Accounts"),
+            ("Checked", "Linked Contacts and linked Opportunities (any status)"),
+            ("Empty account", "No Contact AND no Opportunity points to the Account"),
+            ("What's counted", f"{empty:,} of {total:,} Accounts ({pct(empty, total):.0f}%) are empty"),
+            ("Records listed", "Every empty Account, oldest first"),
+        ],
+        records=("Account", "Id NOT IN (SELECT AccountId FROM Contact WHERE AccountId != null)", "Id NOT IN (SELECT AccountId FROM Opportunity WHERE AccountId != null)"),
+    )
     ctx.finding(
         name="Accounts with no people and no deals",
         records=("Account", "Id NOT IN (SELECT AccountId FROM Contact WHERE AccountId != null)", "Id NOT IN (SELECT AccountId FROM Opportunity WHERE AccountId != null)"),
@@ -236,7 +318,21 @@ def orphaned_contacts(ctx: Ctx) -> None:
     total = ctx.total("Contact")
     n = ctx.count("Contact", "AccountId = null") if total else 0
     score = rate_score(n / total, 0.2) if total else 100
-    ctx.metric("Orphaned Contacts", n, "count", "lower-better", score)
+    ctx.metric(
+        "Orphaned Contacts", n, "count", "lower-better", score,
+        how="Contacts that aren’t linked to any Account.",
+        rule="100 when every Contact has an Account, falling evenly to 0 when 20% of Contacts have none.",
+        columns=["Name", "AccountId", "Email", "OwnerId", "CreatedDate"],
+        order="CreatedDate",
+        criteria=[
+            ("Records checked", f"{total:,} Contacts"),
+            ("Field checked", "Account Name"),
+            ("Orphaned", "Account Name is empty"),
+            ("What's counted", f"{n:,} of {total:,} Contacts ({pct(n, total):.0f}%) have no Account"),
+            ("Records listed", "Every Contact with no Account, oldest first"),
+        ],
+        records=("Contact", "AccountId = null"),
+    )
     ctx.finding(
         name="Contacts not linked to any Account",
         records=("Contact", "AccountId = null"),
@@ -256,7 +352,21 @@ def missing_contact_roles(ctx: Ctx) -> None:
     cond = "Id NOT IN (SELECT OpportunityId FROM OpportunityContactRole)"
     n = ctx.count("Opportunity", OPEN_OPPS, cond) if total else 0
     score = rate_score(n / total, 0.6) if total else 100
-    ctx.metric("Missing Contact Roles", n, "count", "lower-better", score)
+    ctx.metric(
+        "Missing Contact Roles", n, "count", "lower-better", score,
+        how="Open Opportunities with no contact roles (no people named as decision maker, influencer and so on).",
+        rule="100 when every open deal has contact roles, falling evenly to 0 when 60% of open deals have none.",
+        columns=["Name", "StageName", "Amount", "CloseDate", "NextStep", "OwnerId"],
+        order="CloseDate",
+        criteria=[
+            ("Records checked", f"{total:,} open Opportunities"),
+            ("Checked", "The Contact Roles related list on each deal"),
+            ("Missing", "The deal has no contact roles at all"),
+            ("What's counted", f"{n:,} of {total:,} open Opportunities ({pct(n, total):.0f}%) have no contact roles"),
+            ("Records listed", "Every open Opportunity with no contact roles, by close date"),
+        ],
+        records=("Opportunity", OPEN_OPPS, cond),
+    )
     if n:
         value = ctx.amount("Opportunity", OPEN_OPPS, cond)
         owners = ctx.by_owner("Opportunity", OPEN_OPPS, cond)
@@ -301,7 +411,16 @@ def account_hierarchy(ctx: Ctx) -> None:
             severity="low",
             obj="Contact",
         )
-    ctx.metric("Account hierarchy issues", issues, "count", "lower-better", [100, 75, 50][issues])
+    ctx.metric(
+        "Account hierarchy issues", issues, "count", "lower-better", [100, 75, 50][issues],
+        how="We check two things: whether any Accounts have a Parent Account (only when you have 50 or more Accounts), and whether a Contact can be related to more than one Account. The number is how many of these are missing.",
+        rule="100 with no issues, 75 with one, and 50 with both.",
+        criteria=[
+            ("Parent accounts", f"Whether any of your {total:,} Accounts has a Parent Account. Only checked with 50 or more Accounts; a gap when none do"),
+            ("Contacts to multiple Accounts", "Whether the Account Contact Relationship feature is turned on; a gap when it's off"),
+            ("What's counted", f"{issues} of 2 issues found"),
+        ],
+    )
 
 
 # ---------------------------------------------------------------- area 5: sales path, playbooks, feedback loops
@@ -317,7 +436,22 @@ def stuck_opportunities(ctx: Ctx) -> None:
         how = f"haven’t been updated in {days}+ days"
     n = ctx.count("Opportunity", OPEN_OPPS, cond) if total else 0
     score = rate_score(n / total, 0.4) if total else 100
-    ctx.metric("Stuck Opportunities", n, "count", "lower-better", score)
+    ctx.metric(
+        "Stuck Opportunities", n, "count", "lower-better", score,
+        how=f"Open Opportunities that {how}.",
+        rule="100 when no open deals are stuck, falling evenly to 0 when 40% of open deals are.",
+        columns=["Name", "StageName", "LastStageChangeDate", "LastModifiedDate", "Amount", "CloseDate", "OwnerId"],
+        order="CloseDate",
+        criteria=[
+            ("Records checked", f"{total:,} open Opportunities"),
+            ("Field checked", "Last Stage Change Date (or Created Date if the stage never changed)" if "LastStageChangeDate" in cond
+             else "Last Modified Date (this org has no Last Stage Change Date)"),
+            ("Stuck", f"The deal {how}"),
+            ("What's counted", f"{n:,} of {total:,} open Opportunities ({pct(n, total):.0f}%) are stuck"),
+            ("Records listed", "Every stuck open Opportunity, earliest close date first"),
+        ],
+        records=("Opportunity", OPEN_OPPS, cond),
+    )
     if n:
         value = ctx.amount("Opportunity", OPEN_OPPS, cond)
         amount = ", Amount" if ctx.has_field("Opportunity", "Amount") else ""
@@ -345,7 +479,21 @@ def missing_next_steps(ctx: Ctx) -> None:
         raise Unavailable("Opportunities have no Next Step field.")
     n = ctx.count("Opportunity", OPEN_OPPS, "NextStep = null") if total else 0
     score = rate_score(n / total, 0.6) if total else 100
-    ctx.metric("Missing Next Steps", n, "count", "lower-better", score)
+    ctx.metric(
+        "Missing Next Steps", n, "count", "lower-better", score,
+        how="Open Opportunities with an empty Next Step field.",
+        rule="100 when every open deal has a next step, falling evenly to 0 when 60% of open deals have none.",
+        columns=["Name", "NextStep", "StageName", "CloseDate", "Amount", "OwnerId"],
+        order="CloseDate",
+        criteria=[
+            ("Records checked", f"{total:,} open Opportunities"),
+            ("Field checked", "Next Step"),
+            ("Missing", "Next Step is empty"),
+            ("What's counted", f"{n:,} of {total:,} open Opportunities ({pct(n, total):.0f}%) have no next step"),
+            ("Records listed", "Every open Opportunity with no next step, by close date"),
+        ],
+        records=("Opportunity", OPEN_OPPS, "NextStep = null"),
+    )
     owners = ctx.by_owner("Opportunity", OPEN_OPPS, "NextStep = null") if n else []
     ctx.finding(
         name="Open deals with no next step",
@@ -374,7 +522,20 @@ def closed_lost_reasons(ctx: Ctx) -> None:
     lost_conds = ("IsClosed = true", "IsWon = false", "CloseDate = LAST_N_DAYS:90")
     lost = ctx.count("Opportunity", *lost_conds)
     if reason is None:
-        ctx.metric("Missing Closed Lost reasons", lost, "count", "lower-better", 40 if lost else 70)
+        ctx.metric(
+            "Missing Closed Lost reasons", lost, "count", "lower-better", 40 if lost else 70,
+            how="Opportunities have no field for why a deal was lost, so we count every deal lost (closed and not won) with a close date in the last 90 days: none of them can have a reason.",
+            rule="A fixed score: 40 if any deals were lost in the last 90 days, 70 if none were.",
+            columns=["Name", "StageName", "CloseDate", "Amount", "OwnerId"],
+            order="CloseDate",
+            criteria=[
+                ("Records checked", "Opportunities that are Closed Lost (closed and not won) with a close date in the last 90 days"),
+                ("Field checked", "A lost-reason field (a field whose name or label mentions lost/loss and reason): none exists"),
+                ("What's counted", f"All {lost:,} lost deals, since none can have a reason recorded"),
+                ("Records listed", "Every deal lost in the last 90 days, by close date"),
+            ],
+            records=("Opportunity", *lost_conds),
+        )
         _setting(
             ctx,
             "No field for why deals are lost",
@@ -386,7 +547,21 @@ def closed_lost_reasons(ctx: Ctx) -> None:
         return
     n = ctx.count("Opportunity", *lost_conds, f"{reason} = null") if lost else 0
     score = rate_score(n / lost, 0.5) if lost else 100
-    ctx.metric("Missing Closed Lost reasons", n, "count", "lower-better", score)
+    ctx.metric(
+        "Missing Closed Lost reasons", n, "count", "lower-better", score,
+        how=f"Deals lost (closed and not won) with a close date in the last 90 days where {fields[reason].get('label') or reason} is empty.",
+        rule="100 when every lost deal has a reason, falling evenly to 0 when 50% of lost deals have none.",
+        columns=[reason, "Name", "StageName", "CloseDate", "Amount", "OwnerId"],
+        order="CloseDate",
+        criteria=[
+            ("Records checked", f"{lost:,} Opportunities that are Closed Lost with a close date in the last 90 days"),
+            ("Field checked", f"{fields[reason].get('label') or reason}"),
+            ("Missing", f"{fields[reason].get('label') or reason} is empty"),
+            ("What's counted", f"{n:,} of {lost:,} lost deals ({pct(n, lost):.0f}%) have no reason"),
+            ("Records listed", "Every lost deal with no reason, by close date"),
+        ],
+        records=("Opportunity", *lost_conds, f"{reason} = null"),
+    )
     ctx.finding(
         name="Lost deals with no reason",
         records=("Opportunity", *lost_conds, f"{reason} = null"),
@@ -406,7 +581,16 @@ def stage_guidance(ctx: Ctx) -> None:
     stages = [s for s in ctx.setup("SELECT Id, MasterLabel, ApiName, IsActive, IsClosed FROM OpportunityStage WHERE IsActive = true", tooling=False) if not s.get("IsClosed")]
     paths = [p for p in ctx.setup("SELECT Id, MasterLabel, SobjectType, IsActive FROM PathAssistant") if p.get("SobjectType") == "Opportunity" and p.get("IsActive")]
     if not paths:
-        ctx.metric("Sales stage guidance gaps", len(stages), "count", "lower-better", 30 if stages else 100)
+        ctx.metric(
+            "Sales stage guidance gaps", len(stages), "count", "lower-better", 30 if stages else 100,
+            how="Sales Path isn’t turned on for Opportunities, so every open (not closed) sales stage counts as having no on-screen guidance.",
+            rule="A fixed score: 30 when there are open sales stages but no active Path, 100 when there are no open stages.",
+            criteria=[
+                ("Checked", "Active Sales Paths in Setup for Opportunities: none found"),
+                ("Stages", f"{len(stages)} active, open (not closed) sales stages"),
+                ("What's counted", f"All {len(stages)} open stages, since without a Path none has on-screen guidance"),
+            ],
+        )
         if stages:
             _setting(
                 ctx,
@@ -427,7 +611,17 @@ def stage_guidance(ctx: Ctx) -> None:
     }
     gaps = [s.get("MasterLabel") or s.get("ApiName") for s in stages if str(s.get("Id") or "")[:15] not in guided]
     score = rate_score(len(gaps) / len(stages), 1.0) if stages else 100
-    ctx.metric("Sales stage guidance gaps", len(gaps), "count", "lower-better", score)
+    ctx.metric(
+        "Sales stage guidance gaps", len(gaps), "count", "lower-better", score,
+        how=f"Of your {len(stages)} open (not closed) sales stages, the ones with no “Guidance for Success” text on the Opportunity Path.",
+        rule="100 when every open stage has guidance, falling evenly to 0 when none of them do (100%).",
+        criteria=[
+            ("Checked", f"{len(paths)} active Opportunity Path(s) and their “Guidance for Success” text"),
+            ("Stages", f"{len(stages)} active, open (not closed) sales stages"),
+            ("Gap", "A stage with no guidance text on any Path (empty or only spaces counts as none)"),
+            ("What's counted", f"{len(gaps)} of {len(stages)} open stages have no guidance" + (f": {', '.join(map(str, gaps[:6]))}" if gaps else "")),
+        ],
+    )
     if gaps:
         _setting(
             ctx,
@@ -492,7 +686,22 @@ def missing_sales_activities(ctx: Ctx) -> None:
     quiet_ids = [uid for uid in reps if uid not in active]
     ctx.totals["User"] = len(reps)
     score = rate_score(len(quiet) / len(reps), 0.5) if reps else 100
-    ctx.metric("Missing sales activities", len(quiet), "count", "lower-better", score)
+    ctx.metric(
+        "Missing sales activities", len(quiet), "count", "lower-better", score,
+        how="Active people who own open Opportunities or Leads (bots and integration users left out) who logged no tasks or events in the last 14 days.",
+        rule="100 when everyone logged activity, falling evenly to 0 when 50% of these people logged none.",
+        columns=["Name", "Username", "LastLoginDate"],
+        order="Name",
+        criteria=[
+            ("People checked", f"{len(reps)} active users who own at least one open Opportunity or open Lead"),
+            ("Left out", "Queues, non-standard users, names with integration/automated/Einstein/Agentforce/bot, and integration, API-only, automated or Chatter profiles"),
+            ("Activity checked", "Tasks and Events they own, created in the last 14 days"),
+            ("What's counted", f"{len(quiet)} of {len(reps)} people logged none"),
+            ("Records listed", "Each of those people, by name (up to 200)"),
+        ],
+        records=("User", ctx.ids_in(quiet_ids)),
+        recent=False,
+    )
     ctx.finding(
         name="Reps with no logged activity",
         records=("User", ctx.ids_in(quiet_ids)),
@@ -545,7 +754,23 @@ def web_to_lead(ctx: Ctx) -> None:
         )
     else:
         issues, score = 0, 100
-    ctx.metric("Web-to-Lead issues", issues, "count", "lower-better", score)
+    ctx.metric(
+        "Web-to-Lead issues", issues, "count", "lower-better", score,
+        how=f"Leads with a website lead source ({', '.join(values[:3])}) created in the last 14 days, compared with the 11 weeks before. The number is 1 when website leads have stopped or never arrived.",
+        rule="100 when website leads are still arriving, 25 when they stopped in the last 14 days after arriving before, and 70 when none arrived in the last 90 days. A problem is raised whenever website leads have stopped arriving.",
+        columns=["Name", "Company", "LeadSource", "CreatedDate", "Status", "OwnerId"],
+        order="CreatedDate",
+        criteria=[
+            ("Records checked", "All Leads (open or converted) created in the last 90 days"),
+            ("Website sources", f"Lead Source is one of: {', '.join(map(str, values[:10]))}"),
+            ("Last 14 days", f"{recent:,} website leads"),
+            ("11 weeks before", f"{before:,} website leads"),
+            ("Flagged when", "None in the last 14 days but some before (the web form may be broken), or none at all in 90 days"),
+            ("Records listed", "Website leads created in the last 90 days, newest last"),
+        ],
+        records=("Lead", f"LeadSource IN ({in_list})", "CreatedDate = LAST_N_DAYS:90"),
+        recent=False,
+    )
 
 
 def email_templates(ctx: Ctx) -> None:
@@ -553,7 +778,22 @@ def email_templates(ctx: Ctx) -> None:
         raise Unavailable("Email templates can’t be read with this user.")
     n = ctx.count("EmailTemplate", "IsActive = true", recent=False)
     score = 100 if n >= 5 else 70 if n else 30
-    ctx.metric("Email template availability", n, "count", "higher-better", score)
+    ctx.metric(
+        "Email template availability", n, "count", "higher-better", score,
+        how="Active email templates your team can use.",
+        rule="100 with 5 or more active templates, 70 with 1 to 4, and 30 with none.",
+        columns=["Name", "FolderName", "IsActive"],
+        order="Name",
+        criteria=[
+            ("Records checked", "Email templates (all types and folders)"),
+            ("Counted", "Templates marked Active"),
+            ("What's counted", f"{n:,} active templates"),
+            ("Flagged when", "Fewer than 5 active templates"),
+            ("Records listed", "Every active email template, by name"),
+        ],
+        records=("EmailTemplate", "IsActive = true"),
+        recent=False,
+    )
     if n < 5:
         _setting(
             ctx,
@@ -569,7 +809,21 @@ def activity_capture(ctx: Ctx) -> None:
     cond = "(LastActivityDate = null OR LastActivityDate < LAST_N_DAYS:30)"
     n = ctx.count("Opportunity", OPEN_OPPS, cond) if total else 0
     score = rate_score(n / total, 0.6) if total else 100
-    ctx.metric("Activity capture gaps", n, "count", "lower-better", score)
+    ctx.metric(
+        "Activity capture gaps", n, "count", "lower-better", score,
+        how="Open Opportunities with no logged activity (tasks, calls, meetings) in the last 30 days.",
+        rule="100 when every open deal has recent activity, falling evenly to 0 when 60% of open deals have none.",
+        columns=["Name", "LastActivityDate", "StageName", "CloseDate", "Amount", "OwnerId"],
+        order="LastActivityDate",
+        criteria=[
+            ("Records checked", f"{total:,} open Opportunities"),
+            ("Field checked", "Last Activity Date (the latest task or event logged on the deal)"),
+            ("Gap", "No activity ever, or none in the last 30 days"),
+            ("What's counted", f"{n:,} of {total:,} open Opportunities ({pct(n, total):.0f}%) have no recent activity"),
+            ("Records listed", "Every such open Opportunity, oldest activity first (deals with no activity ever come last)"),
+        ],
+        records=("Opportunity", OPEN_OPPS, cond),
+    )
     if n:
         value = ctx.amount("Opportunity", OPEN_OPPS, cond)
         ctx.finding(
@@ -602,7 +856,17 @@ def validation_rules(ctx: Ctx) -> None:
         if not rules:
             missing.append(obj)
         vague += [f"{obj}: {r.get('ValidationName')}" for r in rules if len((r.get("ErrorMessage") or "").strip()) < 20 or _VAGUE.match((r.get("ErrorMessage") or "").strip())]
-    ctx.metric("Missing validation rules", len(missing), "count", "lower-better", 100 - 20 * len(missing))
+    ctx.metric(
+        "Missing validation rules", len(missing), "count", "lower-better", 100 - 20 * len(missing),
+        how="Of Accounts, Contacts, Leads and Opportunities, how many have no active validation rules.",
+        rule="Starts at 100 and drops 20 points for each of these objects with no active validation rules.",
+        criteria=[
+            ("Objects checked", ", ".join(CORE) + " (those this user can see)"),
+            ("Checked", "Active validation rules on each object in Setup"),
+            ("What's counted", f"{len(missing)} object(s) with none" + (f": {', '.join(missing)}" if missing else "")),
+            ("Vague messages", f"{len(vague)} active rule(s) have an error message under 20 characters or a generic one like “Error” or “Invalid”. Reported, but not scored"),
+        ],
+    )
     if missing:
         _setting(
             ctx,
@@ -649,7 +913,18 @@ def required_field_gaps(ctx: Ctx) -> None:
             if filled < 80:
                 gaps.append(f"{obj}.{f.get('label') or name} ({filled:.0f}% filled)")
     score = rate_score(len(gaps) / checked, 0.6) if checked else 100
-    ctx.metric("Required field gaps", len(gaps), "count", "lower-better", score)
+    ctx.metric(
+        "Required field gaps", len(gaps), "count", "lower-better", score,
+        how=f"Key fields that aren’t required (like Amount and Next Step on open Opportunities, Email and Phone on open Leads, Email and Account on Contacts, Industry and Type on Accounts) and are filled in on less than 80% of records. We checked {checked} fields.",
+        rule="100 when none of the checked fields are under 80% filled, falling evenly to 0 when 60% of them are.",
+        criteria=[
+            ("Fields checked", "Opportunity: Amount, Next Step, Lead Source, Type (open deals). Lead: Email, Phone, Lead Source (open Leads). "
+             "Contact: Email, Account. Account: Industry, Phone, Type"),
+            ("Skipped", "Fields that are missing, can't be filtered, or are already required"),
+            ("Gap", "The field is filled in on less than 80% of records"),
+            ("What's counted", f"{len(gaps)} of {checked} fields checked" + (f": {', '.join(gaps[:8])}" if gaps else "")),
+        ],
+    )
     if gaps:
         _setting(
             ctx,
@@ -692,7 +967,17 @@ def junk_data(ctx: Ctx) -> None:
             if n:
                 found.append(f"{n:,} {('open ' if obj == 'Lead' else '')}{obj}s ({fld} like {', '.join(f'“{v}”' for v, _ in bad[:3])})")
     score = rate_score(total_junk / checked, 0.1) if checked else 100
-    ctx.metric("Potential junk data", total_junk, "count", "lower-better", score)
+    ctx.metric(
+        "Potential junk data", total_junk, "count", "lower-better", score,
+        how="Records with placeholder values like “test”, “na” or “tbd”: in Next Step or Description on the 2,000 most recently changed open Opportunities, Company on open Leads, Last Name on Contacts, and Name on Accounts.",
+        rule="100 when no checked records hold placeholder values, falling evenly to 0 when 10% of them do.",
+        criteria=[
+            ("Records checked", f"{checked:,} records: the 2,000 most recently changed open Opportunities, plus open Leads, Contacts and Accounts"),
+            ("Fields checked", "Opportunity Next Step and Description, Lead Company, Contact Last Name, Account Name"),
+            ("Junk value", "The whole value (ignoring case and spaces) is a placeholder like test, na, n/a, tbd, none, -, x, asdf, 123, unknown, dummy, sample, temp"),
+            ("What's counted", f"{total_junk:,} records with a placeholder" + (f": {'; '.join(found)}" if found else "")),
+        ],
+    )
     ctx.finding(
         name="Placeholder or junk values",
         score=score,
@@ -718,7 +1003,17 @@ def layout_usability(ctx: Ctx) -> None:
         layouts = ctx.setup(f"SELECT Id, Name FROM Layout WHERE TableEnumOrId = '{obj}'")
         if len(layouts) > 5:
             concerns.append(f"{obj} has {len(layouts)} page layouts")
-    ctx.metric("Layout usability concerns", len(concerns), "count", "lower-better", 100 - 15 * min(len(concerns), 6))
+    ctx.metric(
+        "Layout usability concerns", len(concerns), "count", "lower-better", 100 - 15 * min(len(concerns), 6),
+        how="For Accounts, Contacts, Leads and Opportunities, we flag each object with more than 100 custom fields or more than 5 page layouts.",
+        rule="Starts at 100 and drops 15 points for each concern, down to 10 after 6 or more concerns.",
+        criteria=[
+            ("Objects checked", ", ".join(CORE)),
+            ("Too many fields", "More than 100 custom fields on the object"),
+            ("Too many layouts", "More than 5 page layouts on the object"),
+            ("What's counted", f"{len(concerns)} concern(s)" + (f": {'; '.join(concerns)}" if concerns else "")),
+        ],
+    )
     if concerns:
         _setting(
             ctx,

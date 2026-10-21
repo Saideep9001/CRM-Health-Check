@@ -293,12 +293,16 @@ def finding_records_csv(
 ):
     """Download the affected records (up to 10,000) as a spreadsheet."""
     row, org_id = _finding_with_records(db, finding_id)
+    return _records_csv(db, http, settings, org_id, row.records_object, row.records_where, row.name)
 
+
+def _records_csv(db: Session, http: httpx.Client, settings: Settings, org_id: str | None, obj: str, where: str | None, title: str,
+                 columns: list[str] | None = None, order: str | None = None) -> Response:
     def collect(sf):
-        page = explorer.records_matching(sf, row.records_object, row.records_where, page_size=2000)
+        page = explorer.records_matching(sf, obj, where, page_size=2000, columns=columns, order=order)
         rows = list(page["records"])
         while page["next_cursor"] and len(rows) < CSV_LIMIT:
-            page = explorer.records_matching(sf, row.records_object, row.records_where, page["next_cursor"], page_size=2000)
+            page = explorer.records_matching(sf, obj, where, page["next_cursor"], page_size=2000, columns=columns, order=order)
             rows += page["records"]
         return page["columns"], rows[:CSV_LIMIT], page["record_url_prefix"]
 
@@ -311,9 +315,54 @@ def finding_records_csv(
         vals = r["values"]
         w.writerow([r["ref_names"].get(c["name"]) or ("" if vals.get(c["name"]) is None else vals.get(c["name"])) for c in columns]
                    + [f"{prefix}{r['id']}" if r.get("id") else ""])
-    name = re.sub(r"[^A-Za-z0-9]+", "-", row.name).strip("-").lower() or "records"
+    name = re.sub(r"[^A-Za-z0-9]+", "-", title).strip("-").lower() or "records"
     return Response(out.getvalue(), media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="{name}.csv"'})
+
+
+# ---------------- the records behind one measure ("What we measure") ----------------
+
+def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str, obj: str | None) -> tuple[dict, str, str]:
+    """(object, where, org id, title) for one measure of one area, as saved by the health check that measured it."""
+    row = _get(db, assessment_id)
+    area = next((a for a in (row.results or {}).get("areas", []) if a.get("areaId") == area_id), None)
+    ind = next((i for i in (area or {}).get("indicators", []) if i.get("label") == label), None)
+    recs = (ind or {}).get("records") or []
+    rec = next((r for r in recs if obj in (None, r.get("object"))), None)
+    if rec is None:
+        raise HTTPException(404, "This measure isn’t about specific records.")
+    return rec, row.org_id, f"{label} {rec['object']}"
+
+
+@router.get("/assessments/{assessment_id}/areas/{area_id}/indicator-records", response_model=FindingRecordsPage)
+def indicator_records(
+    assessment_id: str,
+    area_id: str,
+    label: str = Query(..., max_length=200),
+    object: str | None = Query(None, max_length=80),
+    cursor: str | None = Query(None, max_length=200),
+    db: Session = Depends(get_db),
+    http: httpx.Client = Depends(http_dep),
+    settings: Settings = Depends(settings_dep),
+):
+    """The records a measure counted, live from Salesforce (200 per page)."""
+    rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, object)
+    return _salesforce(db, http, settings, lambda sf: explorer.records_matching(
+        sf, rec["object"], rec.get("where"), cursor, columns=rec.get("columns"), order=rec.get("order")), org_id)
+
+
+@router.get("/assessments/{assessment_id}/areas/{area_id}/indicator-records.csv")
+def indicator_records_csv(
+    assessment_id: str,
+    area_id: str,
+    label: str = Query(..., max_length=200),
+    object: str | None = Query(None, max_length=80),
+    db: Session = Depends(get_db),
+    http: httpx.Client = Depends(http_dep),
+    settings: Settings = Depends(settings_dep),
+):
+    rec, org_id, title = _indicator_records(db, assessment_id, area_id, label, object)
+    return _records_csv(db, http, settings, org_id, rec["object"], rec.get("where"), title, rec.get("columns"), rec.get("order"))
 
 
 @router.patch("/findings/{finding_id}", response_model=Finding)

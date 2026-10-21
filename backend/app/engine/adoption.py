@@ -17,6 +17,11 @@ LICENSE_PER_MONTH = 165
 PRICED_LICENSES = {"Salesforce"}
 CORE = ("Account", "Contact", "Lead", "Opportunity")
 OPEN_OPPS = "IsClosed = false"
+# Shared rule-table text: who counts as a "person" in these checks (matches people() below).
+PEOPLE_RULE = ("Active users with a standard (internal) licence. Integration, automated, Einstein, Agentforce and bot users "
+               "are left out, as are people on integration, API-only, automated-process or Chatter profiles.")
+USER_COLUMNS = ["Name", "Username", "ProfileId", "UserRoleId", "LastLoginDate", "IsActive"]
+OPP_COLUMNS = ["Name", "StageName", "Amount", "CloseDate", "OwnerId", "LastModifiedDate"]
 
 SETTING_FIX = {
     "Profiles used by only one or two people": "/lightning/setup/EnhancedProfiles/home",
@@ -83,10 +88,24 @@ def inactive_users(ctx: Ctx) -> None:
     idle = [u for u in users if (d := _days_since(u.get("LastLoginDate"))) is None or d > 30]
     rate = len(idle) / len(users) if users else 0
     score = rate_score(rate, 0.3)
-    ctx.metric("Inactive users", len(idle), "count", "lower-better", score)
     full = [u for u in idle if ((u.get("Profile") or {}).get("UserLicense") or {}).get("Name") in PRICED_LICENSES]
     cost = len(full) * LICENSE_PER_MONTH * 12
     never = sum(1 for u in idle if not u.get("LastLoginDate"))
+    ctx.metric("Inactive users", len(idle), "count", "lower-better", score,
+               how=f"Active Users (people with a standard licence, not integration or automated users) who haven’t logged in "
+                   f"for over 30 days or have never logged in, out of {len(users):,} active people.",
+               rule="100 when everyone has logged in within the last 30 days, falling evenly to 0 when 30% of people haven’t.",
+               records=("User", ctx.ids_in([u["Id"] for u in idle])), recent=False,
+               columns=USER_COLUMNS, order="LastLoginDate",
+               criteria=[
+                   ("Records checked", f"{len(users):,} people. {PEOPLE_RULE}"),
+                   ("Field checked", "Last login date"),
+                   ("Inactive means", "No login in the last 30 days, or never logged in at all."),
+                   ("What's counted", f"{len(idle):,} of {len(users):,} people are inactive ({never:,} have never logged in)."),
+                   ("Licence cost", f"{len(full):,} of them are on full Salesforce licences, priced at about ${LICENSE_PER_MONTH}/user/month "
+                    f"(Sales Cloud Enterprise list price): roughly ${_money(cost)} a year. Other licence types are counted but not priced."),
+                   ("Records listed", "Every inactive person, sorted by last login date (up to 200 users)."),
+               ])
     priced = (f" {len(full)} of them {'is' if len(full) == 1 else 'are'} on full Salesforce licences — at about ${LICENSE_PER_MONTH}/user/month "
               f"(Sales Cloud Enterprise list price) that’s roughly ${_money(cost)} a year." if full else "")
     ctx.finding(
@@ -109,7 +128,17 @@ def login_activity(ctx: Ctx) -> None:
     weekly = sum(1 for u in users if (d := _days_since(u.get("LastLoginDate"))) is not None and d <= 7)
     share = pct(weekly, len(users))
     score = range_score(share, 40, 90)
-    ctx.metric("Login activity", share, "%", "higher-better", score)
+    ctx.metric("Login activity", share, "%", "higher-better", score,
+               how=f"The share of active Users (not integration or automated users) who logged in during the last 7 days: "
+                   f"{weekly:,} of {len(users):,} people.",
+               rule="0 at 40% or below, 100 at 90% or above, in proportion in between.",
+               criteria=[
+                   ("Records checked", f"{len(users):,} people. {PEOPLE_RULE}"),
+                   ("Field checked", "Last login date"),
+                   ("Weekly user means", "Logged in at least once in the last 7 days."),
+                   ("What's counted", f"{weekly:,} of {len(users):,} people logged in this week ({share:.0f}%)."),
+                   ("Flagged when", "The score is below 80, which means fewer than 80% of people logged in this week."),
+               ])
     if score < 80:
         _setting(
             ctx, "Few people log in each week",
@@ -140,7 +169,24 @@ def low_adoption(ctx: Ctx) -> None:
             at_risk += amt
             stale_deals += n_stale
     score = rate_score(len(low) / len(reps), 0.4)
-    ctx.metric("Low adoption indicators", len(low), "count", "lower-better", score)
+    ctx.metric("Low adoption indicators", len(low), "count", "lower-better", score,
+               how=f"Sales reps (people who own open Opportunities or Leads) who logged fewer than 5 tasks and events in the last 30 days "
+                   f"while owning open deals, or who own 3+ open Opportunities with at least half not updated in 30 days — out of {len(reps):,} reps.",
+               rule="100 when no rep shows low adoption, falling evenly to 0 when 40% of reps do.",
+               records=("Opportunity", OPEN_OPPS, "LastModifiedDate < LAST_N_DAYS:30", f"OwnerId IN ({', '.join(repr(i) for i in low_ids[:200])})" if low_ids else "Id = null"),
+               recent=False, columns=OPP_COLUMNS, order="OwnerId",
+               criteria=[
+                   ("Records checked", f"{len(reps):,} sales reps: active people who own at least one open Opportunity or open (unconverted) Lead. "
+                    "Queues, integration and bot users are left out."),
+                   ("Activity checked", "Tasks and events each rep created in the last 30 days."),
+                   ("Deals checked", "Each rep’s open Opportunities, and which of those haven’t been edited in the last 30 days."),
+                   ("Low adoption means", "Fewer than 5 tasks and events in 30 days while owning at least one open deal, "
+                    "OR 3 or more open deals with at least half not updated in 30 days."),
+                   ("What's counted", f"{len(low):,} of {len(reps):,} reps show low adoption; {stale_deals:,} of their open deals "
+                    f"haven’t been updated in 30 days" + (f", worth {_money(at_risk)}." if at_risk else ".")),
+                   ("Records listed", "The open Opportunities of these reps that haven’t been updated in 30 days, grouped by owner "
+                    "(reps capped at 200)."),
+               ])
     ctx.finding(
         name="Reps whose pipeline is going stale",
         obj="User", records=("Opportunity", OPEN_OPPS, "LastModifiedDate < LAST_N_DAYS:30", f"OwnerId IN ({', '.join(repr(i) for i in low_ids[:200])})" if low_ids else "Id = null"),
@@ -169,7 +215,18 @@ def training_opportunities(ctx: Ctx) -> None:
             coach.append((n_bad / n_open, f"{name} ({n_bad} of {n_open} deals overdue or without a next step)"))
     coach.sort(reverse=True)
     score = rate_score(len(coach) / len(reps), 0.5)
-    ctx.metric("Training opportunities", len(coach), "count", "lower-better", score)
+    ctx.metric("Training opportunities", len(coach), "count", "lower-better", score,
+               how=f"Sales reps with 3 or more open Opportunities where at least 40% are past their close date or have no next step, "
+                   f"out of {len(reps):,} reps.",
+               rule="100 when no rep needs coaching, falling evenly to 0 when 50% of reps do.",
+               criteria=[
+                   ("Records checked", f"{len(reps):,} sales reps (active people who own open Opportunities or open Leads) and their open Opportunities."),
+                   ("Fields checked", "Close Date and Next Step" if "NextStep" in sloppy_cond else "Close Date (this org has no Next Step field)"),
+                   ("Out-of-date deal means", "Close date is in the past" + (", or Next Step is blank." if "NextStep" in sloppy_cond else ".")),
+                   ("Needs coaching when", "The rep owns 3 or more open deals and at least 40% of them are out of date."),
+                   ("What's counted", f"{len(coach):,} of {len(reps):,} reps need coaching."),
+                   ("Flagged when", "At least one rep needs coaching."),
+               ])
     if coach:
         _setting(
             ctx, "Reps who need coaching on deal updates",
@@ -190,7 +247,19 @@ def profile_complexity(ctx: Ctx) -> None:
         by_profile[p] = by_profile.get(p, 0) + 1
     tiny = sorted(p for p, n in by_profile.items() if n <= 2)
     score = 100 if len(users) < 10 else max(0, 100 - 12 * max(0, len(tiny) - 2))
-    ctx.metric("Profile complexity", len(by_profile), "count", "lower-better", score)
+    ctx.metric("Profile complexity", len(by_profile), "count", "lower-better", score,
+               how=f"The number of different profiles in use across {len(users):,} active Users, and how many of them "
+                   f"have only one or two people ({len(tiny)} here).",
+               rule="Always 100 for teams under 10 people. Otherwise 100, minus 12 points for each profile used by only one or two people "
+                    "beyond the first two, down to 0.",
+               criteria=[
+                   ("Records checked", f"{len(users):,} people. {PEOPLE_RULE}"),
+                   ("Field checked", "Each person’s profile"),
+                   ("What's counted", f"{len(by_profile):,} different profiles in use; {len(tiny):,} of them have only one or two people"
+                    + (f": {_names(tiny)}." if tiny else ".")),
+                   ("Small teams", "Orgs with fewer than 10 people always score 100." + (" That applies here." if len(users) < 10 else " Not used here.")),
+                   ("Flagged when", "The score is below 80: 4 or more profiles with only one or two people, in a team of 10 or more."),
+               ])
     if score < 80:
         _setting(
             ctx, "Profiles used by only one or two people",
@@ -214,7 +283,19 @@ def excessive_permissions(ctx: Ctx) -> None:
     allowed = max(2, round(0.1 * len(users)))
     extra = max(0, len(admins) - allowed)
     score = 100 if not extra else max(0, 100 - 15 * extra)
-    ctx.metric("Excessive permissions", len(admins), "count", "lower-better", score)
+    ctx.metric("Excessive permissions", len(admins), "count", "lower-better", score,
+               how=f"Active Users (out of {len(users):,}) who have the “Modify All Data” permission (full admin power) "
+                   f"through their profile or a permission set.",
+               rule=f"Up to {allowed} such people is normal for a team this size (10% of people, at least 2) and scores 100; "
+                    f"each extra person takes off 15 points, down to 0.",
+               records=("User", ctx.ids_in(admins)), recent=False, columns=USER_COLUMNS, order="Name",
+               criteria=[
+                   ("Records checked", f"{len(users):,} people. {PEOPLE_RULE}"),
+                   ("Permission checked", "“Modify All Data”, from the person’s profile or any permission set assigned to them."),
+                   ("Normal for this team", f"Up to {allowed:,} people (10% of people, at least 2)."),
+                   ("What's counted", f"{len(admins):,} people have Modify All Data, {extra:,} more than normal."),
+                   ("Records listed", "Every person with Modify All Data, by name (up to 200 users)."),
+               ])
     names = [u["Name"] for u in users if u["Id"] in set(admins)]
     ctx.finding(
         name="Too many people can change all data",
@@ -257,7 +338,21 @@ def role_hierarchy(ctx: Ctx) -> None:
     score = rate_score(len(no_role) / len(reps), 0.3) if reps else 100
     if deepest > 7:
         score = min(score, 75)
-    ctx.metric("Role hierarchy issues", issues, "count", "lower-better", score)
+    ctx.metric("Role hierarchy issues", issues, "count", "lower-better", score,
+               how=f"Sales reps with no role in the role hierarchy (out of {len(reps):,} reps), plus one more issue if the hierarchy "
+                   f"is more than 7 levels deep (it’s {deepest} here).",
+               rule="100 when every rep has a role, falling evenly to 0 when 30% of reps have none. "
+                    "Capped at 75 when the hierarchy is more than 7 levels deep.",
+               records=("User", ctx.ids_in([u["Id"] for u in no_role])), recent=False, columns=USER_COLUMNS, order="Name",
+               criteria=[
+                   ("Records checked", f"{len(reps):,} sales reps (active people who own open Opportunities or open Leads), "
+                    f"and the {len(roles):,} roles in the role hierarchy."),
+                   ("Field checked", "Each rep’s role"),
+                   ("Missing role", f"{len(no_role):,} of {len(reps):,} reps have no role, so their deals don’t roll up to a manager."),
+                   ("Deep hierarchy", f"More than 7 levels deep counts as one extra issue and caps the score at 75. This org is {deepest} levels deep."),
+                   ("What's counted", f"{len(no_role):,} reps without a role" + (" plus 1 for the deep hierarchy." if deepest > 7 else ".")),
+                   ("Records listed", "Every rep without a role, by name (up to 200 users)."),
+               ])
     ctx.finding(
         name="Sales users without a role",
         obj="User", records=("User", ctx.ids_in([u["Id"] for u in no_role])), recent=False,
@@ -303,7 +398,18 @@ def permission_config(ctx: Ctx) -> None:
                      "Unused permission sets clutter setup and make access reviews slower and error-prone.",
                      "Delete the ones nobody needs, or bundle the useful ones into permission set groups by job role.",
                      severity="low", affected=len(unused))
-    ctx.metric("Permission configuration concerns", concerns, "count", "lower-better", 100 - 25 * min(concerns, 4))
+    ctx.metric("Permission configuration concerns", concerns, "count", "lower-better", 100 - 25 * min(concerns, 4),
+               how="Org-wide settings that let everyone edit every Opportunity or every Lead, and whether 3 or more custom "
+                   "permission sets aren’t assigned to anyone. Each one found counts as one concern.",
+               rule="100 with no concerns, minus 25 points for each concern, down to 0 at 4 concerns.",
+               criteria=[
+                   ("Settings checked", "Org-wide default sharing for Opportunities and Leads"
+                    + (", and custom permission sets (not owned by a profile or a managed package)." if ctx.has_object("PermissionSet") and ctx.has_object("PermissionSetAssignment") else ".")),
+                   ("Open deal sharing", "Counts as a concern when Opportunities are Public Read/Write or wider (anyone can edit any deal)."),
+                   ("Open lead sharing", "Counts as a concern when Leads are Public Read/Write or Read/Write/Transfer."),
+                   ("Unused permission sets", "Counts as one concern when 3 or more custom permission sets aren’t assigned to anyone."),
+                   ("What's counted", f"{concerns} concern{'s' if concerns != 1 else ''} found."),
+               ])
 
 
 # ---------------------------------------------------------------- area 14: help text, home page, list views, navigation
@@ -320,11 +426,28 @@ def help_text(ctx: Ctx) -> None:
         if n:
             missing[obj] = n
     if not total:
-        ctx.metric("Missing field help text", 0, "%", "lower-better", 100)
+        ctx.metric("Missing field help text", 0, "%", "lower-better", 100,
+                   how="The share of custom fields (not formula fields) on Accounts, Contacts, Leads and Opportunities that have no help text. "
+                       "There are no such custom fields in this org.",
+                   rule="Scores 100 because there are no custom fields to check.",
+                   criteria=[
+                       ("Fields checked", "Custom fields on Accounts, Contacts, Leads and Opportunities (formula fields are left out)."),
+                       ("What's counted", "No custom fields were found, so there’s nothing to check."),
+                   ])
         return
     share = pct(sum(missing.values()), total)
     score = rate_score(share / 100, 1.0)
-    ctx.metric("Missing field help text", share, "%", "lower-better", score)
+    ctx.metric("Missing field help text", share, "%", "lower-better", score,
+               how=f"The share of custom fields (not formula fields) on Accounts, Contacts, Leads and Opportunities that have no help text: "
+                   f"{sum(missing.values()):,} of {total:,}.",
+               rule="100 when every custom field has help text, falling evenly to 0 when none of them do (100% missing).",
+               criteria=[
+                   ("Fields checked", f"{total:,} custom fields on Accounts, Contacts, Leads and Opportunities (formula fields are left out)."),
+                   ("Missing means", "The field’s help text (the ⓘ tip people see on the page) is blank."),
+                   ("What's counted", f"{sum(missing.values()):,} of {total:,} fields ({share:.0f}%) have no help text"
+                    + (": " + ", ".join(f"{o} {n:,}" for o, n in missing.items()) + "." if missing else ".")),
+                   ("Flagged when", "The score is below 80, which means more than 20% of custom fields have no help text."),
+               ])
     if score < 80:
         _setting(
             ctx, "Custom fields without help text",
@@ -339,7 +462,14 @@ def help_text(ctx: Ctx) -> None:
 def home_page(ctx: Ctx) -> None:
     pages = ctx.setup("SELECT Id, MasterLabel FROM FlexiPage WHERE Type = 'HomePage'")
     concerns = 0 if pages else 1
-    ctx.metric("Home page improvement opportunities", concerns, "count", "lower-better", 100 if pages else 60)
+    ctx.metric("Home page improvement opportunities", concerns, "count", "lower-better", 100 if pages else 60,
+               how="Whether the org has at least one custom Lightning home page; having none counts as one improvement opportunity.",
+               rule="100 when a custom home page exists, 60 when the org only uses Salesforce’s default home page.",
+               criteria=[
+                   ("Setup checked", "Lightning pages of type Home Page."),
+                   ("What's counted", f"{len(pages):,} custom home page{'s' if len(pages) != 1 else ''} found"
+                    + ("." if pages else ", so the default home page is used (1 improvement opportunity).")),
+               ])
     if not pages:
         _setting(
             ctx, "No custom home page for the sales team",
@@ -365,7 +495,17 @@ def list_views(ctx: Ctx) -> None:
             concerns.append(f"{obj} has {len(views)} list views")
         if len(views) >= 8 and len(never) / len(views) >= 0.5:
             concerns.append(f"{len(never)} of {len(views)} {obj} list views have never been opened")
-    ctx.metric("List view usability", len(concerns), "count", "lower-better", 100 - 20 * min(len(concerns), 5))
+    ctx.metric("List view usability", len(concerns), "count", "lower-better", 100 - 20 * min(len(concerns), 5),
+               how="List views on Accounts, Contacts, Leads and Opportunities. A concern is counted when an object has more than 25 list views, "
+                   "or when it has 8 or more and at least half have never been opened.",
+               rule="100 with no concerns, minus 20 points for each concern, down to 0 at 5 concerns.",
+               criteria=[
+                   ("Records checked", f"{len(rows):,} list views on Accounts, Contacts, Leads and Opportunities."),
+                   ("Too many views", "An object with more than 25 list views counts as one concern."),
+                   ("Unused views", "An object with 8 or more list views where at least half have never been opened counts as one concern."
+                    + ("" if any("LastViewedDate" in r for r in rows) else " (Last-viewed dates can’t be read here, so this isn’t checked.)")),
+                   ("What's counted", ("; ".join(concerns) + ".") if concerns else "No concerns found."),
+               ])
     if concerns:
         _setting(
             ctx, "Cluttered or unused list views",
@@ -382,7 +522,18 @@ def navigation(ctx: Ctx) -> None:
         raise Unavailable("Can’t tell which experience people use.")
     classic = [u for u in users if u.get("UserPreferencesLightningExperiencePreferred") is False]
     score = rate_score(len(classic) / len(users), 0.3)
-    ctx.metric("Navigation improvement opportunities", len(classic), "count", "lower-better", score)
+    ctx.metric("Navigation improvement opportunities", len(classic), "count", "lower-better", score,
+               how=f"Active Users who have Salesforce Classic instead of Lightning as their default experience, out of {len(users):,} people.",
+               rule="100 when everyone uses Lightning, falling evenly to 0 when 30% of people use Classic.",
+               records=("User", ctx.ids_in([u["Id"] for u in classic])), recent=False,
+               columns=USER_COLUMNS + ["UserPreferencesLightningExperiencePreferred"], order="Name",
+               criteria=[
+                   ("Records checked", f"{len(users):,} people. {PEOPLE_RULE}"),
+                   ("Field checked", "“Lightning Experience preferred” on each user"),
+                   ("Classic user means", "The setting is off, so the person opens Salesforce Classic by default."),
+                   ("What's counted", f"{len(classic):,} of {len(users):,} people use Classic."),
+                   ("Records listed", "Every person on Classic, by name (up to 200 users)."),
+               ])
     ctx.finding(
         name="People still using Salesforce Classic",
         obj="User", records=("User", ctx.ids_in([u["Id"] for u in classic])), recent=False,

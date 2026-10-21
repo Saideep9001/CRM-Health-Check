@@ -1,7 +1,7 @@
 import { QueryCache, QueryClient, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { AccessRequestStatus, AppSettings, Assessment, CreateAssessmentRequest, DataRecordQuery, Finding, Paginated, SalesforceAppConfig, SalesforceAppUpdate, ScanScheduleUpdate, TeamMember, TeamMemberCreate, UpdateFindingRequest, UserProfile, UserRole } from '@/types';
 import { isApiError } from './client';
-import { accessApi, adminApi, assessmentApi, authApi, connectionApi, consultantApi, dataApi, findingApi, reportApi, systemApi, teamApi, userApi } from './endpoints';
+import { accessApi, adminApi, assessmentApi, authApi, indicatorApi, connectionApi, consultantApi, dataApi, findingApi, reportApi, systemApi, teamApi, userApi } from './endpoints';
 
 export const queryClient: QueryClient = new QueryClient({
   queryCache: new QueryCache({
@@ -263,6 +263,16 @@ export const useFindingRecords = (findingId: string | null, enabled = true) =>
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.nextCursor,
     enabled: !!findingId && enabled,
+    staleTime: 60_000,
+  });
+
+export const useIndicatorRecords = (assessmentId: string | null, areaId: string, label: string, object: string | null) =>
+  useInfiniteQuery({
+    queryKey: ['indicator-records', assessmentId, areaId, label, object],
+    queryFn: ({ signal, pageParam }) => indicatorApi.records(assessmentId!, areaId, label, object!, pageParam, signal),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.nextCursor,
+    enabled: !!assessmentId && !!object,
     staleTime: 60_000,
   });
 

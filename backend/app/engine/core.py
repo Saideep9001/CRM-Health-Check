@@ -41,6 +41,13 @@ class Metric:
     unit: Unit
     direction: Direction
     score: float | None  # 0–100; None = shown but not scored (e.g. a summary)
+    # Shown when someone opens the measure: what we count, and how that becomes the score (plain words).
+    how: str | None = None
+    rule: str | None = None
+    # The records behind the number, per object: [{"object": "Contact", "where": "…", "columns": [...], "order": "Name"}].
+    records: list[dict] | None = None
+    # The exact rules as table rows: [["Compared on", "Account Name and Website"], ["Counted", "…"]].
+    criteria: list[list[str]] | None = None
 
 
 @dataclass
@@ -241,8 +248,24 @@ class Ctx:
 
     # ---------------- results ----------------
 
-    def metric(self, label: str, value: float, unit: Unit, direction: Direction, score: float | None) -> Metric:
-        m = Metric(label, round(value, 1), unit, direction, None if score is None else round(score, 1))
+    def metric(self, label: str, value: float, unit: Unit, direction: Direction, score: float | None, *,
+               how: str | None = None, rule: str | None = None,
+               records: tuple[str, ...] | list[tuple[str, ...]] | None = None, recent: bool = True,
+               criteria: list[tuple[str, str]] | None = None, columns: list[str] | None = None, order: str | None = None) -> Metric:
+        """Record a measure.
+
+        `how` = what we count; `rule` = how it's scored; `criteria` = the exact rules as (name, detail) table rows.
+        `records` = (object, *conditions), or a list of them, selecting exactly the records counted, so people can open
+        and export them; `columns` = fields that show why each record was flagged (shown first, when the object has them);
+        `order` = field to sort by (ascending; "-Amount" = descending), e.g. "Name" so duplicates sit next to each other.
+        """
+        recs = None
+        if records:
+            recs = [{"object": r[0], "where": self._where(r[0], tuple(r[1:]), recent).removeprefix(" WHERE ") or None,
+                     "columns": list(columns or []), "order": order}
+                    for r in ([records] if isinstance(records, tuple) else records) if r]
+        crit = [[str(k), str(v)] for k, v in (criteria or []) if k and v] or None
+        m = Metric(label, round(value, 1), unit, direction, None if score is None else round(score, 1), how, rule, recs or None, crit)
         self.metrics.setdefault(self.area_id, []).append(m)
         return m
 

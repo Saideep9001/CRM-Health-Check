@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { RunCheckPanel } from '@/components/assessment/RunCheckPanel';
 import { FindingDetailsPanel } from '@/components/findings/FindingDetailsPanel';
+import { IndicatorDetailsPanel } from '@/components/findings/IndicatorDetailsPanel';
 import { FindingsTable } from '@/components/findings/FindingsTable';
 import { Badge, ReleaseBadge } from '@/components/ui/Badges';
 import { LinkButton } from '@/components/ui/Button';
@@ -35,6 +36,7 @@ export default function DiagnosticAreaPage() {
   const { state, error, refetch, latest, results, findings } = useLatestAssessment();
   const [tab, setTab] = useState<Tab>('indicators');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [measure, setMeasure] = useState<string | null>(null);
 
   if (!area || !category || area.categoryId !== category.id) return <NotFoundPage />;
 
@@ -111,6 +113,7 @@ export default function DiagnosticAreaPage() {
               {result.message ?? 'Try checking it again.'}
             </Notice>
           )}
+          <div id="run-check" className="scroll-mt-24" />
           <RunCheckPanel
             areaIds={[area.id]}
             label="this area"
@@ -144,8 +147,18 @@ export default function DiagnosticAreaPage() {
                 <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                   {area.indicators.map((label, i) => {
                     const v = result?.indicators.find((x) => x.label === label);
+                    const Card = v ? motion.button : motion.div;
                     return (
-                      <motion.div key={label} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }} className="rounded-xl border border-line p-4">
+                      <Card
+                        key={label}
+                        type={v ? 'button' : undefined}
+                        onClick={v ? () => setMeasure(label) : undefined}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: i * 0.05 }}
+                        className={v ? 'group flex flex-col rounded-xl border border-line p-4 text-left transition hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-pop' : 'rounded-xl border border-line p-4'}
+                        title={v ? 'See how this is measured, the scoring rule and the records' : undefined}
+                      >
                         <p className="text-sm font-medium text-ink-muted">{label}</p>
                         {v ? (
                           <>
@@ -157,6 +170,10 @@ export default function DiagnosticAreaPage() {
                               <ProgressBar value={indicatorFill(v)} delay={i * 0.05} />
                             </div>
                             <p className="mt-2 text-[11px] text-ink-subtle">{v.direction === 'higher-better' ? 'Higher is better' : 'Lower is better'}</p>
+                            {v.how && <p className="mt-2 line-clamp-2 text-xs text-ink-muted">{v.how}</p>}
+                            <span className="mt-auto inline-flex items-center gap-1 pt-3 text-xs font-medium text-brand">
+                              Rule &amp; records <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-0.5" />
+                            </span>
                           </>
                         ) : (
                           <>
@@ -164,7 +181,7 @@ export default function DiagnosticAreaPage() {
                             <p className="mt-3 text-[11px] text-ink-subtle">{release === 'coming-soon' ? 'Coming Soon' : 'Not measured yet'}</p>
                           </>
                         )}
-                      </motion.div>
+                      </Card>
                     );
                   })}
                 </div>
@@ -220,6 +237,22 @@ export default function DiagnosticAreaPage() {
         )}
       </div>
 
+      <IndicatorDetailsPanel
+        area={area}
+        indicator={result?.indicators.find((x) => x.label === measure) ?? null}
+        assessmentId={result?.sourceAssessmentId ?? latest?.id ?? null}
+        checkedAt={result?.checkedAt ?? latest?.completedAt ?? null}
+        findings={areaFindings}
+        onClose={() => setMeasure(null)}
+        onCheckAgain={() => {
+          setMeasure(null);
+          setTimeout(() => document.getElementById('run-check')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250);
+        }}
+        onOpenFinding={(f) => {
+          setMeasure(null);
+          setSelectedId(f.id);
+        }}
+      />
       <FindingDetailsPanel finding={selected} onClose={() => setSelectedId(null)} />
     </div>
   );
