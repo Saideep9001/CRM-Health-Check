@@ -12,6 +12,7 @@ export function IndicatorDetailsPanel({
   onClose,
   onOpenFinding,
   onCheckAgain,
+  object,
 }: {
   area: DiagnosticArea;
   indicator: IndicatorValue | null;
@@ -23,12 +24,16 @@ export function IndicatorDetailsPanel({
   onClose: () => void;
   onOpenFinding: (f: Finding) => void;
   onCheckAgain?: () => void;
+  /** Opened from a "By object" chip: that object's problem and records come first. */
+  object?: string | null;
 }) {
   const open = findings.filter((f) => f.status !== 'resolved' && f.status !== 'accepted-risk');
-  const raised = indicator
-    ? findingsFor(indicator, findings).sort((a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity] || b.affectedRecords - a.affectedRecords)
-    : [];
-  const main = raised[0] ?? null;
+  const bySeverity = (a: Finding, b: Finding) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity] || b.affectedRecords - a.affectedRecords;
+  const raised = indicator ? findingsFor(indicator, findings).sort(bySeverity) : [];
+  const objectFindings = object ? open.filter((f) => f.objectName === object).sort(bySeverity) : [];
+  // From a chip: this measure's problem on that object (never a different measure's problem); that object's other problems come next.
+  const main = (object ? raised.find((f) => f.objectName === object) : raised[0]) ?? null;
+  const first = [...raised, ...objectFindings].filter((f, i, all) => f !== main && all.indexOf(f) === i);
 
   return (
     <DetailsPanel
@@ -39,10 +44,11 @@ export function IndicatorDetailsPanel({
       measureAssessmentId={assessmentId}
       checkedAt={checkedAt}
       // The measure's other problems first (e.g. Contacts and Leads without a phone), then the rest of the area.
-      others={[...raised.slice(1), ...open.filter((f) => !raised.includes(f))]}
+      others={[...first, ...open.filter((f) => f !== main && !first.includes(f))]}
       onClose={onClose}
       onOpenFinding={onOpenFinding}
       onCheckAgain={onCheckAgain}
+      initialObject={object}
     />
   );
 }

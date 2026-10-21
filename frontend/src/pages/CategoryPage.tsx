@@ -1,10 +1,12 @@
 import { AnimatePresence } from 'framer-motion';
 import { ArrowLeft, Hourglass, SearchX } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { RunCheckPanel } from '@/components/assessment/RunCheckPanel';
 import { DiagnosticAreaCard, type ObjectChip } from '@/components/category/DiagnosticAreaCard';
-import { ObjectProblemsDrawer } from '@/components/category/ObjectProblemsDrawer';
+import { IndicatorDetailsPanel } from '@/components/findings/IndicatorDetailsPanel';
+import { measureFor } from '@/components/findings/DetailsPanel';
+import { SEVERITY_RANK } from '@/lib/health';
 import { FindingDetailsPanel } from '@/components/findings/FindingDetailsPanel';
 import { MeasurePreview } from '@/components/category/MeasurePreview';
 import { TopicHero } from '@/components/category/TopicHero';
@@ -12,7 +14,7 @@ import { Button, LinkButton } from '@/components/ui/Button';
 import { SearchInput, Select } from '@/components/ui/Form';
 import { Notice } from '@/components/ui/Page';
 import { EmptyState, ErrorState } from '@/components/ui/States';
-import { CATEGORY_COLORS, getAreasForCategory, getCategory } from '@/config/categories';
+import { CATEGORY_COLORS, getArea, getAreasForCategory, getCategory } from '@/config/categories';
 import { useLatestAssessment } from '@/hooks/useLatestAssessment';
 import { findingsForArea, findingsForCategory, getAreaResult, getCategoryCoverage, getCategoryScore } from '@/lib/health';
 import { cx } from '@/lib/format';
@@ -31,8 +33,21 @@ export default function CategoryPage() {
   // A problem opened from a card's "Fix first" list, shown in a side panel on this page.
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = findings.find((f) => f.id === selectedId) ?? null;
-  // An object opened from a card's "By object" chips.
-  const [objectView, setObjectView] = useState<{ areaId: string; object: ObjectChip } | null>(null);
+  // A measure opened from a card (a measure row, or a "By object" chip with its object first) — the same merged panel.
+  const [measureView, setMeasureView] = useState<{ areaId: string; label: string; object?: string } | null>(null);
+  const navigate = useNavigate();
+
+  const openObject = (areaId: string, chip: ObjectChip) => {
+    const indicators = getAreaResult(results, areaId)?.indicators ?? [];
+    const own = findingsForArea(findings, areaId)
+      .filter((f) => f.objectName === chip.name && f.status !== 'resolved' && f.status !== 'accepted-risk')
+      .sort((a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity] || b.affectedRecords - a.affectedRecords);
+    const label = (chip.measure && indicators.some((i) => i.label === chip.measure) ? chip.measure : null) ?? (own[0] ? measureFor(own[0], indicators)?.label : null);
+    if (label) setMeasureView({ areaId, label, object: chip.name });
+    else if (own[0]) setSelectedId(own[0].id);
+  };
+  const viewArea = measureView ? getArea(measureView.areaId) : undefined;
+  const viewResult = measureView ? getAreaResult(results, measureView.areaId) : undefined;
 
   const areas = useMemo(() => (category ? getAreasForCategory(category.id) : []), [category]);
   if (!category) return <NotFoundPage />;
@@ -168,7 +183,8 @@ export default function CategoryPage() {
                 objects={results?.objects ?? []}
                 assessmentId={latest?.id}
                 onSelectFinding={(f) => setSelectedId(f.id)}
-                onSelectObject={(o) => setObjectView({ areaId: a.id, object: o })}
+                onSelectObject={(o) => openObject(a.id, o)}
+                onSelectMeasure={(label) => setMeasureView({ areaId: a.id, label })}
               />
             ))}
           </AnimatePresence>
@@ -185,16 +201,22 @@ export default function CategoryPage() {
           </LinkButton>
         )}
       </div>
-      <ObjectProblemsDrawer
-        view={objectView}
-        findings={findings}
-        assessmentId={latest?.id}
-        onClose={() => setObjectView(null)}
-        onSelectFinding={(f) => {
-          setObjectView(null);
-          setSelectedId(f.id);
-        }}
-      />
+      {viewArea && (
+        <IndicatorDetailsPanel
+          area={viewArea}
+          indicator={viewResult?.indicators.find((x) => x.label === measureView?.label) ?? null}
+          object={measureView?.object}
+          assessmentId={viewResult?.sourceAssessmentId ?? latest?.id ?? null}
+          checkedAt={viewResult?.checkedAt ?? latest?.completedAt ?? null}
+          findings={findingsForArea(findings, viewArea.id)}
+          onClose={() => setMeasureView(null)}
+          onCheckAgain={() => navigate(`/assessment/${viewArea.categoryId}/${viewArea.id}`)}
+          onOpenFinding={(f) => {
+            setMeasureView(null);
+            setSelectedId(f.id);
+          }}
+        />
+      )}
       <FindingDetailsPanel finding={selected} onClose={() => setSelectedId(null)} others={findings} onOpenFinding={(f) => setSelectedId(f.id)} />
     </div>
   );

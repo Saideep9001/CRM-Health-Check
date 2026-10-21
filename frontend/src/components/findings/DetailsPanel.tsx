@@ -142,15 +142,19 @@ function Records({
   finding,
   measureAssessmentId,
   legacy,
+  initialObject,
 }: {
   area: DiagnosticArea;
   indicator: IndicatorValue | null;
   finding: Finding | null;
   measureAssessmentId: string | null;
   legacy: boolean;
+  initialObject?: string | null;
 }) {
   const objects = indicator?.recordObjects ?? [];
-  const preferred = finding?.objectName && objects.includes(finding.objectName) ? finding.objectName : objects[0] ?? null;
+  const preferred =
+    (initialObject && objects.includes(initialObject) ? initialObject : null) ??
+    (finding?.objectName && objects.includes(finding.objectName) ? finding.objectName : objects[0] ?? null);
   const [object, setObject] = useState<string | null>(preferred);
   useEffect(() => setObject(preferred), [preferred, indicator?.label, finding?.id]);
   const useMeasure = !!object && !!measureAssessmentId && !!indicator;
@@ -222,6 +226,7 @@ export function DetailsPanel({
   onClose,
   onOpenFinding,
   onCheckAgain,
+  initialObject,
 }: {
   open: boolean;
   area: DiagnosticArea | undefined;
@@ -235,6 +240,8 @@ export function DetailsPanel({
   onClose: () => void;
   onOpenFinding?: (f: Finding) => void;
   onCheckAgain?: () => void;
+  /** Object whose records to show first (e.g. the chip that was clicked). */
+  initialObject?: string | null;
 }) {
   const navigate = useNavigate();
   const { canEdit } = useRole();
@@ -417,7 +424,7 @@ export function DetailsPanel({
           )}
 
           <Section icon={<Database className="h-3.5 w-3.5" />} title={finding ? 'The records' : 'The records behind this number'}>
-            <Records area={area} indicator={v} finding={finding} measureAssessmentId={measureAssessmentId} legacy={legacy} />
+            <Records area={area} indicator={v} finding={finding} measureAssessmentId={measureAssessmentId} legacy={legacy} initialObject={initialObject} />
           </Section>
 
           {finding && (

@@ -35,6 +35,7 @@ export function DiagnosticAreaCard({
   assessmentId,
   onSelectFinding,
   onSelectObject,
+  onSelectMeasure,
 }: {
   area: DiagnosticArea;
   color: string;
@@ -50,6 +51,8 @@ export function DiagnosticAreaCard({
   onSelectFinding?: (f: Finding) => void;
   /** Open one object's problems in this area in place. */
   onSelectObject?: (o: ObjectChip) => void;
+  /** Open one of the measures shown on the card. */
+  onSelectMeasure?: (label: string) => void;
 }) {
   const navigate = useNavigate();
   const release = getAreaRelease(area);
@@ -90,13 +93,21 @@ export function DiagnosticAreaCard({
           <ScoreRing score={result.score} size={72} stroke={7} showBand={false} />
           <ul className="min-w-0 flex-1 space-y-1.5">
             {result.indicators.filter((i) => area.indicators.includes(i.label)).slice(0, 3).map((i) => (
-              <li key={i.label} className="flex items-center gap-2 text-xs">
-                <span className={cx('h-1.5 w-1.5 shrink-0 rounded-full', DOT[indicatorTone(i)])} />
-                <span className="min-w-0 flex-1 truncate text-ink-muted" title={i.label}>{i.label}</span>
-                <span className="font-semibold tabular-nums">
-                  {fmtNumber(Math.round(i.value))}
-                  {i.unit === '%' && '%'}
-                </span>
+              <li key={i.label}>
+                <button
+                  type="button"
+                  disabled={!onSelectMeasure}
+                  onClick={() => onSelectMeasure?.(i.label)}
+                  className="group/m -mx-1.5 flex w-[calc(100%+0.75rem)] items-center gap-2 rounded-md px-1.5 py-0.5 text-left text-xs enabled:hover:bg-muted"
+                  title={onSelectMeasure ? 'See the rules and the records behind this number' : undefined}
+                >
+                  <span className={cx('h-1.5 w-1.5 shrink-0 rounded-full', DOT[indicatorTone(i)])} />
+                  <span className="min-w-0 flex-1 truncate text-ink-muted group-enabled/m:group-hover/m:text-brand" title={i.label}>{i.label}</span>
+                  <span className="font-semibold tabular-nums">
+                    {fmtNumber(Math.round(i.value))}
+                    {i.unit === '%' && '%'}
+                  </span>
+                </button>
               </li>
             ))}
           </ul>
@@ -138,9 +149,9 @@ export function DiagnosticAreaCard({
 }
 
 /** What each Data Quality area measures per object. */
-const OBJECT_METRIC: Record<string, (o: ObjectResult) => { text: string; tone: 'good' | 'warn' | 'bad' } | null> = {
-  'area-1': (o) => (o.duplicates === null ? null : { text: o.duplicates ? `${fmtNumber(o.duplicates)} duplicates` : 'No duplicates', tone: o.duplicates ? (o.duplicates > 10 ? 'bad' : 'warn') : 'good' }),
-  'area-2': (o) => (o.completeness === null ? null : { text: `${Math.round(o.completeness)}% filled in`, tone: o.completeness >= 90 ? 'good' : o.completeness >= 70 ? 'warn' : 'bad' }),
+const OBJECT_METRIC: Record<string, (o: ObjectResult) => { text: string; tone: 'good' | 'warn' | 'bad'; measure: string } | null> = {
+  'area-1': (o) => (o.duplicates === null ? null : { text: o.duplicates ? `${fmtNumber(o.duplicates)} duplicates` : 'No duplicates', tone: o.duplicates ? (o.duplicates > 10 ? 'bad' : 'warn') : 'good', measure: `Duplicate ${o.label}` }),
+  'area-2': (o) => (o.completeness === null ? null : { text: `${Math.round(o.completeness)}% filled in`, tone: o.completeness >= 90 ? 'good' : o.completeness >= 70 ? 'warn' : 'bad', measure: 'Field completeness' }),
 };
 
 /** One object in an area's "By object" list. */
@@ -149,6 +160,8 @@ export interface ObjectChip {
   label: string;
   text: string;
   tone: 'good' | 'warn' | 'bad';
+  /** The measure this chip's number comes from (Data Quality), if any. */
+  measure?: string;
 }
 
 /** Plain names for Salesforce objects that aren't in the per-object results. */
