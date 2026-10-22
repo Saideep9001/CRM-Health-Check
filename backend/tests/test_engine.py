@@ -336,3 +336,18 @@ def test_every_problem_links_to_the_measure_that_raised_it(client, sf):
     assert found and all((f["areaId"], f["measure"]) in labels for f in found)
     dup = next(f for f in found if f["name"] == "Duplicate Accounts")
     assert dup["measure"] == "Duplicate Accounts"
+
+
+def test_older_problems_find_their_measure_by_the_same_records(client, sf):
+    from app.models import FindingRow
+
+    connect(client)
+    aid = start(client, areas=("area-1",)).json()["id"]
+    with SessionLocal() as db:  # as if saved before problems recorded their measure
+        for f in db.query(FindingRow).filter(FindingRow.assessment_id == aid):
+            f.measure = None
+        db.commit()
+    found = client.get(f"{API}/assessments/{aid}/findings", params={"pageSize": 500}).json()["items"]
+    phone = [f for f in found if "phone" in f["name"].lower()]
+    assert phone and all(f["measure"] == "Missing Phone" for f in phone)
+    assert next(f for f in found if f["name"] == "Duplicate Accounts")["measure"] == "Duplicate Accounts"

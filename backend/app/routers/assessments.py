@@ -70,7 +70,27 @@ def to_assessment(row: AssessmentRow) -> Assessment:
     )
 
 
-def to_finding(row: FindingRow) -> Finding:
+def _measure_links(db: Session, rows: list[FindingRow]) -> dict[str, str]:
+    """For problems saved before they recorded their measure: the measure of the same check, same area, that
+    selected exactly the same records (identical object and filter), else one with the same name."""
+    need = [r for r in rows if not r.measure]
+    if not need:
+        return {}
+    checks = {a.id: a for a in db.scalars(select(AssessmentRow).where(AssessmentRow.id.in_({r.assessment_id for r in need})))}
+    links: dict[str, str] = {}
+    for r in need:
+        area = next((a for a in ((checks.get(r.assessment_id) and checks[r.assessment_id].results) or {}).get("areas", [])
+                     if a.get("areaId") == r.area_id), None)
+        indicators = (area or {}).get("indicators", [])
+        exact = next((i["label"] for i in indicators for rec in (i.get("records") or [])
+                      if r.records_object and rec.get("object") == r.records_object and rec.get("where") == r.records_where), None)
+        named = next((i["label"] for i in indicators if i.get("label") == r.name), None)
+        if exact or named:
+            links[r.id] = exact or named
+    return links
+
+
+def to_finding(row: FindingRow, measure: str | None = None) -> Finding:
     return Finding(
         id=row.id,
         assessment_id=row.assessment_id,
@@ -92,7 +112,7 @@ def to_finding(row: FindingRow) -> Finding:
         records_available=bool(row.records_object),
         value_at_risk=row.value_at_risk,
         fix_url=row.fix_url,
-        measure=row.measure,
+        measure=row.measure or measure,
         previous_affected=row.previous_affected,
         change=_change(row),
     )
@@ -239,7 +259,9 @@ def list_findings(
     # Most urgent first; within an urgency, the most money at risk, then the most records.
     found.sort(key=lambda f: (order.get(f.severity, 4), -(f.value_at_risk or 0), -f.affected_records))
     start = (page - 1) * page_size
-    return _page([to_finding(r) for r in found[start : start + page_size]], len(found), page, page_size)
+    shown = found[start : start + page_size]
+    links = _measure_links(db, shown)
+    return _page([to_finding(r, links.get(r.id)) for r in shown], len(found), page, page_size)
 
 
 def _finding_with_records(db: Session, finding_id: str) -> tuple[FindingRow, str]:
@@ -375,4 +397,4 @@ def update_finding(finding_id: str, body: UpdateFindingRequest, _: Principal = D
     if "notes" in data:
         row.notes = (data["notes"] or "").strip() or None
     db.commit()
-    return to_finding(row)
+    return to_finding(row, _measure_links(db, [row]).get(row.id))
