@@ -1,5 +1,6 @@
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { DuplicateFinder, finderFor } from '@/components/findings/DuplicateFinder';
+import { finderFor } from '@/components/findings/DuplicateFinder';
+import { FieldCheck } from '@/components/findings/FieldCheck';
 import { IndicatorDetailsPanel } from '@/components/findings/IndicatorDetailsPanel';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/States';
 import { getArea } from '@/config/categories';
@@ -7,7 +8,7 @@ import { useLatestAssessment } from '@/hooks/useLatestAssessment';
 import { findingsForArea, getAreaResult } from '@/lib/health';
 import NotFoundPage from './NotFoundPage';
 
-/** One measure ("What we measure") on its own page: rules, records, the problem it raised, and a duplicate finder. */
+/** One measure ("What we measure") on its own page: rules, records, the problem it raised, and a field check (empty values, duplicates, spellings). */
 export default function MeasurePage() {
   const { areaId = '' } = useParams();
   const [params] = useSearchParams();
@@ -41,7 +42,7 @@ export default function MeasurePage() {
       onClose={() => (window.history.length > 1 ? navigate(-1) : navigate(`/assessment/${area.categoryId}/${area.id}`))}
       onCheckAgain={() => navigate(`/assessment/${area.categoryId}/${area.id}`)}
       onOpenFinding={(f) => navigate(`/problems/${encodeURIComponent(f.id)}`)}
-      extra={objects.length > 0 && finder && <DuplicateFinder key={finder.kind} objects={objects} initialObject={object ?? objects[0]} kind={finder.kind} fieldsText={finder.fieldsText} />}
+      extra={objects.length > 0 && finder && <FieldCheck objects={objects} initialObject={object ?? objects[0]} focus={finder.kind} fieldsText={finder.fieldsText} />}
     />
   );
 }

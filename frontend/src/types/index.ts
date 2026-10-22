@@ -111,6 +111,35 @@ export interface DuplicateResult {
   recordUrlPrefix: string;
 }
 
+/** One chosen field checked for empty values, duplicates and inconsistent spellings. */
+export interface FieldCheckField {
+  name: string;
+  label: string;
+  type: string;
+  filled: number;
+  empty: number;
+  /** Null = not checked for duplicates on its own (picklists, dates, numbers). */
+  duplicates: DuplicateResult | null;
+  /** Null = not a text field. */
+  standardization: {
+    oddRecords: number;
+    valuesWithVariants: number;
+    variants: { usual: string; spellings: { value: string; count: number }[]; oddRecords: number }[];
+    columns: { name: string; label: string }[];
+    records: { id: string | null; values: Record<string, unknown> }[];
+  } | null;
+}
+
+export interface FieldCheckResult {
+  object: string;
+  scanned: number;
+  truncated: boolean;
+  fields: FieldCheckField[];
+  /** Duplicates on all chosen fields together (when more than one was chosen). */
+  combined: DuplicateResult | null;
+  recordUrlPrefix: string;
+}
+
 /** Records whose chosen fields are empty. */
 export interface EmptyResult extends FindingRecordsPage {
   /** All records of the object (first page only). */

@@ -9,10 +9,10 @@ from sqlalchemy.orm import Session
 from ..config import Settings
 from ..db import get_db
 from ..deps import http_dep, settings_dep
-from ..salesforce import duplicates, empty_fields, explorer, finder, service
+from ..salesforce import duplicates, empty_fields, explorer, field_check, finder, service
 from ..salesforce.client import SalesforceClient
 from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
-from ..schemas import DataAnswer, DataAskRequest, DuplicateOptions, DuplicateRequest, DuplicateResult, EmptyField, EmptyRequest, EmptyResult, DataObject, DataObjectDetail, DataRecord, DataRecordPage, DataRelatedPage, DataSearchGroup
+from ..schemas import FieldCheckRequest, FieldCheckResult, DataAnswer, DataAskRequest, DuplicateOptions, DuplicateRequest, DuplicateResult, EmptyField, EmptyRequest, EmptyResult, DataObject, DataObjectDetail, DataRecord, DataRecordPage, DataRelatedPage, DataSearchGroup
 
 router = APIRouter(prefix="/data", tags=["data"])
 
@@ -130,6 +130,14 @@ def duplicate_options(object: str = Query(..., max_length=80), db: Session = Dep
 def find_duplicates(body: DuplicateRequest, db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep), settings: Settings = Depends(settings_dep)):
     """Groups of duplicate records, by Salesforce's standard rule or by fields the person chose (read-only)."""
     return _run(db, http, settings, lambda sf: duplicates.find_duplicates(sf, body.object, body.fields, body.standard))
+
+
+# ---------------------------------------------------------------- field check
+
+@router.post("/fields/check", response_model=FieldCheckResult)
+def check_fields(body: FieldCheckRequest, db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep), settings: Settings = Depends(settings_dep)):
+    """For each chosen field: empty values, duplicates and inconsistent spellings; plus duplicates on all of them (read-only)."""
+    return _run(db, http, settings, lambda sf: field_check.check_fields(sf, body.object, body.fields))
 
 
 # ---------------------------------------------------------------- empty fields

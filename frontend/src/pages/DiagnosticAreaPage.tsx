@@ -3,6 +3,7 @@ import { ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, Gauge, Hourglass, Tr
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { RunCheckPanel } from '@/components/assessment/RunCheckPanel';
+import { FieldCheck } from '@/components/findings/FieldCheck';
 import { FindingsTable } from '@/components/findings/FindingsTable';
 import { Badge, ReleaseBadge } from '@/components/ui/Badges';
 import { LinkButton } from '@/components/ui/Button';
@@ -13,6 +14,8 @@ import { EmptyState, ErrorState, LoadingState } from '@/components/ui/States';
 import { Tabs } from '@/components/ui/Tabs';
 import { ProgressBar, ScoreRing } from '@/components/ui/Visuals';
 import { CATEGORY_COLORS, DIAGNOSTIC_AREAS, getArea, getAreaRelease, getCategory } from '@/config/categories';
+import { useAssessment } from '@/api/queries';
+import { DEFAULT_DQ_OBJECTS } from '@/components/assessment/RunCheckPanel';
 import { useLatestAssessment } from '@/hooks/useLatestAssessment';
 import { fmtDate, fmtNumber } from '@/lib/format';
 import { findingsForArea, getAreaResult } from '@/lib/health';
@@ -33,6 +36,7 @@ export default function DiagnosticAreaPage() {
   const category = getCategory(categoryId);
   const { state, error, refetch, latest, results, findings } = useLatestAssessment();
   const [tab, setTab] = useState<Tab>('indicators');
+  const source = useAssessment(getAreaResult(results, areaId)?.sourceAssessmentId ?? latest?.id ?? null);
   const navigate = useNavigate();
 
   if (!area || !category || area.categoryId !== category.id) return <NotFoundPage />;
@@ -45,6 +49,8 @@ export default function DiagnosticAreaPage() {
   const idx = DIAGNOSTIC_AREAS.findIndex((a) => a.id === area.id);
   const prev = DIAGNOSTIC_AREAS[idx - 1];
   const next = DIAGNOSTIC_AREAS[idx + 1];
+  // The objects the check behind these results looked at.
+  const checkedObjects = source.data ? (source.data.scope.objects?.length ? source.data.scope.objects : DEFAULT_DQ_OBJECTS) : null;
 
   return (
     <div>
@@ -116,6 +122,7 @@ export default function DiagnosticAreaPage() {
             checked={assessed}
             lastChecked={result?.checkedAt ?? latest?.completedAt}
             objectPicker={category.id === 'data-quality'}
+            lastObjects={checkedObjects}
           />
         </>
       ) : null}
@@ -174,7 +181,7 @@ export default function DiagnosticAreaPage() {
                         ) : (
                           <>
                             <p className="mt-2 text-2xl font-semibold text-ink-subtle">—</p>
-                            <p className="mt-3 text-[11px] text-ink-subtle">{release === 'coming-soon' ? 'Coming Soon' : 'Not measured yet'}</p>
+                            <p className="mt-3 text-[11px] text-ink-subtle">{release === 'coming-soon' ? 'Coming Soon' : assessed ? 'Not part of the last check (its objects weren’t chosen)' : 'Not measured yet'}</p>
                           </>
                         )}
                       </Card>
@@ -217,6 +224,12 @@ export default function DiagnosticAreaPage() {
           )}
         </div>
       </div>
+
+      {category.id === 'data-quality' && assessed && checkedObjects && (
+        <div className="mt-6">
+          <FieldCheck objects={checkedObjects} />
+        </div>
+      )}
 
       <div className="mt-8 flex flex-wrap justify-between gap-2">
         {prev ? (

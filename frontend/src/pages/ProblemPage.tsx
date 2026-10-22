@@ -1,11 +1,12 @@
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAssessmentResults, useFinding, useFindings } from '@/api/queries';
 import { measureFor } from '@/components/findings/DetailsPanel';
-import { DuplicateFinder, finderFor } from '@/components/findings/DuplicateFinder';
+import { finderFor } from '@/components/findings/DuplicateFinder';
+import { FieldCheck } from '@/components/findings/FieldCheck';
 import { FindingDetailsPanel } from '@/components/findings/FindingDetailsPanel';
 import { ErrorState, LoadingState } from '@/components/ui/States';
 
-/** One problem on its own page: the full details, the records, and a duplicate finder for its object. */
+/** One problem on its own page: the full details, the records, and a field check (empty values, duplicates, spellings) for its object. */
 export default function ProblemPage() {
   const { findingId = '' } = useParams();
   const navigate = useNavigate();
@@ -28,7 +29,7 @@ export default function ProblemPage() {
       others={all.data ?? []}
       onClose={() => (window.history.length > 1 ? navigate(-1) : navigate('/results'))}
       onOpenFinding={(o) => navigate(`/problems/${encodeURIComponent(o.id)}`)}
-      extra={objects.length > 0 && finder && <DuplicateFinder key={finder.kind} objects={objects} initialObject={f.objectName ?? objects[0]} kind={finder.kind} fieldsText={finder.fieldsText} />}
+      extra={objects.length > 0 && finder && <FieldCheck objects={objects} initialObject={f.objectName ?? objects[0]} focus={finder.kind} fieldsText={finder.fieldsText} />}
     />
   );
 }

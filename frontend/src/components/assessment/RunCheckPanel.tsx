@@ -67,6 +67,7 @@ export function RunCheckPanel({
   checked,
   lastChecked,
   objectPicker = false,
+  lastObjects: lastObjectsProp,
 }: {
   /** Areas this panel checks; only the ones the engine can run are used. */
   areaIds: string[];
@@ -77,6 +78,8 @@ export function RunCheckPanel({
   lastChecked?: string | null;
   /** Let the user choose which Salesforce objects the Data Quality checks look at. */
   objectPicker?: boolean;
+  /** Objects the check behind the shown results looked at (else the latest finished check of these areas). */
+  lastObjects?: string[] | null;
 }) {
   const { canEdit } = useRole();
   const conn = useConnection();
@@ -130,7 +133,7 @@ export function RunCheckPanel({
   const isDefault = objects.length === DEFAULT_DQ_OBJECTS.length && DEFAULT_DQ_OBJECTS.every((o) => objects.includes(o));
   // The objects the last finished check of these areas looked at; results on this page come from that check.
   const lastRun = list.data?.find((a) => a.status === 'completed' && a.scope.areaIds?.some((id) => runnable.includes(id))) ?? null;
-  const lastObjects = lastRun ? (lastRun.scope.objects?.length ? lastRun.scope.objects : DEFAULT_DQ_OBJECTS) : null;
+  const lastObjects = lastObjectsProp ?? (lastRun ? (lastRun.scope.objects?.length ? lastRun.scope.objects : DEFAULT_DQ_OBJECTS) : null);
   const selectionPending = !!lastObjects && (lastObjects.length !== objects.length || objects.some((o) => !lastObjects.includes(o)));
 
   const start = () => {

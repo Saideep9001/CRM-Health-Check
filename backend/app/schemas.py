@@ -689,6 +689,49 @@ class EmptyRequest(ApiModel):
     cursor: str | None = Field(None, max_length=200)
 
 
+class FieldCheckRequest(ApiModel):
+    object: str = Field(max_length=80)
+    fields: list[str] = Field(default_factory=list, max_length=10)
+
+
+class SpellingCount(ApiModel):
+    value: str
+    count: int
+
+
+class SpellingVariant(ApiModel):
+    usual: str  # the most common spelling
+    spellings: list[SpellingCount]
+    odd_records: int
+
+
+class FieldStandardization(ApiModel):
+    odd_records: int  # records not using the most common spelling of their value
+    values_with_variants: int
+    variants: list[SpellingVariant]
+    columns: list[DuplicateColumn]
+    records: list[DuplicateRecord]
+
+
+class FieldCheckField(ApiModel):
+    name: str
+    label: str
+    type: str
+    filled: int
+    empty: int
+    duplicates: DuplicateResult | None = None  # None = not checked for duplicates on its own (picklists, dates, numbers)
+    standardization: FieldStandardization | None = None  # None = not a text field
+
+
+class FieldCheckResult(ApiModel):
+    object: str
+    scanned: int
+    truncated: bool
+    fields: list[FieldCheckField]
+    combined: DuplicateResult | None = None  # duplicates on all chosen fields together
+    record_url_prefix: str
+
+
 class EmptyResult(FindingRecordsPage):
     object_total: int | None = None  # all records of the object (first page only)
     fields: list[str] = []

@@ -236,6 +236,7 @@ export const useDuplicateOptions = (object: string | null) =>
   useQuery({ queryKey: ['duplicate-options', object], queryFn: ({ signal }) => dataApi.duplicateOptions(object!, signal), enabled: !!object, staleTime: 5 * 60_000, retry: 1 });
 
 export const useFindDuplicates = () => useMutation({ mutationFn: dataApi.findDuplicates });
+export const useCheckFields = () => useMutation({ mutationFn: dataApi.checkFields });
 
 export const useEmptyOptions = (object: string | null) =>
   useQuery({ queryKey: ['empty-options', object], queryFn: ({ signal }) => dataApi.emptyOptions(object!, signal), enabled: !!object, staleTime: 5 * 60_000, retry: 1 });

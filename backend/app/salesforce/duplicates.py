@@ -398,9 +398,10 @@ class _Groups:
         self.parent[self.find(a)] = self.find(b)
 
 
-def find_duplicates(sf: SalesforceClient, obj: str, fields: list[str] | None = None, standard: bool = False) -> dict:
+def find_duplicates(sf: SalesforceClient, obj: str, fields: list[str] | None = None, standard: bool = False,
+                    prefetched: tuple[list[dict], bool] | None = None) -> dict:
     """Groups of duplicate records. `standard` uses Salesforce's standard rule for Account/Contact/Lead; otherwise
-    records match when every field in `fields` matches."""
+    records match when every field in `fields` matches. `prefetched` reuses records already read (with these fields)."""
     available = {f["name"]: f for f in matchable_fields(sf, obj)}
     if standard:
         if obj not in STANDARD:
@@ -423,7 +424,7 @@ def find_duplicates(sf: SalesforceClient, obj: str, fields: list[str] | None = N
     has = lambda f: f in described or (f == "Owner.Name" and "OwnerId" in described) or (f == "Account.Name" and "AccountId" in described)  # noqa: E731
     context = [f for f in CONTEXT.get(obj, DEFAULT_CONTEXT) if has(f)]
     show = list(dict.fromkeys(([name_field] if name_field else []) + paths + context))
-    rows, truncated = _fetch(sf, obj, show)
+    rows, truncated = prefetched or _fetch(sf, obj, show)
     values = [{p: _value(r, p) for p in show} for r in rows]
     kinds = {p: available[p]["kind"] for p in paths}
 

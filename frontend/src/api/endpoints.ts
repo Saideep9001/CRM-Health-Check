@@ -1,4 +1,5 @@
 import type {
+  FieldCheckResult,
   AccessRequest,
   EmptyResult,
   DuplicateOptions,
@@ -120,6 +121,8 @@ export const dataApi = {
   /** Fields that can be compared to find duplicates, and Salesforce's standard rule for the object. */
   duplicateOptions: (object: string, signal?: AbortSignal) => http.get<DuplicateOptions>('/data/duplicates/options', { object }, signal),
   /** Groups of duplicate records (read-only). */
+  /** Empty values, duplicates and odd spellings for each chosen field (reads up to 20,000 records). */
+  checkFields: (body: { object: string; fields: string[] }) => http.post<FieldCheckResult>('/data/fields/check', body, 180_000),
   findDuplicates: (body: { object: string; standard: boolean; fields: string[] }) => http.post<DuplicateResult>('/data/duplicates', body, 120_000),
   objects: (signal?: AbortSignal) => http.get<DataObject[]>('/data/objects', undefined, signal),
   object: (name: string, signal?: AbortSignal) => http.get<DataObjectDetail>(`/data/objects/${encodeURIComponent(name)}`, undefined, signal),
