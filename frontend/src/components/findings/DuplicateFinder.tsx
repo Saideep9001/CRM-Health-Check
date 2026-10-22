@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { errorMessage } from '@/api/client';
 import { useDuplicateOptions, useFindDuplicates } from '@/api/queries';
 import { objectLabel } from '@/components/category/DiagnosticAreaCard';
-import { cx, fmtNumber } from '@/lib/format';
+import { cx, fmtDate, fmtNumber } from '@/lib/format';
 import type { DuplicateResult } from '@/types';
 import { Button } from '../ui/Button';
 import { LoadingState } from '../ui/States';
@@ -14,6 +14,7 @@ const MAX_FIELDS = 6;
 function show(v: unknown): string {
   if (v === null || v === undefined || v === '') return '—';
   if (typeof v === 'object') return String((v as Record<string, unknown>).Name ?? '—');
+  if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(v)) return fmtDate(v); // Created Date etc.
   return String(v);
 }
 

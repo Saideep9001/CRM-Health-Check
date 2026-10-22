@@ -16,12 +16,12 @@ from . import explorer
 from .client import SalesforceClient
 
 MAX_SCAN = 20_000  # records read per run
-MAX_GROUPS = 300  # groups returned
+MAX_GROUPS = 3_000  # groups returned (all of them, in practice)
 MAX_BLOCK = 2_500  # records compared pairwise within one key
 
 # ---------------------------------------------------------------- cleaning and similarity
 
-_COMPANY_WORDS = re.compile(r"\b(the|incorporated|inc|llc|llp|ltd|limited|corp|corporation|co|company|plc|gmbh|ag|pvt|private|pty|sa|srl|bv)\b")
+_COMPANY_WORDS = re.compile(r"\b(the|incorporated|inc|llc|llp|ltd|limited|corp|corporation|co|company|plc|gmbh|ag|pvt|private|pty|sa|srl|bv|com|net|org|io)\b")
 _NICKNAMES = {
     "bob": "robert", "rob": "robert", "bobby": "robert", "bill": "william", "will": "william", "billy": "william",
     "mike": "michael", "mick": "michael", "jim": "james", "jimmy": "james", "liz": "elizabeth", "beth": "elizabeth",
@@ -139,10 +139,19 @@ def m_company(a, b) -> bool:  # Acronym, Edit Distance, Exact — threshold 70
         return True
     if similarity(x, y) < 0.70:
         return False
-    # “Cobblestone Bakery” vs “Cobblestone Brands”: a shared first word isn't enough — the rest must be close too.
-    wx, wy = x.split(), y.split()
-    if len(wx) > 1 and len(wy) > 1 and wx[0] == wy[0]:
-        return similarity(" ".join(wx[1:]), " ".join(wy[1:])) >= 0.70
+    # Word by word: once the shared words are set aside, every remaining word must be a near-identical spelling of
+    # one on the other side (a typo), so “Microsft” = “Microsoft” but “Resorts” ≠ “Restaurants”, “Group” ≠ “Partners”,
+    # “Bayview Pediatrics” ≠ “Clearwater Pediatrics” and “Acme” ≠ “Acme Holdings”.
+    only_x = [w for w in x.split() if w not in y.split()]
+    only_y = [w for w in y.split() if w not in x.split()]
+    if len(only_x) != len(only_y):
+        return False
+    left = list(only_y)
+    for w in only_x:
+        best = max(left, key=lambda v: similarity(w, v))
+        if similarity(w, best) < 0.80:
+            return False
+        left.remove(best)
     return True
 
 
@@ -234,7 +243,7 @@ def m_exact(a, b) -> bool:
 
 
 KINDS: dict[str, tuple[str, Callable]] = {
-    "company": ("Fuzzy company name: ignores Inc, Corp, LLC…; 70% similar (and beyond a shared first word) or an acronym", m_company),
+    "company": ("Fuzzy company name: ignores Inc, Corp, LLC, .com…; differing words must be typos of each other (Microsft = Microsoft), or an acronym", m_company),
     "first": ("Fuzzy first name: typos, initials and nicknames (Bob = Robert)", m_first),
     "last": ("Fuzzy last name: small typos", m_last),
     "email": ("Exact email (any case)", m_email),
@@ -302,6 +311,15 @@ STANDARD: dict[str, dict] = {
                 "kinds": {"Account.Name": "company"}},
     "Lead": {"name": "Standard Lead Matching Rule", "groups": _contact_like("Company", "Street", "City", "PostalCode"), "kinds": {"Company": "company"}},
 }
+
+
+# Shown alongside the matched fields so people can tell real duplicates apart (skipped if the object lacks them).
+CONTEXT = {
+    "Account": ["Website", "Phone", "BillingCity", "Owner.Name", "CreatedDate"],
+    "Contact": ["Email", "Phone", "Account.Name", "Owner.Name", "CreatedDate"],
+    "Lead": ["Email", "Company", "Phone", "Status", "Owner.Name", "CreatedDate"],
+}
+DEFAULT_CONTEXT = ["Owner.Name", "CreatedDate"]
 
 
 # ---------------------------------------------------------------- reading records
@@ -401,7 +419,10 @@ def find_duplicates(sf: SalesforceClient, obj: str, fields: list[str] | None = N
 
     paths = sorted({f for g in groups for f in g})
     name_field = next((f["name"] for f in explorer._describe(sf, obj).get("fields", []) if f.get("nameField")), None)
-    show = list(dict.fromkeys(([name_field] if name_field else []) + paths))
+    described = explorer._fields(explorer._describe(sf, obj))
+    has = lambda f: f in described or (f == "Owner.Name" and "OwnerId" in described) or (f == "Account.Name" and "AccountId" in described)  # noqa: E731
+    context = [f for f in CONTEXT.get(obj, DEFAULT_CONTEXT) if has(f)]
+    show = list(dict.fromkeys(([name_field] if name_field else []) + paths + context))
     rows, truncated = _fetch(sf, obj, show)
     values = [{p: _value(r, p) for p in show} for r in rows]
     kinds = {p: available[p]["kind"] for p in paths}
@@ -475,7 +496,9 @@ def find_duplicates(sf: SalesforceClient, obj: str, fields: list[str] | None = N
         pair_reason[uf.find(i)][gi] += 1
 
     def label(f: str) -> str:
-        return available[f]["label"]
+        if f in available:
+            return available[f]["label"]
+        return {"Owner.Name": "Owner", "Account.Name": "Account Name"}.get(f) or described.get(f, {}).get("label") or f
 
     out_groups = []
     for c in found[:MAX_GROUPS]:
@@ -491,7 +514,7 @@ def find_duplicates(sf: SalesforceClient, obj: str, fields: list[str] | None = N
         "rule_name": STANDARD[obj]["name"] if standard else None,
         "rules": [[label(f) for f in g] for g in groups],
         "methods": [{"field": label(p), "method": KINDS[kinds[p]][0]} for p in paths],
-        "columns": [{"name": p, "label": label(p) if p in available else p} for p in show],
+        "columns": [{"name": p, "label": label(p)} for p in show],
         "scanned": len(rows),
         "truncated": truncated,
         "total_groups": len(found),
