@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .. import playbooks
+from .. import org_data, playbooks
 from ..alerts import email_configured, send_email
 from ..auth import Principal, ensure_org, require_admin, require_editor, require_user
 from ..config import Settings
@@ -119,16 +119,21 @@ def activate(org_id: str, db: Session = Depends(get_db)):
     return next((o for o in portfolio(db) if o.org_id == org_id), None)
 
 
+@router.get("/salesforce/connections/{org_id}/saved")
+def saved(org_id: str, _: Principal = Depends(require_admin), db: Session = Depends(get_db)):
+    """How many health checks and problems are saved for an org (shown before deleting them)."""
+    return org_data.saved_counts(db, org_id)
+
+
 @router.delete("/salesforce/connections/{org_id}", status_code=204)
-def remove(org_id: str, _: Principal = Depends(require_admin), db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep)):
-    """Disconnect a saved org (its past checks are kept)."""
-    if service.row_for_org(db, org_id) is None:
+def remove(org_id: str, delete_results: bool = Query(False, alias="deleteResults"), me_: Principal = Depends(require_admin),
+           db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep)):
+    """Disconnect a saved org. Its past checks are kept unless `deleteResults=true` (permanent).
+    An org that's already disconnected can still have its saved results deleted."""
+    ensure_org(org_id)
+    if service.row_for_org(db, org_id) is None and not (delete_results and org_data.saved_counts(db, org_id)["checks"]):
         raise HTTPException(404, "That org isn’t connected.")
-    service.disconnect(db, http, org_id)
-    s = db.scalars(select(ScanScheduleRow).where(ScanScheduleRow.org_id == org_id)).first()
-    if s:
-        s.enabled = False
-        db.commit()
+    org_data.disconnect_org(db, http, org_id, delete_results=delete_results, actor=me_)
     return Response(status_code=204)
 
 

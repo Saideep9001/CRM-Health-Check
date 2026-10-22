@@ -3,7 +3,7 @@ import { ArrowDownRight, ArrowRight, ArrowUpRight, BellRing, Building2, Calendar
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { errorMessage } from '@/api/client';
-import { useActivateOrg, useDeleteSchedule, usePortfolio, useRemoveOrg, useRole, useSaveSchedule, useTestAlertEmail } from '@/api/queries';
+import { useActivateOrg, useDeleteSchedule, usePortfolio, useRole, useSaveSchedule, useTestAlertEmail } from '@/api/queries';
 import { Badge } from '@/components/ui/Badges';
 import { Button } from '@/components/ui/Button';
 import { CategoryIcon } from '@/components/ui/CategoryIcon';
@@ -17,6 +17,7 @@ import { CATEGORIES, CATEGORY_COLORS } from '@/config/categories';
 import { useToast } from '@/context/ToastContext';
 import { cx, fmtCompact, fmtDate, fmtNumber } from '@/lib/format';
 import type { PortfolioOrg, ScheduleFrequency } from '@/types';
+import { DisconnectDialog } from '@/components/connection/DisconnectDialog';
 import { ConnectModal } from './ConnectionPage';
 
 const FREQ_LABEL: Record<ScheduleFrequency, string> = { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly' };
@@ -159,7 +160,7 @@ function OrgCard({ org, onSchedule }: { org: PortfolioOrg; onSchedule: () => voi
   const navigate = useNavigate();
   const { notify } = useToast();
   const activate = useActivateOrg();
-  const remove = useRemoveOrg();
+  const [disconnecting, setDisconnecting] = useState(false);
   const { canEdit, isAdmin } = useRole();
   const [reconnect, setReconnect] = useState(false);
   const connected = org.connectionStatus === 'connected';
@@ -319,14 +320,20 @@ function OrgCard({ org, onSchedule }: { org: PortfolioOrg; onSchedule: () => voi
             Reconnect
           </Button>
         ) : null}
+        {isAdmin && org.connectionStatus === 'disconnected' && (
+          <Button size="sm" variant="ghost" className="ml-auto" icon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => setDisconnecting(true)}>
+            Delete saved results
+          </Button>
+        )}
         {isAdmin && org.connectionStatus !== 'disconnected' && (
           <Button size="sm" variant="ghost" className="ml-auto" icon={<Trash2 className="h-3.5 w-3.5" />}
-            onClick={() => { if (window.confirm(`Disconnect ${org.organizationName}? Its past health checks are kept.`)) remove.mutate(org.orgId); }}>
+            onClick={() => setDisconnecting(true)}>
             Disconnect
           </Button>
         )}
       </div>
       <ConnectModal open={reconnect} onClose={() => setReconnect(false)} />
+      <DisconnectDialog open={disconnecting} orgId={org.orgId} orgName={org.organizationName} deleteOnly={org.connectionStatus === 'disconnected'} onClose={() => setDisconnecting(false)} />
     </motion.div>
   );
 }

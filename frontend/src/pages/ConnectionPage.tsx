@@ -1,10 +1,11 @@
-import { ArrowRight, CheckCircle2, ExternalLink, KeyRound, Play, ServerCog, ShieldCheck, Unplug } from 'lucide-react';
+import { ArrowRight, CheckCircle2, ExternalLink, KeyRound, Play, ServerCog, ShieldCheck } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { useAssessments, useCheckConnection, useConnection, useConnectionSnapshot, useDisconnect, useSalesforceApp, useStartOAuth, useRole } from '@/api/queries';
+import { useAssessments, useCheckConnection, useConnection, useConnectionSnapshot, useSalesforceApp, useStartOAuth, useRole } from '@/api/queries';
 import { OrgSnapshot } from '@/components/connection/OrgSnapshot';
 import { ScoreRing } from '@/components/ui/Visuals';
 import { SalesforceConnectionCard } from '@/components/connection/SalesforceConnectionCard';
+import { DisconnectDialog } from '@/components/connection/DisconnectDialog';
 import { Button, LinkButton } from '@/components/ui/Button';
 import { Field } from '@/components/ui/Form';
 import { InfoTip } from '@/components/ui/HelpTip';
@@ -171,7 +172,6 @@ function RecentChecks({ orgId, canRun }: { orgId: string; canRun: boolean }) {
 export default function ConnectionPage() {
   const conn = useConnection();
   const check = useCheckConnection();
-  const disconnect = useDisconnect();
   const { canEdit, isAdmin } = useRole();
   const { notify } = useToast();
   const [connectOpen, setConnectOpen] = useState(false);
@@ -264,37 +264,7 @@ export default function ConnectionPage() {
 
       <ConnectModal open={connectOpen} onClose={() => setConnectOpen(false)} />
 
-      <Modal
-        open={confirmOpen}
-        onClose={() => setConfirmOpen(false)}
-        title="Disconnect Salesforce?"
-        description={conn.data?.organizationName ?? undefined}
-        footer={
-          <>
-            <Button onClick={() => setConfirmOpen(false)}>Cancel</Button>
-            <Button
-              variant="danger"
-              icon={<Unplug className="h-4 w-4" />}
-              disabled={disconnect.isPending}
-              onClick={() =>
-                disconnect.mutate(undefined, {
-                  onSuccess: () => {
-                    setConfirmOpen(false);
-                    notify('Salesforce disconnected', 'Stored tokens have been revoked.', 'success');
-                  },
-                })
-              }
-            >
-              {disconnect.isPending ? 'Disconnecting…' : 'Disconnect'}
-            </Button>
-          </>
-        }
-      >
-        <div className="space-y-3 text-sm text-ink-muted">
-          <p>Your past results are kept. You’ll need to reconnect to run new checks.</p>
-          <InlineError error={disconnect.error} />
-        </div>
-      </Modal>
+      <DisconnectDialog open={confirmOpen} orgId={conn.data?.orgId ?? null} orgName={conn.data?.organizationName ?? 'this org'} onClose={() => setConfirmOpen(false)} />
     </div>
   );
 }

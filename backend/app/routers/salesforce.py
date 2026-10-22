@@ -1,8 +1,9 @@
 """Salesforce connection endpoints (see docs/API_CONTRACT.md → Salesforce connection)."""
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
+from .. import org_data
 from ..auth import Principal, require_admin, require_editor
 from ..config import Settings
 from ..db import get_db
@@ -117,6 +118,12 @@ def check(db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep),
 
 
 @router.delete("/connection", status_code=204)
-def disconnect(_: Principal = Depends(require_admin), db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep)):
-    service.disconnect(db, http)
+def disconnect(delete_results: bool = Query(False, alias="deleteResults"), me_: Principal = Depends(require_admin),
+               db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep)):
+    """Disconnect the active org. Its past checks are kept unless `deleteResults=true` (permanent)."""
+    row = service.get_row(db)
+    if row is not None and row.org_id:
+        org_data.disconnect_org(db, http, row.org_id, delete_results=delete_results, actor=me_)
+    elif row is not None:
+        service.disconnect(db, http)
     return Response(status_code=204)

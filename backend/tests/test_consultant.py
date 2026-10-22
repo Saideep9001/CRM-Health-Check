@@ -184,3 +184,28 @@ def test_no_ai_settings_or_chat(client):
     assert "ai" not in client.get(f"{API}/me/settings").json()
     assert client.get(f"{API}/assistant/status").json() == {"mode": "guide", "model": None}
     assert client.post(f"{API}/assistant/chat", json={"messages": [{"role": "user", "content": "hi"}]}).status_code in (404, 405)
+
+
+def test_disconnect_keeps_or_deletes_results(client, sf):
+    from datetime import datetime, timezone
+    from app.db import SessionLocal
+    from app.models import AssessmentRow, AuditEventRow
+    from .conftest import connect
+
+    connect(client)
+    _add_org("00Dyy0000002", "Beta Corp")
+    _completed("00Dxx0000001", "Acme Inc", 70, datetime(2026, 9, 1, tzinfo=timezone.utc))
+    _completed("00Dyy0000002", "Beta Corp", 55, datetime(2026, 9, 2, tzinfo=timezone.utc))
+    assert client.get(f"{API}/salesforce/connections/00Dyy0000002/saved").json()["checks"] == 1
+
+    # Keep: the org goes, its results stay.
+    assert client.delete(f"{API}/salesforce/connections/00Dyy0000002").status_code == 204
+    with SessionLocal() as db:
+        assert db.query(AssessmentRow).filter(AssessmentRow.org_id == "00Dyy0000002").count() == 1
+
+    # Delete: the active org's results go too, other orgs' stay.
+    assert client.delete(f"{API}/salesforce/connection", params={"deleteResults": "true"}).status_code == 204
+    with SessionLocal() as db:
+        assert db.query(AssessmentRow).filter(AssessmentRow.org_id == "00Dxx0000001").count() == 0
+        assert db.query(AssessmentRow).filter(AssessmentRow.org_id == "00Dyy0000002").count() == 1
+        assert {e.action for e in db.query(AuditEventRow)} >= {"org.disconnected", "org.deleted"}

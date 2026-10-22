@@ -4,6 +4,7 @@ import { Outlet, useLocation } from 'react-router-dom';
 import { ChatWidget } from '../assistant/ChatWidget';
 import { WelcomeTourProvider } from '../onboarding/WelcomeTour';
 import { Header } from './Header';
+import { SavedResultsBanner } from './SavedResultsBanner';
 import { Sidebar } from './Sidebar';
 
 const COLLAPSE_KEY = 'aq-sidebar-collapsed';
@@ -49,6 +50,7 @@ export function AppLayout() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.25, ease: 'easeOut' }}
           >
+            <SavedResultsBanner />
             <Outlet />
           </motion.div>
         </main>

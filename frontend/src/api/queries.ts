@@ -452,12 +452,16 @@ export function useActivateOrg() {
   });
 }
 
+export const useSavedResults = (orgId: string | null, enabled: boolean) =>
+  useQuery({ queryKey: ['saved-results', orgId], queryFn: ({ signal }) => consultantApi.saved(orgId!, signal), enabled: enabled && !!orgId });
+
 export function useRemoveOrg() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: consultantApi.removeOrg,
-    onSuccess: () => {
+    mutationFn: ({ orgId, deleteResults }: { orgId: string; deleteResults?: boolean }) => consultantApi.removeOrg(orgId, deleteResults),
+    onSuccess: (_, { deleteResults }) => {
       qc.removeQueries({ queryKey: qk.data });
+      if (deleteResults) qc.removeQueries({ predicate: (q) => q.queryKey[0] !== 'me' && q.queryKey[0] !== 'auth' });
       qc.invalidateQueries();
     },
   });

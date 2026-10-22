@@ -192,7 +192,10 @@ export const accessApi = {
 export const consultantApi = {
   portfolio: (signal?: AbortSignal) => http.get<PortfolioOrg[]>('/portfolio', undefined, signal),
   activate: (orgId: string) => http.post<PortfolioOrg | null>(`/salesforce/connections/${encodeURIComponent(orgId)}/activate`),
-  removeOrg: (orgId: string) => http.delete<void>(`/salesforce/connections/${encodeURIComponent(orgId)}`),
+  /** Disconnect an org; `deleteResults` also permanently deletes its saved health checks. */
+  removeOrg: (orgId: string, deleteResults = false) =>
+    http.delete<void>(`/salesforce/connections/${encodeURIComponent(orgId)}${deleteResults ? '?deleteResults=true' : ''}`),
+  saved: (orgId: string, signal?: AbortSignal) => http.get<{ checks: number; problems: number }>(`/salesforce/connections/${encodeURIComponent(orgId)}/saved`, undefined, signal),
   putSchedule: (orgId: string, body: ScanScheduleUpdate) => http.put<ScanSchedule>(`/schedules/${encodeURIComponent(orgId)}`, body),
   deleteSchedule: (orgId: string) => http.delete<void>(`/schedules/${encodeURIComponent(orgId)}`),
   testEmail: (orgId: string) => http.post<void>(`/schedules/${encodeURIComponent(orgId)}/test-email`),
