@@ -388,6 +388,13 @@ def indicator_records_csv(
     return _records_csv(db, http, settings, org_id, rec["object"], rec.get("where"), title, rec.get("columns"), rec.get("order"))
 
 
+@router.get("/findings/{finding_id}", response_model=Finding)
+def get_finding(finding_id: str, db: Session = Depends(get_db)):
+    """One problem (for its own page)."""
+    row, _check = _finding(db, finding_id)
+    return to_finding(row, _measure_links(db, [row]).get(row.id))
+
+
 @router.patch("/findings/{finding_id}", response_model=Finding)
 def update_finding(finding_id: str, body: UpdateFindingRequest, _: Principal = Depends(require_editor), db: Session = Depends(get_db)):
     row, _check = _finding(db, finding_id)

@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  ArrowLeft,
   ArrowRight,
   CircleDollarSign,
   Database,
@@ -227,6 +228,8 @@ export function DetailsPanel({
   onOpenFinding,
   onCheckAgain,
   initialObject,
+  asPage,
+  extra,
 }: {
   open: boolean;
   area: DiagnosticArea | undefined;
@@ -242,6 +245,10 @@ export function DetailsPanel({
   onCheckAgain?: () => void;
   /** Object whose records to show first (e.g. the chip that was clicked). */
   initialObject?: string | null;
+  /** Show as a full page instead of a side panel. */
+  asPage?: boolean;
+  /** Extra section after the records (e.g. the duplicate finder). */
+  extra?: ReactNode;
 }) {
   const navigate = useNavigate();
   const { canEdit } = useRole();
@@ -296,34 +303,19 @@ export function DetailsPanel({
     : [];
   const list = others.filter((f) => f.id !== finding?.id).slice(0, 6);
 
-  return (
-    <Drawer
-      open={open}
-      onClose={onClose}
-      wide
-      title={title}
-      subtitle={
-        <div className="flex flex-wrap items-center gap-2">
-          {area && <span className="text-xs text-ink-subtle">Area {area.number}: {area.name}{checkedAt ? ` · checked ${fmtDate(checkedAt)}` : ''}</span>}
-          {finding && <SeverityBadge severity={finding.severity} />}
-          {finding && <FindingStatusBadge status={finding.status} />}
-          {finding && <ChangeBadge finding={finding} />}
-          {finding && v && v.label !== finding.name && <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-ink-muted">Measured by: {v.label}</span>}
-        </div>
-      }
-      footer={
-        finding && (
-          <Button
-            onClick={() => {
-              onClose();
-              navigate(`/assessment/${finding.categoryId}/${finding.areaId}`);
-            }}
-          >
-            Open this area
-          </Button>
-        )
-      }
-    >
+  const subtitle = (
+    <div className="flex flex-wrap items-center gap-2">
+      {area && <span className="text-xs text-ink-subtle">Area {area.number}: {area.name}{checkedAt ? ` · checked ${fmtDate(checkedAt)}` : ''}</span>}
+      {finding && <SeverityBadge severity={finding.severity} />}
+      {finding && <FindingStatusBadge status={finding.status} />}
+      {finding && <ChangeBadge finding={finding} />}
+      {finding && v && v.label !== finding.name && <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-ink-muted">Measured by: {v.label}</span>}
+    </div>
+  );
+  const areaPath = area ? `/assessment/${area.categoryId}/${area.id}` : null;
+
+  const body = (
+    <>
       {(v || finding) && area && (
         <>
           {/* the numbers */}
@@ -427,6 +419,8 @@ export function DetailsPanel({
             <Records area={area} indicator={v} finding={finding} measureAssessmentId={measureAssessmentId} legacy={legacy} initialObject={initialObject} />
           </Section>
 
+          {extra}
+
           {finding && (
             <>
               <Section icon={<Lightbulb className="h-3.5 w-3.5" />} title="Why it matters">
@@ -476,6 +470,54 @@ export function DetailsPanel({
           )}
         </>
       )}
+    </>
+  );
+
+  if (asPage) {
+    return (
+      <div>
+        <button type="button" onClick={onClose} className="mb-4 inline-flex items-center gap-1.5 text-sm text-ink-muted hover:text-ink">
+          <ArrowLeft className="h-4 w-4" /> Back
+        </button>
+        <section className="card mb-6 p-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+              <div className="mt-2">{subtitle}</div>
+            </div>
+            {areaPath && (
+              <Button className="shrink-0" onClick={() => navigate(areaPath)}>
+                Open this area
+              </Button>
+            )}
+          </div>
+        </section>
+        <div className="card p-6">{body}</div>
+      </div>
+    );
+  }
+
+  return (
+    <Drawer
+      open={open}
+      onClose={onClose}
+      wide
+      title={title}
+      subtitle={subtitle}
+      footer={
+        areaPath && (
+          <Button
+            onClick={() => {
+              onClose();
+              navigate(areaPath);
+            }}
+          >
+            Open this area
+          </Button>
+        )
+      }
+    >
+      {body}
     </Drawer>
   );
 }

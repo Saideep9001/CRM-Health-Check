@@ -13,6 +13,8 @@ export function IndicatorDetailsPanel({
   onOpenFinding,
   onCheckAgain,
   object,
+  asPage,
+  extra,
 }: {
   area: DiagnosticArea;
   indicator: IndicatorValue | null;
@@ -26,6 +28,8 @@ export function IndicatorDetailsPanel({
   onCheckAgain?: () => void;
   /** Opened from a "By object" chip: that object's problem and records come first. */
   object?: string | null;
+  asPage?: boolean;
+  extra?: React.ReactNode;
 }) {
   const open = findings.filter((f) => f.status !== 'resolved' && f.status !== 'accepted-risk');
   const bySeverity = (a: Finding, b: Finding) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity] || b.affectedRecords - a.affectedRecords;
@@ -49,6 +53,8 @@ export function IndicatorDetailsPanel({
       onOpenFinding={onOpenFinding}
       onCheckAgain={onCheckAgain}
       initialObject={object}
+      asPage={asPage}
+      extra={extra}
     />
   );
 }

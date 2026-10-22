@@ -1,10 +1,8 @@
 import { motion } from 'framer-motion';
 import { ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, Gauge, Hourglass, TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { RunCheckPanel } from '@/components/assessment/RunCheckPanel';
-import { FindingDetailsPanel } from '@/components/findings/FindingDetailsPanel';
-import { IndicatorDetailsPanel } from '@/components/findings/IndicatorDetailsPanel';
 import { FindingsTable } from '@/components/findings/FindingsTable';
 import { Badge, ReleaseBadge } from '@/components/ui/Badges';
 import { LinkButton } from '@/components/ui/Button';
@@ -35,8 +33,7 @@ export default function DiagnosticAreaPage() {
   const category = getCategory(categoryId);
   const { state, error, refetch, latest, results, findings } = useLatestAssessment();
   const [tab, setTab] = useState<Tab>('indicators');
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [measure, setMeasure] = useState<string | null>(null);
+  const navigate = useNavigate();
 
   if (!area || !category || area.categoryId !== category.id) return <NotFoundPage />;
 
@@ -44,7 +41,6 @@ export default function DiagnosticAreaPage() {
   const result = getAreaResult(results, area.id);
   const assessed = result?.status === 'assessed';
   const areaFindings = findingsForArea(findings, area.id);
-  const selected = areaFindings.find((f) => f.id === selectedId) ?? null;
   const color = CATEGORY_COLORS[category.id];
   const idx = DIAGNOSTIC_AREAS.findIndex((a) => a.id === area.id);
   const prev = DIAGNOSTIC_AREAS[idx - 1];
@@ -152,7 +148,7 @@ export default function DiagnosticAreaPage() {
                       <Card
                         key={label}
                         type={v ? 'button' : undefined}
-                        onClick={v ? () => setMeasure(label) : undefined}
+                        onClick={v ? () => navigate(`/measures/${area.id}?${new URLSearchParams({ label })}`) : undefined}
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: i * 0.05 }}
@@ -189,7 +185,7 @@ export default function DiagnosticAreaPage() {
 
               {tab === 'findings' &&
                 (areaFindings.length ? (
-                  <FindingsTable findings={areaFindings} onSelect={(f) => setSelectedId(f.id)} compact />
+                  <FindingsTable findings={areaFindings} onSelect={(f) => navigate(`/problems/${encodeURIComponent(f.id)}`)} compact />
                 ) : (
                   <EmptyState
                     title="No problems found here"
@@ -207,7 +203,7 @@ export default function DiagnosticAreaPage() {
                           <span className="flex h-7 w-10 shrink-0 items-center justify-center rounded-md bg-brand-soft text-xs font-bold text-brand-ink">{f.priority}</span>
                           <div className="min-w-0">
                             <p className="text-sm font-medium">{f.recommendedAction}</p>
-                            <button onClick={() => setSelectedId(f.id)} className="mt-0.5 text-xs text-brand hover:underline">
+                            <button onClick={() => navigate(`/problems/${encodeURIComponent(f.id)}`)} className="mt-0.5 text-xs text-brand hover:underline">
                               {f.id} · {f.name}
                             </button>
                           </div>
@@ -236,24 +232,6 @@ export default function DiagnosticAreaPage() {
           </LinkButton>
         )}
       </div>
-
-      <IndicatorDetailsPanel
-        area={area}
-        indicator={result?.indicators.find((x) => x.label === measure) ?? null}
-        assessmentId={result?.sourceAssessmentId ?? latest?.id ?? null}
-        checkedAt={result?.checkedAt ?? latest?.completedAt ?? null}
-        findings={areaFindings}
-        onClose={() => setMeasure(null)}
-        onCheckAgain={() => {
-          setMeasure(null);
-          setTimeout(() => document.getElementById('run-check')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250);
-        }}
-        onOpenFinding={(f) => {
-          setMeasure(null);
-          setSelectedId(f.id);
-        }}
-      />
-      <FindingDetailsPanel finding={selected} onClose={() => setSelectedId(null)} others={areaFindings} onOpenFinding={(f) => setSelectedId(f.id)} />
     </div>
   );
 }

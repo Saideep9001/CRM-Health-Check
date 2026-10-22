@@ -229,6 +229,14 @@ export const useAssessmentResults = (id: string | null, enabled = true) =>
     enabled: !!id && enabled,
   });
 
+export const useFinding = (id: string | null) =>
+  useQuery({ queryKey: ['finding', id], queryFn: ({ signal }) => findingApi.get(id!, signal), enabled: !!id });
+
+export const useDuplicateOptions = (object: string | null) =>
+  useQuery({ queryKey: ['duplicate-options', object], queryFn: ({ signal }) => dataApi.duplicateOptions(object!, signal), enabled: !!object, staleTime: 5 * 60_000, retry: 1 });
+
+export const useFindDuplicates = () => useMutation({ mutationFn: dataApi.findDuplicates });
+
 export const useFindings = (id: string | null, enabled = true) =>
   useQuery({
     queryKey: qk.findings(id ?? ''),

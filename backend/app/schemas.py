@@ -614,3 +614,61 @@ class ConnectionSnapshot(ApiModel):
     records: list[OrgRecordCount] = []
     total_records: int | None = None
     object_count: int | None = None
+
+
+# ---- Duplicate finder ----
+
+class DuplicateField(ApiModel):
+    name: str
+    label: str
+    kind: str  # how it's compared (company, first, last, email, phone, street, zip, city, website, title, exact)
+    method: str  # the comparison in plain words
+
+
+class DuplicateOptions(ApiModel):
+    object: str
+    fields: list[DuplicateField]
+    standard_rule: str | None = None  # name of Salesforce's standard rule for this object, if any
+    standard_groups: list[list[str]] = []  # its equation: any group whose fields all match
+
+
+class DuplicateRequest(ApiModel):
+    object: str = Field(max_length=80)
+    standard: bool = False
+    fields: list[str] = Field(default_factory=list, max_length=6)
+
+
+class DuplicateRecord(ApiModel):
+    id: str | None = None
+    values: dict[str, object | None]
+
+
+class DuplicateGroup(ApiModel):
+    size: int
+    matched_on: str
+    records: list[DuplicateRecord]
+
+
+class DuplicateColumn(ApiModel):
+    name: str
+    label: str
+
+
+class DuplicateMethod(ApiModel):
+    field: str
+    method: str
+
+
+class DuplicateResult(ApiModel):
+    object: str
+    standard: bool
+    rule_name: str | None = None
+    rules: list[list[str]]
+    methods: list[DuplicateMethod]
+    columns: list[DuplicateColumn]
+    scanned: int
+    truncated: bool
+    total_groups: int
+    extra_copies: int
+    groups: list[DuplicateGroup]
+    record_url_prefix: str

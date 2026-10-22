@@ -1,11 +1,10 @@
 import { motion } from 'framer-motion';
 import { AlertOctagon, Ban, CircleAlert, CircleDashed, FilterX, ListChecks, OctagonAlert, Play, SearchX, ShieldAlert, TriangleAlert } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { errorMessage } from '@/api/client';
 import { useAssessment, useAssessmentResults, useAssessments, useCancelAssessment, useFindings } from '@/api/queries';
 import { ResolvedCard } from '@/components/findings/ResolvedCard';
-import { FindingDetailsPanel } from '@/components/findings/FindingDetailsPanel';
 import { FindingsTable } from '@/components/findings/FindingsTable';
 import { AssessmentStatusBadge, FINDING_STATUS_LABEL } from '@/components/ui/Badges';
 import { Button, LinkButton } from '@/components/ui/Button';
@@ -90,12 +89,14 @@ export default function ResultsPage() {
   const severity = params.get('severity') ?? 'all';
   const status = params.get('status') ?? 'all';
   const object = params.get('object') ?? 'all';
-  const [selectedId, setSelectedId] = useState<string | null>(params.get('finding'));
+  const navigate = useNavigate();
+  const openProblem = (id: string) => navigate(`/problems/${encodeURIComponent(id)}`);
 
+  // Old links (search, reports) point at ?finding=…; problems now have their own page.
   useEffect(() => {
     const id = params.get('finding');
-    if (id) setSelectedId(id);
-  }, [params]);
+    if (id) navigate(`/problems/${encodeURIComponent(id)}`, { replace: true });
+  }, [params, navigate]);
 
   const setParam = (key: string, value: string) =>
     setParams(
@@ -110,7 +111,6 @@ export default function ResultsPage() {
     );
 
   const all = useMemo(() => findingsQ.data ?? [], [findingsQ.data]);
-  const selected = all.find((f) => f.id === selectedId) ?? null;
 
   // Summary cards reflect every filter except severity, so they double as a severity switcher.
   const baseFiltered = useMemo(() => {
@@ -142,10 +142,6 @@ export default function ResultsPage() {
   const clear = () => {
     setQ('');
     setParams(assessmentId ? { assessment: assessmentId } : {}, { replace: true });
-  };
-  const closePanel = () => {
-    setSelectedId(null);
-    if (params.get('finding')) setParam('finding', '');
   };
 
   return (
@@ -344,7 +340,7 @@ export default function ResultsPage() {
                     }
                   />
                 ) : (
-                  <FindingsTable findings={filtered} onSelect={(f) => setSelectedId(f.id)} />
+                  <FindingsTable findings={filtered} onSelect={(f) => openProblem(f.id)} />
                 )}
               </div>
             </>
@@ -353,7 +349,6 @@ export default function ResultsPage() {
         </>
       )}
 
-      <FindingDetailsPanel finding={selected} onClose={closePanel} others={all} onOpenFinding={(f) => setSelectedId(f.id)} />
     </div>
   );
 }

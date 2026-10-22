@@ -9,6 +9,8 @@ import { AppLayout } from './components/layout/AppLayout';
 import { ThemeProvider, useTheme } from './context/ThemeContext';
 import { ToastProvider } from './context/ToastContext';
 import AdminPage from './pages/AdminPage';
+import MeasurePage from './pages/MeasurePage';
+import ProblemPage from './pages/ProblemPage';
 import AssessmentOverviewPage from './pages/AssessmentOverviewPage';
 import CategoryPage from './pages/CategoryPage';
 import ConnectionPage from './pages/ConnectionPage';
@@ -64,6 +66,8 @@ export default function App() {
                   <Route path="assessment/:categoryId" element={<CategoryPage />} />
                   <Route path="assessment/:categoryId/:areaId" element={<DiagnosticAreaPage />} />
                   <Route path="results" element={<ResultsPage />} />
+                  <Route path="problems/:findingId" element={<ProblemPage />} />
+                  <Route path="measures/:areaId" element={<MeasurePage />} />
                   <Route path="reports" element={<ReportsPage />} />
                   <Route path="history" element={<HistoryPage />} />
                   <Route path="admin" element={<AdminPage />} />

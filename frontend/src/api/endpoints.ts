@@ -1,5 +1,7 @@
 import type {
   AccessRequest,
+  DuplicateOptions,
+  DuplicateResult,
   ConnectionSnapshot,
   AccessRequestStatus,
   AdminOverview,
@@ -108,6 +110,10 @@ export const assessmentApi = {
 
 /** Read-only browsing of the connected Salesforce org. */
 export const dataApi = {
+  /** Fields that can be compared to find duplicates, and Salesforce's standard rule for the object. */
+  duplicateOptions: (object: string, signal?: AbortSignal) => http.get<DuplicateOptions>('/data/duplicates/options', { object }, signal),
+  /** Groups of duplicate records (read-only). */
+  findDuplicates: (body: { object: string; standard: boolean; fields: string[] }) => http.post<DuplicateResult>('/data/duplicates', body, 120_000),
   objects: (signal?: AbortSignal) => http.get<DataObject[]>('/data/objects', undefined, signal),
   object: (name: string, signal?: AbortSignal) => http.get<DataObjectDetail>(`/data/objects/${encodeURIComponent(name)}`, undefined, signal),
   records: (name: string, query: DataRecordQuery, cursor: string | null, signal?: AbortSignal) =>
@@ -141,6 +147,7 @@ export const dataApi = {
 };
 
 export const findingApi = {
+  get: (id: string, signal?: AbortSignal) => http.get<Finding>(`/findings/${encodeURIComponent(id)}`, undefined, signal),
   update: (id: string, body: UpdateFindingRequest) => http.patch<Finding>(`/findings/${encodeURIComponent(id)}`, body),
   /** The records a problem is about, live from Salesforce. */
   records: (id: string, cursor: string | null, signal?: AbortSignal) =>

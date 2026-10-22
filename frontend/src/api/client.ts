@@ -123,7 +123,7 @@ export async function request<T>(method: string, path: string, opts: RequestOpti
 
 export const http = {
   get: <T>(path: string, query?: Query, signal?: AbortSignal) => request<T>('GET', path, { query, signal }),
-  post: <T>(path: string, body?: unknown) => request<T>('POST', path, { body: body ?? {} }),
+  post: <T>(path: string, body?: unknown, timeoutMs?: number) => request<T>('POST', path, { body: body ?? {}, timeoutMs }),
   put: <T>(path: string, body: unknown) => request<T>('PUT', path, { body }),
   patch: <T>(path: string, body: unknown) => request<T>('PATCH', path, { body }),
   delete: <T>(path: string) => request<T>('DELETE', path),

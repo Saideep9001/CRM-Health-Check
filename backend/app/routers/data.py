@@ -9,10 +9,10 @@ from sqlalchemy.orm import Session
 from ..config import Settings
 from ..db import get_db
 from ..deps import http_dep, settings_dep
-from ..salesforce import explorer, finder, service
+from ..salesforce import duplicates, explorer, finder, service
 from ..salesforce.client import SalesforceClient
 from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
-from ..schemas import DataAnswer, DataAskRequest, DataObject, DataObjectDetail, DataRecord, DataRecordPage, DataRelatedPage, DataSearchGroup
+from ..schemas import DataAnswer, DataAskRequest, DuplicateOptions, DuplicateRequest, DuplicateResult, DataObject, DataObjectDetail, DataRecord, DataRecordPage, DataRelatedPage, DataSearchGroup
 
 router = APIRouter(prefix="/data", tags=["data"])
 
@@ -106,3 +106,27 @@ def related(name: str, record_id: str, relationship: str, db: Session = Depends(
 def refresh():
     """Forget cached object lists and field descriptions (e.g. after adding a custom field)."""
     explorer.clear_cache()
+
+
+# ---------------------------------------------------------------- duplicate finder
+
+@router.get("/duplicates/options", response_model=DuplicateOptions)
+def duplicate_options(object: str = Query(..., max_length=80), db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep), settings: Settings = Depends(settings_dep)):
+    """Fields that can be compared to find duplicates, and Salesforce's standard rule for the object (if any)."""
+    def load(sf: SalesforceClient):
+        fields = duplicates.matchable_fields(sf, object)
+        labels = {f["name"]: f["label"] for f in fields}
+        std = duplicates.STANDARD.get(object)
+        return DuplicateOptions(
+            object=object,
+            fields=[{**f, "method": duplicates.KINDS[f["kind"]][0]} for f in fields],
+            standard_rule=std["name"] if std else None,
+            standard_groups=[[labels.get(f, f) for f in g] for g in std["groups"]] if std else [],
+        )
+    return _run(db, http, settings, load)
+
+
+@router.post("/duplicates", response_model=DuplicateResult)
+def find_duplicates(body: DuplicateRequest, db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep), settings: Settings = Depends(settings_dep)):
+    """Groups of duplicate records, by Salesforce's standard rule or by fields the person chose (read-only)."""
+    return _run(db, http, settings, lambda sf: duplicates.find_duplicates(sf, body.object, body.fields, body.standard))

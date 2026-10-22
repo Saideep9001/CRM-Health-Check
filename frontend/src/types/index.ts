@@ -78,6 +78,39 @@ export interface SalesforceConnection {
 }
 
 /** Live, read-only facts about the connected org. */
+// ---- Duplicate finder ----
+
+export interface DuplicateField {
+  name: string;
+  label: string;
+  kind: string;
+  /** How it's compared, in plain words. */
+  method: string;
+}
+
+export interface DuplicateOptions {
+  object: string;
+  fields: DuplicateField[];
+  standardRule: string | null;
+  /** Salesforce's equation: records match when every field in any one group matches. */
+  standardGroups: string[][];
+}
+
+export interface DuplicateResult {
+  object: string;
+  standard: boolean;
+  ruleName: string | null;
+  rules: string[][];
+  methods: { field: string; method: string }[];
+  columns: { name: string; label: string }[];
+  scanned: number;
+  truncated: boolean;
+  totalGroups: number;
+  extraCopies: number;
+  groups: { size: number; matchedOn: string; records: { id: string | null; values: Record<string, unknown> }[] }[];
+  recordUrlPrefix: string;
+}
+
 export interface ConnectionSnapshot {
   asOf: string;
   /** How long one small Salesforce query took, in milliseconds. */

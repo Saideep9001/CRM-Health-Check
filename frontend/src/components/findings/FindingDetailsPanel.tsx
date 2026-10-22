@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { useAssessmentResults } from '@/api/queries';
 import { getArea } from '@/config/categories';
 import type { Finding } from '@/types';
@@ -9,12 +10,16 @@ export function FindingDetailsPanel({
   onClose,
   others,
   onOpenFinding,
+  asPage,
+  extra,
 }: {
   finding: Finding | null;
   onClose: () => void;
   /** Other problems to offer at the bottom (optional). */
   others?: Finding[];
   onOpenFinding?: (f: Finding) => void;
+  asPage?: boolean;
+  extra?: ReactNode;
 }) {
   const results = useAssessmentResults(finding?.assessmentId ?? null, !!finding);
   const areaRes = finding ? results.data?.areas.find((a) => a.areaId === finding.areaId) : undefined;
@@ -31,6 +36,8 @@ export function FindingDetailsPanel({
       others={(others ?? []).filter((f) => f.areaId === finding?.areaId && f.status !== 'resolved' && f.status !== 'accepted-risk')}
       onClose={onClose}
       onOpenFinding={onOpenFinding}
+      asPage={asPage}
+      extra={extra}
     />
   );
 }

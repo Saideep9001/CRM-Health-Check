@@ -1,5 +1,6 @@
 import type { InfiniteData, UseInfiniteQueryResult } from '@tanstack/react-query';
-import { Download, ExternalLink } from 'lucide-react';
+import { Download, ExternalLink, Search } from 'lucide-react';
+import { useState } from 'react';
 import { formatValue } from '@/components/data/format';
 import { Button } from '@/components/ui/Button';
 import { ErrorState, LoadingState } from '@/components/ui/States';
@@ -35,7 +36,12 @@ export function RecordsTable({
   const first = pages[0];
   // Duplicate groups: rows with the same cleaned value of the matched field, kept together.
   const groupCol = grouped ? first?.sortedBy ?? null : null;
-  const loaded = pages.flatMap((p) => p.records);
+  const [filter, setFilter] = useState('');
+  const term = filter.trim().toLowerCase();
+  // Filter the loaded records by any value (name, email, city, owner…).
+  const loaded = pages
+    .flatMap((p) => p.records)
+    .filter((r) => !term || [...Object.values(r.values), ...Object.values(r.refNames)].some((v) => v != null && String(v).toLowerCase().includes(term)));
   const rows = groupCol
     ? [...loaded].sort((a, b) => matchKey(a.values[groupCol], groupCol).localeCompare(matchKey(b.values[groupCol], groupCol)))
     : loaded;
@@ -63,6 +69,10 @@ export function RecordsTable({
     <section className="overflow-hidden rounded-xl border border-line">
       <header className="flex flex-wrap items-center gap-2 border-b border-line bg-muted/50 px-3 py-2">
         <span className="text-sm font-semibold">{title}</span>
+        <span className="relative ml-2 min-w-0 flex-1 sm:max-w-xs">
+          <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-subtle" />
+          <input className="input h-7 pl-7 text-xs" placeholder="Filter by any value…" value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Filter records" />
+        </span>
         {first?.totalSize != null && <span className="rounded-full bg-surface px-2 text-[11px] tabular-nums text-ink-muted">{fmtNumber(first.totalSize)}</span>}
         {csvUrl && (
           <a href={csvUrl} download className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-brand hover:underline" title="Download these records as a spreadsheet (up to 10,000)">
@@ -75,7 +85,7 @@ export function RecordsTable({
       ) : query.error ? (
         <ErrorState error={query.error} onRetry={() => query.refetch()} className="py-6" />
       ) : rows.length === 0 ? (
-        <p className="px-3 py-6 text-center text-xs text-ink-subtle">{empty}</p>
+        <p className="px-3 py-6 text-center text-xs text-ink-subtle">{term ? `No loaded records match “${filter}”.` : empty}</p>
       ) : (
         <>
           <div className="scrollbar-thin max-h-[26rem] overflow-auto">

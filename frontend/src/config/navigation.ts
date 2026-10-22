@@ -47,6 +47,15 @@ export function resolveRoute(pathname: string): { title: string; crumbs: Crumb[]
   const home: Crumb = { label: 'Overview', to: '/dashboard' };
   if (parts.length === 0 || parts[0] === 'dashboard') return { title: 'Overview', crumbs: [{ label: 'Overview' }] };
 
+  if (parts[0] === 'problems') return { title: 'Problem details', crumbs: [home, { label: 'My Results', to: '/results' }, { label: 'Problem' }] };
+  if (parts[0] === 'measures') {
+    const area = getArea(parts[1] ?? '');
+    const cat = area ? getCategory(area.categoryId) : undefined;
+    return {
+      title: 'Measure details',
+      crumbs: [home, ...(cat ? [{ label: cat.name, to: `/assessment/${cat.id}` }] : []), ...(area ? [{ label: `Area ${area.number}`, to: `/assessment/${area.categoryId}/${area.id}` }] : []), { label: 'Measure' }],
+    };
+  }
   const top = NAV_ITEMS.find((n) => n.to === `/${parts[0]}`);
   if (!top) return { title: 'Page not found', crumbs: [home, { label: 'Not found' }] };
 
