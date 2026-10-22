@@ -1,4 +1,4 @@
-import { Copy, Download, ExternalLink, Search, SlidersHorizontal, Sparkles } from 'lucide-react';
+import { ChevronRight, Copy, Download, ExternalLink, Search, SlidersHorizontal, Sparkles } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { errorMessage } from '@/api/client';
 import { useDuplicateOptions, useFindDuplicates } from '@/api/queries';
@@ -7,6 +7,7 @@ import { cx, fmtDate, fmtNumber } from '@/lib/format';
 import type { DuplicateResult } from '@/types';
 import { Button } from '../ui/Button';
 import { LoadingState } from '../ui/States';
+import { AnimatedNumber } from '../ui/Visuals';
 
 const STANDARD_OBJECTS = ['Account', 'Contact', 'Lead'];
 const MAX_FIELDS = 6;
@@ -25,6 +26,54 @@ function toCsv(r: DuplicateResult): string {
     g.records.map((rec) => [String(i + 1), String(g.size), g.matchedOn, ...r.columns.map((c) => show(rec.values[c.name])), rec.id ? `${r.recordUrlPrefix}${rec.id}` : ''].map(cell).join(',')),
   );
   return '﻿' + [head.map(cell).join(','), ...lines].join('\r\n');
+}
+
+/** The result as a sequence: checked → duplicates found → groups → kept → extra copies. */
+function DuplicateFlow({ result }: { result: DuplicateResult }) {
+  const what = objectLabel(result.object).toLowerCase();
+  const inGroups = result.extraCopies + result.totalGroups;
+  const pct = (n: number) => (result.scanned ? `${Math.round((100 * n) / result.scanned)}% of all ${what}` : '');
+  // How big the groups are (all groups are returned, so this is exact).
+  const sizes = result.groups.reduce<Record<string, number>>((m, g) => {
+    const k = g.size >= 5 ? '5+' : String(g.size);
+    m[k] = (m[k] ?? 0) + 1;
+    return m;
+  }, {});
+  const sizeText = ['2', '3', '4', '5+']
+    .filter((k) => sizes[k])
+    .map((k) => `${fmtNumber(sizes[k])} of ${k}`)
+    .join(' · ');
+
+  const steps: { n: number; label: string; value: number; plus?: boolean; hint: string; tone: string }[] = [
+    { n: 1, label: `${objectLabel(result.object)} checked`, value: result.scanned, plus: result.truncated, hint: 'Every record read from Salesforce', tone: 'text-ink' },
+    { n: 2, label: 'Duplicate records found', value: inGroups, hint: `${pct(inGroups)} match at least one other`, tone: 'text-warn' },
+    { n: 3, label: 'Duplicate groups', value: result.totalGroups, hint: sizeText ? `Group sizes: ${sizeText}` : 'Sets that match each other', tone: 'text-ink' },
+    { n: 4, label: 'Keep one per group', value: result.totalGroups, hint: 'The record you keep in each group', tone: 'text-good' },
+    { n: 5, label: 'Extra copies to merge', value: result.extraCopies, hint: `${fmtNumber(inGroups)} found − ${fmtNumber(result.totalGroups)} kept · ${pct(result.extraCopies)}`, tone: 'text-bad' },
+  ];
+
+  return (
+    <ol className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+      {steps.map((st, i) => (
+        <li key={st.n} className="relative flex">
+          <div className={cx('flex w-full flex-col rounded-xl border px-4 py-3', st.n === 5 ? 'border-bad/30 bg-bad-soft/40' : st.n === 2 ? 'border-warn/30 bg-warn-soft/40' : 'border-line bg-muted/40')}>
+            <span className="flex items-center gap-2 text-xs font-medium text-ink-muted">
+              <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-surface text-[11px] font-bold text-ink ring-1 ring-line">{st.n}</span>
+              {st.label}
+            </span>
+            <span className={cx('mt-1.5 text-2xl font-semibold tabular-nums tracking-tight', st.tone)}>
+              <AnimatedNumber value={st.value} />
+              {st.plus ? '+' : ''}
+            </span>
+            <span className="mt-0.5 text-[11px] leading-snug text-ink-muted">{st.hint}</span>
+          </div>
+          {i < steps.length - 1 && (
+            <ChevronRight className="absolute -right-2.5 top-1/2 z-10 hidden h-5 w-5 -translate-y-1/2 rounded-full bg-surface text-ink-subtle ring-1 ring-line lg:block" aria-hidden="true" />
+          )}
+        </li>
+      ))}
+    </ol>
+  );
 }
 
 /** Find duplicates by Salesforce's standard matching rule, or on fields the person chooses. Results are grouped. */
@@ -200,27 +249,7 @@ export function DuplicateFinder({ objects, initialObject }: { objects: string[];
         {/* results */}
         {result && (
           <div className="space-y-3">
-            <div className="grid gap-3 sm:grid-cols-3">
-              {[
-                ['Duplicate groups', fmtNumber(result.totalGroups), `Sets of ${objectLabel(result.object).toLowerCase()} that match each other`],
-                [
-                  'Extra copies',
-                  fmtNumber(result.extraCopies),
-                  `Records to merge away if you keep one per group (${fmtNumber(result.extraCopies + result.totalGroups)} in groups − ${fmtNumber(result.totalGroups)} kept)`,
-                ],
-                [
-                  `${objectLabel(result.object)} checked`,
-                  `${fmtNumber(result.scanned)}${result.truncated ? '+' : ''}`,
-                  result.scanned ? `${Math.round((100 * result.extraCopies) / result.scanned)}% of them are extra copies` : '',
-                ],
-              ].map(([k, v, hint]) => (
-                <div key={k} className="rounded-lg border border-line bg-muted/40 px-4 py-3">
-                  <p className="text-xs text-ink-subtle">{k}</p>
-                  <p className="text-xl font-semibold tabular-nums">{v}</p>
-                  {hint && <p className="mt-0.5 text-[11px] leading-snug text-ink-muted">{hint}</p>}
-                </div>
-              ))}
-            </div>
+            <DuplicateFlow result={result} />
             <p className="text-xs text-ink-muted">
               Matched on: {result.rules.map((g) => g.join(' + ')).join('  ·  or  ·  ')}.
               {result.truncated && ' Only the first 20,000 records were read.'}
