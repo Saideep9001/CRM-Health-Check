@@ -201,13 +201,22 @@ export function DuplicateFinder({ objects, initialObject }: { objects: string[];
           <div className="space-y-3">
             <div className="grid gap-3 sm:grid-cols-3">
               {[
-                ['Duplicate groups', fmtNumber(result.totalGroups)],
-                ['Extra copies', fmtNumber(result.extraCopies)],
-                [`${objectLabel(result.object)} checked`, `${fmtNumber(result.scanned)}${result.truncated ? '+' : ''}`],
-              ].map(([k, v]) => (
+                ['Duplicate groups', fmtNumber(result.totalGroups), `Sets of ${objectLabel(result.object).toLowerCase()} that match each other`],
+                [
+                  'Extra copies',
+                  fmtNumber(result.extraCopies),
+                  `Records to merge away if you keep one per group (${fmtNumber(result.extraCopies + result.totalGroups)} in groups − ${fmtNumber(result.totalGroups)} kept)`,
+                ],
+                [
+                  `${objectLabel(result.object)} checked`,
+                  `${fmtNumber(result.scanned)}${result.truncated ? '+' : ''}`,
+                  result.scanned ? `${Math.round((100 * result.extraCopies) / result.scanned)}% of them are extra copies` : '',
+                ],
+              ].map(([k, v, hint]) => (
                 <div key={k} className="rounded-lg border border-line bg-muted/40 px-4 py-3">
                   <p className="text-xs text-ink-subtle">{k}</p>
                   <p className="text-xl font-semibold tabular-nums">{v}</p>
+                  {hint && <p className="mt-0.5 text-[11px] leading-snug text-ink-muted">{hint}</p>}
                 </div>
               ))}
             </div>
