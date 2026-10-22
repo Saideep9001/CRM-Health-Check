@@ -1,7 +1,7 @@
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAssessmentResults, useFinding, useFindings } from '@/api/queries';
 import { measureFor } from '@/components/findings/DetailsPanel';
-import { DuplicateFinder } from '@/components/findings/DuplicateFinder';
+import { DuplicateFinder, finderFor } from '@/components/findings/DuplicateFinder';
 import { FindingDetailsPanel } from '@/components/findings/FindingDetailsPanel';
 import { ErrorState, LoadingState } from '@/components/ui/States';
 
@@ -14,7 +14,9 @@ export default function ProblemPage() {
   const results = useAssessmentResults(f?.assessmentId ?? null, !!f);
   const all = useFindings(f?.assessmentId ?? null, !!f);
   const indicator = f ? measureFor(f, results.data?.areas.find((a) => a.areaId === f.areaId)?.indicators ?? []) : null;
-  const objects = indicator?.recordObjects?.length ? indicator.recordObjects : f?.objectName ? [f.objectName] : [];
+  // The problem's own object (a problem is about one object), as the check looked at it.
+  const objects = f?.objectName ? [f.objectName] : indicator?.recordObjects ?? [];
+  const finder = f ? finderFor(`${f.name} ${indicator?.label ?? ''}`, indicator?.criteria) : null;
 
   if (finding.isLoading) return <LoadingState rows={6} label="Loading the problem…" />;
   if (finding.error || !f) return <ErrorState error={finding.error} onRetry={() => finding.refetch()} />;
@@ -26,7 +28,7 @@ export default function ProblemPage() {
       others={all.data ?? []}
       onClose={() => (window.history.length > 1 ? navigate(-1) : navigate('/results'))}
       onOpenFinding={(o) => navigate(`/problems/${encodeURIComponent(o.id)}`)}
-      extra={objects.length > 0 && <DuplicateFinder objects={objects} initialObject={f.objectName ?? objects[0]} />}
+      extra={objects.length > 0 && finder && <DuplicateFinder key={finder.kind} objects={objects} initialObject={f.objectName ?? objects[0]} kind={finder.kind} fieldsText={finder.fieldsText} />}
     />
   );
 }

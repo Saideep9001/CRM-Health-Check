@@ -1,5 +1,5 @@
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { DuplicateFinder } from '@/components/findings/DuplicateFinder';
+import { DuplicateFinder, finderFor } from '@/components/findings/DuplicateFinder';
 import { IndicatorDetailsPanel } from '@/components/findings/IndicatorDetailsPanel';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/States';
 import { getArea } from '@/config/categories';
@@ -27,6 +27,7 @@ export default function MeasurePage() {
     return <EmptyState className="py-16" title="This measure isn’t in your latest results" description="Run a health check on this area to see it." />;
   }
   const objects = indicator.recordObjects ?? [];
+  const finder = finderFor(indicator.label, indicator.criteria);
 
   return (
     <IndicatorDetailsPanel
@@ -40,7 +41,7 @@ export default function MeasurePage() {
       onClose={() => (window.history.length > 1 ? navigate(-1) : navigate(`/assessment/${area.categoryId}/${area.id}`))}
       onCheckAgain={() => navigate(`/assessment/${area.categoryId}/${area.id}`)}
       onOpenFinding={(f) => navigate(`/problems/${encodeURIComponent(f.id)}`)}
-      extra={objects.length > 0 && <DuplicateFinder objects={objects} initialObject={object ?? objects[0]} />}
+      extra={objects.length > 0 && finder && <DuplicateFinder key={finder.kind} objects={objects} initialObject={object ?? objects[0]} kind={finder.kind} fieldsText={finder.fieldsText} />}
     />
   );
 }

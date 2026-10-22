@@ -10,7 +10,16 @@ import { LoadingState } from '../ui/States';
 import { AnimatedNumber } from '../ui/Visuals';
 import { EmptyFieldsFinder } from './EmptyFieldsFinder';
 
-const COMMON_OBJECTS = ['Account', 'Contact', 'Lead', 'Opportunity'];
+export type FinderKind = 'duplicates' | 'empty';
+
+/** Which finder fits a measure: duplicates for duplicate checks, empty fields for missing-value checks, none otherwise. */
+export function finderFor(name: string, criteria: [string, string][] = []): { kind: FinderKind; fieldsText: string } | null {
+  const fieldsText = criteria.find(([k]) => k === 'Fields checked')?.[1] ?? '';
+  if (/duplicate/i.test(name)) return { kind: 'duplicates', fieldsText };
+  if (criteria.some(([k]) => k === 'Counts as missing' || k === 'Incomplete lead') || /missing|without|incomplete|completeness|empty|blank/i.test(name))
+    return { kind: 'empty', fieldsText };
+  return null;
+}
 const MAX_FIELDS = 6;
 
 function show(v: unknown): string {
@@ -77,12 +86,13 @@ function DuplicateFlow({ result }: { result: DuplicateResult }) {
   );
 }
 
-/** Check an object's data: duplicates on the fields the person chooses, or records with empty fields. */
-export function DuplicateFinder({ objects, initialObject }: { objects: string[]; initialObject?: string | null }) {
-  const choices = useMemo(() => Array.from(new Set([...(initialObject ? [initialObject] : []), ...objects, ...COMMON_OBJECTS])), [objects, initialObject]);
+/** Check the data the health check looked at: duplicates on chosen fields, or records with empty fields.
+ *  Only the objects that were checked are offered, and the finder matches the kind of problem. */
+export function DuplicateFinder({ objects, initialObject, kind, fieldsText = '' }: { objects: string[]; initialObject?: string | null; kind: FinderKind; fieldsText?: string }) {
+  const choices = useMemo(() => Array.from(new Set([...(initialObject ? [initialObject] : []), ...objects])), [objects, initialObject]);
   const [object, setObject] = useState(initialObject ?? choices[0]);
-  const options = useDuplicateOptions(object);
-  const [tab, setTab] = useState<'duplicates' | 'empty'>('duplicates');
+  const options = useDuplicateOptions(kind === 'duplicates' ? object : null);
+  const tab = kind;
   const [chosen, setChosen] = useState<string[]>([]);
   const [fieldQuery, setFieldQuery] = useState('');
   const [resultQuery, setResultQuery] = useState('');
@@ -123,42 +133,37 @@ export function DuplicateFinder({ objects, initialObject }: { objects: string[];
     <section className="mb-7 overflow-hidden rounded-xl border border-brand/25">
       <header className="flex flex-wrap items-center gap-3 border-b border-brand/15 bg-brand-soft/50 px-5 py-4">
         <span className="grid h-9 w-9 place-items-center rounded-lg bg-brand text-white">
-          <Copy className="h-4 w-4" />
+          {kind === 'duplicates' ? <Copy className="h-4 w-4" /> : <CircleOff className="h-4 w-4" />}
         </span>
         <div className="min-w-0 flex-1">
-          <h3 className="font-semibold">Check your data</h3>
-          <p className="text-xs text-ink-muted">Find duplicates on the fields you choose, or records where chosen fields are empty. Read-only — nothing is changed.</p>
+          <h3 className="font-semibold">{kind === 'duplicates' ? 'Find duplicates' : 'Find empty fields'}</h3>
+          <p className="text-xs text-ink-muted">
+            {kind === 'duplicates' ? 'Choose the fields that must match.' : 'Choose fields and see the records where they’re empty.'} Only the objects this check
+            looked at · read-only, nothing is changed.
+          </p>
         </div>
-        <label className="flex items-center gap-2 text-sm">
-          <span className="text-ink-muted">Object</span>
-          <select className="input h-9 w-auto py-0" value={object} onChange={(e) => setObject(e.target.value)}>
+        {choices.length > 1 ? (
+          <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Object">
             {choices.map((o) => (
-              <option key={o} value={o}>{objectLabel(o)}</option>
+              <button
+                key={o}
+                type="button"
+                role="tab"
+                aria-selected={object === o}
+                onClick={() => setObject(o)}
+                className={cx('rounded-full border px-3 py-1 text-xs font-medium transition', object === o ? 'border-brand bg-brand text-white' : 'border-line bg-surface hover:border-brand/40')}
+              >
+                {objectLabel(o)}
+              </button>
             ))}
-          </select>
-        </label>
+          </div>
+        ) : (
+          <span className="rounded-full border border-line bg-surface px-3 py-1 text-xs font-medium">{objectLabel(object)}</span>
+        )}
       </header>
 
       <div className="space-y-4 p-5">
-        <div className="flex flex-wrap gap-2" role="tablist">
-          {([
-            ['duplicates', 'Duplicates', Copy],
-            ['empty', 'Empty fields', CircleOff],
-          ] as const).map(([t, text, Icon]) => (
-            <button
-              key={t}
-              type="button"
-              role="tab"
-              aria-selected={tab === t}
-              onClick={() => setTab(t)}
-              className={cx('inline-flex items-center gap-2 rounded-lg border px-3.5 py-2 text-sm font-medium transition', tab === t ? 'border-brand bg-brand text-white' : 'border-line hover:border-brand/40')}
-            >
-              <Icon className="h-4 w-4" /> {text}
-            </button>
-          ))}
-        </div>
-
-        {tab === 'empty' && <EmptyFieldsFinder object={object} />}
+        {tab === 'empty' && <EmptyFieldsFinder object={object} fieldsText={fieldsText} />}
 
         {tab === 'duplicates' && (
           <>

@@ -128,6 +128,10 @@ export function RunCheckPanel({
   const orgObjects = useDataObjects(connected && objectPicker && checksObjects);
   const labels = useMemo(() => new Map((orgObjects.data ?? []).map((o) => [o.name, o.labelPlural])), [orgObjects.data]);
   const isDefault = objects.length === DEFAULT_DQ_OBJECTS.length && DEFAULT_DQ_OBJECTS.every((o) => objects.includes(o));
+  // The objects the last finished check of these areas looked at; results on this page come from that check.
+  const lastRun = list.data?.find((a) => a.status === 'completed' && a.scope.areaIds?.some((id) => runnable.includes(id))) ?? null;
+  const lastObjects = lastRun ? (lastRun.scope.objects?.length ? lastRun.scope.objects : DEFAULT_DQ_OBJECTS) : null;
+  const selectionPending = !!lastObjects && (lastObjects.length !== objects.length || objects.some((o) => !lastObjects.includes(o)));
 
   const start = () => {
     if (!conn.data?.id || runnable.length === 0) return;
@@ -261,6 +265,12 @@ export function RunCheckPanel({
           max={MAX_OBJECTS}
           allowEmpty={false}
         />
+      )}
+      {checked && selectionPending && !running && (
+        <p className="basis-full pt-1 text-xs text-warn">
+          Results below are from the last check, which looked at {lastObjects!.map((o) => labels.get(o) ?? o).join(', ')}. Click{' '}
+          <span className="font-semibold">Check again</span> to check only the objects chosen here.
+        </p>
       )}
     </div>
   );

@@ -13,8 +13,16 @@ import { AnimatedNumber } from '../ui/Visuals';
 
 const MAX_FIELDS = 10;
 
+/** Fields named in the check's "Fields checked" text (by label or API name), for this object only. */
+function fieldsNamed(text: string, object: string, fields: { name: string; label: string }[]): string[] {
+  const own = text.split(';').find((part) => part.toLowerCase().trim().startsWith(`${objectLabel(object).toLowerCase()}:`));
+  const hay = ` ${(own ?? text).toLowerCase().replace(/[^a-z0-9_]+/g, ' ')} `;
+  const has = (s: string) => hay.includes(` ${s.toLowerCase().replace(/[^a-z0-9_]+/g, ' ').trim()} `);
+  return fields.filter((f) => has(f.label) || has(f.name)).map((f) => f.name).slice(0, MAX_FIELDS);
+}
+
 /** Records whose chosen fields are empty — any of them, or all of them. */
-export function EmptyFieldsFinder({ object }: { object: string }) {
+export function EmptyFieldsFinder({ object, fieldsText = '' }: { object: string; fieldsText?: string }) {
   const options = useEmptyOptions(object);
   const [chosen, setChosen] = useState<string[]>([]);
   const [match, setMatch] = useState<'any' | 'all'>('any');
@@ -24,13 +32,16 @@ export function EmptyFieldsFinder({ object }: { object: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
 
+  const fields = options.data ?? [];
+
+  // Start from the fields this check looked at (e.g. Email for "without an email").
   useEffect(() => {
-    setChosen([]);
+    setChosen(fieldsNamed(fieldsText, object, fields));
     setResult(null);
     setError(null);
-  }, [object]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [object, fieldsText, options.data]);
 
-  const fields = options.data ?? [];
   const fieldList = fields.filter((f) => !fieldQuery || `${f.label} ${f.name}`.toLowerCase().includes(fieldQuery.toLowerCase()));
   const label = (name: string) => fields.find((f) => f.name === name)?.label ?? name;
 
