@@ -672,3 +672,25 @@ class DuplicateResult(ApiModel):
     extra_copies: int
     groups: list[DuplicateGroup]
     record_url_prefix: str
+
+
+# ---- Empty fields ----
+
+class EmptyField(ApiModel):
+    name: str
+    label: str
+    type: str
+
+
+class EmptyRequest(ApiModel):
+    object: str = Field(max_length=80)
+    fields: list[str] = Field(default_factory=list, max_length=10)
+    match: Literal["any", "all"] = "any"
+    cursor: str | None = Field(None, max_length=200)
+
+
+class EmptyResult(FindingRecordsPage):
+    object_total: int | None = None  # all records of the object (first page only)
+    fields: list[str] = []
+    field_labels: list[str] = []
+    match: str = "any"

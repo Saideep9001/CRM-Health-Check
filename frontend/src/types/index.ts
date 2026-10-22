@@ -111,6 +111,15 @@ export interface DuplicateResult {
   recordUrlPrefix: string;
 }
 
+/** Records whose chosen fields are empty. */
+export interface EmptyResult extends FindingRecordsPage {
+  /** All records of the object (first page only). */
+  objectTotal: number | null;
+  fields: string[];
+  fieldLabels: string[];
+  match: 'any' | 'all';
+}
+
 export interface ConnectionSnapshot {
   asOf: string;
   /** How long one small Salesforce query took, in milliseconds. */

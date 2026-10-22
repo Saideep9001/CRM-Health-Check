@@ -9,10 +9,10 @@ from sqlalchemy.orm import Session
 from ..config import Settings
 from ..db import get_db
 from ..deps import http_dep, settings_dep
-from ..salesforce import duplicates, explorer, finder, service
+from ..salesforce import duplicates, empty_fields, explorer, finder, service
 from ..salesforce.client import SalesforceClient
 from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
-from ..schemas import DataAnswer, DataAskRequest, DuplicateOptions, DuplicateRequest, DuplicateResult, DataObject, DataObjectDetail, DataRecord, DataRecordPage, DataRelatedPage, DataSearchGroup
+from ..schemas import DataAnswer, DataAskRequest, DuplicateOptions, DuplicateRequest, DuplicateResult, EmptyField, EmptyRequest, EmptyResult, DataObject, DataObjectDetail, DataRecord, DataRecordPage, DataRelatedPage, DataSearchGroup
 
 router = APIRouter(prefix="/data", tags=["data"])
 
@@ -130,3 +130,49 @@ def duplicate_options(object: str = Query(..., max_length=80), db: Session = Dep
 def find_duplicates(body: DuplicateRequest, db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep), settings: Settings = Depends(settings_dep)):
     """Groups of duplicate records, by Salesforce's standard rule or by fields the person chose (read-only)."""
     return _run(db, http, settings, lambda sf: duplicates.find_duplicates(sf, body.object, body.fields, body.standard))
+
+
+# ---------------------------------------------------------------- empty fields
+
+@router.get("/empty/options", response_model=list[EmptyField])
+def empty_options(object: str = Query(..., max_length=80), db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep), settings: Settings = Depends(settings_dep)):
+    """Fields that can be checked for being empty."""
+    return _run(db, http, settings, lambda sf: empty_fields.empty_options(sf, object))
+
+
+@router.post("/empty", response_model=EmptyResult)
+def find_empty(body: EmptyRequest, db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep), settings: Settings = Depends(settings_dep)):
+    """Records whose chosen fields are empty (any or all of them), 200 per page (read-only)."""
+    return _run(db, http, settings, lambda sf: empty_fields.find_empty(sf, body.object, body.fields, body.match, body.cursor))
+
+
+@router.get("/empty.csv")
+def empty_csv(object: str = Query(..., max_length=80), fields: str = Query(..., max_length=2000), match: Literal["any", "all"] = "any",
+              db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep), settings: Settings = Depends(settings_dep)):
+    """Download the records with empty fields (up to 10,000) as a spreadsheet."""
+    import csv
+    import io
+
+    from fastapi import Response
+
+    def collect(sf: SalesforceClient):
+        where, chosen = empty_fields.where_empty(sf, object, fields.split(","), match)
+        order = explorer._name_field(explorer._describe(sf, object))
+        page = explorer.records_matching(sf, object, where, page_size=2000, columns=chosen, order=order)
+        rows = list(page["records"])
+        while page["next_cursor"] and len(rows) < 10_000:
+            page = explorer.records_matching(sf, object, where, page["next_cursor"], page_size=2000, columns=chosen, order=order)
+            rows += page["records"]
+        return page["columns"], rows[:10_000], page["record_url_prefix"]
+
+    columns, rows, prefix = _run(db, http, settings, collect)
+    out = io.StringIO()
+    out.write("\ufeff")  # so Excel opens accents correctly
+    w = csv.writer(out)
+    w.writerow([c["label"] for c in columns] + ["Salesforce link"])
+    for r in rows:
+        vals = r["values"]
+        w.writerow([r["ref_names"].get(c["name"]) or ("" if vals.get(c["name"]) is None else vals.get(c["name"])) for c in columns]
+                   + [f"{prefix}{r['id']}" if r.get("id") else ""])
+    return Response(out.getvalue(), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="empty-{object.lower()}-fields.csv"'})

@@ -1,4 +1,4 @@
-import { ChevronRight, Copy, Download, ExternalLink, Search, SlidersHorizontal, Sparkles } from 'lucide-react';
+import { ChevronRight, CircleOff, Copy, Download, ExternalLink, Search } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { errorMessage } from '@/api/client';
 import { useDuplicateOptions, useFindDuplicates } from '@/api/queries';
@@ -8,8 +8,9 @@ import type { DuplicateResult } from '@/types';
 import { Button } from '../ui/Button';
 import { LoadingState } from '../ui/States';
 import { AnimatedNumber } from '../ui/Visuals';
+import { EmptyFieldsFinder } from './EmptyFieldsFinder';
 
-const STANDARD_OBJECTS = ['Account', 'Contact', 'Lead'];
+const COMMON_OBJECTS = ['Account', 'Contact', 'Lead', 'Opportunity'];
 const MAX_FIELDS = 6;
 
 function show(v: unknown): string {
@@ -76,13 +77,12 @@ function DuplicateFlow({ result }: { result: DuplicateResult }) {
   );
 }
 
-/** Find duplicates by Salesforce's standard matching rule, or on fields the person chooses. Results are grouped. */
+/** Check an object's data: duplicates on the fields the person chooses, or records with empty fields. */
 export function DuplicateFinder({ objects, initialObject }: { objects: string[]; initialObject?: string | null }) {
-  const choices = useMemo(() => Array.from(new Set([...(initialObject ? [initialObject] : []), ...objects, ...STANDARD_OBJECTS])), [objects, initialObject]);
+  const choices = useMemo(() => Array.from(new Set([...(initialObject ? [initialObject] : []), ...objects, ...COMMON_OBJECTS])), [objects, initialObject]);
   const [object, setObject] = useState(initialObject ?? choices[0]);
   const options = useDuplicateOptions(object);
-  const hasStandard = !!options.data?.standardRule;
-  const [mode, setMode] = useState<'standard' | 'fields'>('standard');
+  const [tab, setTab] = useState<'duplicates' | 'empty'>('duplicates');
   const [chosen, setChosen] = useState<string[]>([]);
   const [fieldQuery, setFieldQuery] = useState('');
   const [resultQuery, setResultQuery] = useState('');
@@ -99,14 +99,11 @@ export function DuplicateFinder({ objects, initialObject }: { objects: string[];
     run.reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [object]);
-  useEffect(() => {
-    if (options.data) setMode(options.data.standardRule ? 'standard' : 'fields');
-  }, [options.data]);
 
   const fields = options.data?.fields ?? [];
   const fieldList = fields.filter((f) => !fieldQuery || `${f.label} ${f.name}`.toLowerCase().includes(fieldQuery.toLowerCase()));
   const label = (name: string) => fields.find((f) => f.name === name)?.label ?? name;
-  const canRun = mode === 'standard' ? hasStandard : chosen.length > 0;
+  const canRun = chosen.length > 0;
 
   const result = run.data;
   const term = resultQuery.trim().toLowerCase();
@@ -129,8 +126,8 @@ export function DuplicateFinder({ objects, initialObject }: { objects: string[];
           <Copy className="h-4 w-4" />
         </span>
         <div className="min-w-0 flex-1">
-          <h3 className="font-semibold">Find duplicates</h3>
-          <p className="text-xs text-ink-muted">Use Salesforce’s standard matching rule, or choose exactly which fields must match. Read-only — nothing is changed.</p>
+          <h3 className="font-semibold">Check your data</h3>
+          <p className="text-xs text-ink-muted">Find duplicates on the fields you choose, or records where chosen fields are empty. Read-only — nothing is changed.</p>
         </div>
         <label className="flex items-center gap-2 text-sm">
           <span className="text-ink-muted">Object</span>
@@ -143,50 +140,35 @@ export function DuplicateFinder({ objects, initialObject }: { objects: string[];
       </header>
 
       <div className="space-y-4 p-5">
+        <div className="flex flex-wrap gap-2" role="tablist">
+          {([
+            ['duplicates', 'Duplicates', Copy],
+            ['empty', 'Empty fields', CircleOff],
+          ] as const).map(([t, text, Icon]) => (
+            <button
+              key={t}
+              type="button"
+              role="tab"
+              aria-selected={tab === t}
+              onClick={() => setTab(t)}
+              className={cx('inline-flex items-center gap-2 rounded-lg border px-3.5 py-2 text-sm font-medium transition', tab === t ? 'border-brand bg-brand text-white' : 'border-line hover:border-brand/40')}
+            >
+              <Icon className="h-4 w-4" /> {text}
+            </button>
+          ))}
+        </div>
+
+        {tab === 'empty' && <EmptyFieldsFinder object={object} />}
+
+        {tab === 'duplicates' && (
+          <>
         {options.isLoading ? (
           <LoadingState rows={3} label="Reading this object’s fields…" />
         ) : options.error ? (
           <p className="rounded-lg bg-warn-soft px-3 py-2 text-sm text-warn">{errorMessage(options.error)}</p>
         ) : (
           <>
-            {/* how to match */}
-            <div className="flex flex-wrap gap-2">
-              {([
-                ['standard', 'Salesforce standard rule', Sparkles, !hasStandard],
-                ['fields', 'Choose fields', SlidersHorizontal, false],
-              ] as const).map(([m, text, Icon, disabled]) => (
-                <button
-                  key={m}
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => setMode(m)}
-                  title={disabled ? 'Salesforce has a standard rule only for Accounts, Contacts and Leads' : undefined}
-                  className={cx(
-                    'inline-flex items-center gap-2 rounded-lg border px-3.5 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-40',
-                    mode === m ? 'border-brand bg-brand text-white' : 'border-line hover:border-brand/40',
-                  )}
-                >
-                  <Icon className="h-4 w-4" /> {text}
-                </button>
-              ))}
-            </div>
-
-            {mode === 'standard' && options.data?.standardRule && (
-              <div className="rounded-lg border border-line bg-muted/40 p-4 text-sm">
-                <p className="font-medium">{options.data.standardRule}</p>
-                <p className="mt-1 text-xs text-ink-muted">Two records are duplicates when every field in <strong>any one</strong> of these groups matches:</p>
-                <ul className="mt-2 flex flex-wrap gap-1.5">
-                  {options.data.standardGroups.map((g, i) => (
-                    <li key={i} className="rounded-full bg-surface px-2.5 py-1 text-xs ring-1 ring-line">
-                      {g.join(' + ')}
-                    </li>
-                  ))}
-                </ul>
-                <p className="mt-2 text-[11px] text-ink-subtle">Blank fields never match. Names allow typos, nicknames and first/last swapped; phones, streets and ZIPs are compared in parts — as Salesforce does.</p>
-              </div>
-            )}
-
-            {mode === 'fields' && (
+            {(
               <div className="rounded-lg border border-line p-4">
                 <div className="mb-3 flex flex-wrap items-center gap-3">
                   <p className="min-w-0 flex-1 text-sm">
@@ -237,7 +219,7 @@ export function DuplicateFinder({ objects, initialObject }: { objects: string[];
             )}
 
             <div className="flex flex-wrap items-center gap-3">
-              <Button variant="primary" icon={<Search className="h-4 w-4" />} disabled={!canRun || run.isPending} onClick={() => run.mutate({ object, standard: mode === 'standard', fields: chosen })}>
+              <Button variant="primary" icon={<Search className="h-4 w-4" />} disabled={!canRun || run.isPending} onClick={() => run.mutate({ object, standard: false, fields: chosen })}>
                 {run.isPending ? 'Looking for duplicates…' : `Find duplicate ${objectLabel(object).toLowerCase()}`}
               </Button>
               {run.isPending && <span className="text-xs text-ink-muted">Reading up to 20,000 {objectLabel(object).toLowerCase()} from Salesforce…</span>}
@@ -328,6 +310,8 @@ export function DuplicateFinder({ objects, initialObject }: { objects: string[];
               </div>
             )}
           </div>
+        )}
+          </>
         )}
       </div>
     </section>

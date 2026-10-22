@@ -1,5 +1,6 @@
 import type {
   AccessRequest,
+  EmptyResult,
   DuplicateOptions,
   DuplicateResult,
   ConnectionSnapshot,
@@ -110,6 +111,12 @@ export const assessmentApi = {
 
 /** Read-only browsing of the connected Salesforce org. */
 export const dataApi = {
+  /** Fields that can be checked for being empty. */
+  emptyOptions: (object: string, signal?: AbortSignal) => http.get<{ name: string; label: string; type: string }[]>('/data/empty/options', { object }, signal),
+  /** Records whose chosen fields are empty (any or all), 200 per page. */
+  findEmpty: (body: { object: string; fields: string[]; match: 'any' | 'all'; cursor?: string }) => http.post<EmptyResult>('/data/empty', body, 60_000),
+  emptyCsvUrl: (object: string, fields: string[], match: 'any' | 'all') =>
+    `${API_BASE_URL}/data/empty.csv?${new URLSearchParams({ object, fields: fields.join(','), match })}`,
   /** Fields that can be compared to find duplicates, and Salesforce's standard rule for the object. */
   duplicateOptions: (object: string, signal?: AbortSignal) => http.get<DuplicateOptions>('/data/duplicates/options', { object }, signal),
   /** Groups of duplicate records (read-only). */
