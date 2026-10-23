@@ -147,7 +147,8 @@ def _link_measures(metrics: list, findings: list) -> None:
 
         def fit(m) -> tuple:
             m_objs = {r.get("object") for r in (m.records or [])}
-            return (m.label == f.name, bool(objs & m_objs), m.score is not None)
+            same_records = any(r.get("object") == f.records_object and r.get("where") == f.records_where for r in (m.records or []))
+            return (m.label == f.name, same_records, bool(objs & m_objs), m.score is not None)
 
         f.measure = max(metrics, key=fit).label
 

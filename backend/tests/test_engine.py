@@ -20,7 +20,8 @@ def _f(name, **kw):
 
 
 DESCRIBE = {
-    "Account": [_f("Id", type="id"), _f("Name"), _f("Website", type="url"), _f("Phone"), _f("Industry"), _f("Type"), _f("BillingCountry"), _f("BillingState"),
+    "Account": [_f("Id", type="id"), _f("Name"), _f("Website", type="url"), _f("Phone", type="phone"), _f("Industry"), _f("Type"), _f("BillingCountry"),
+                _f("BillingState"), _f("BillingCity"),
                 _f("NumberOfEmployees", type="int"), _f("LastModifiedDate", type="datetime"),
                 _f("Used__c", custom=True), _f("Region_Code__c", custom=True), _f("Legacy_Notes_old__c", custom=True, label="Legacy Notes")],
     "Contact": [_f("Id", type="id"), _f("Email", type="email"), _f("Phone"), _f("MobilePhone"), _f("Title"), _f("AccountId", type="reference"),
@@ -38,15 +39,19 @@ DUPES = {("Account", "Name"): [("Acme", 3), ("Globex", 2)], ("Account", "Website
          ("Invoice__c", "Name"): [("INV-1", 4)]}
 GROUPS = {("Account", "BillingCountry"): [("USA", 50), ("United States", 10), ("US", 5), ("Canada", 8)]}
 MISSING = {("Contact", "Email"): 40, ("Lead", "Email"): 10}
-# Accounts as typed by people: "Acme" three ways (2 extra), "Globex" twice (1 extra) = 3 extra by name.
+# Accounts as typed by people. Duplicates (website, phone and address fields that are filled on both must match):
+# 1 + 2 (same site and phone, written differently) and 4 + 5 (same site and city) = 2 extra. 3 has the Acme site but
+# a different state spelling, so it isn't a copy. Odd formats: 2's website and phone, 3's state ("California" vs "CA").
 ACCOUNT_ROWS = [
-    {"Id": "001000000000001AAA", "Name": "Acme, Inc.", "Website": "https://www.acme.com/"},
-    {"Id": "001000000000002AAA", "Name": "ACME Inc", "Website": "acme.com"},
-    {"Id": "001000000000003AAA", "Name": "The Acme Company LLC", "Website": None},
-    {"Id": "001000000000004AAA", "Name": "Globex", "Website": "globex.io"},
-    {"Id": "001000000000005AAA", "Name": "Globex Corp.", "Website": None},
-    {"Id": "001000000000006AAA", "Name": "Initech", "Website": "initech.com"},
+    {"Id": "001000000000001AAA", "Name": "Acme, Inc.", "Website": "acme.com", "Phone": "415-555-1234", "BillingCity": "San Francisco", "BillingState": "CA"},
+    {"Id": "001000000000002AAA", "Name": "ACME Inc", "Website": "https://www.acme.com/", "Phone": "(415) 555-1234", "BillingCity": "San Francisco", "BillingState": "CA"},
+    {"Id": "001000000000003AAA", "Name": "The Acme Company LLC", "Website": "acme.com", "Phone": None, "BillingCity": "San Francisco", "BillingState": "California"},
+    {"Id": "001000000000004AAA", "Name": "Globex", "Website": "globex.io", "Phone": "212-555-0000", "BillingCity": "New York", "BillingState": "NY"},
+    {"Id": "001000000000005AAA", "Name": "Globex Corp.", "Website": "globex.io", "Phone": None, "BillingCity": "New York", "BillingState": None},
+    {"Id": "001000000000006AAA", "Name": "Initech", "Website": "initech.com", "Phone": "312-555-9999", "BillingCity": "Chicago", "BillingState": "IL"},
 ]
+INVOICE_ROWS = [{"Id": f"a00000000000000{i}AA", "Name": "INV-1", "Status__c": "Open"} for i in range(4)] + [
+    {"Id": "a000000000000009AA", "Name": "INV-2", "Status__c": "Open"}]
 USAGE = {"Used__c": 80, "Region_Code__c": 0}
 
 
@@ -87,8 +92,9 @@ class FakeOrg(FakeSalesforce):
             fields = re.findall(r"COUNT\((\w+)\) f\d+", q)
             rec = {f"f{n}": (USAGE[f] if f in USAGE else TOTALS[obj] - MISSING.get((obj, f), 10)) for n, f in enumerate(fields)}
             return {"totalSize": 1, "done": True, "records": [rec]}
-        if q.startswith("SELECT Id, Name") and obj == "Account":  # rows for smart duplicate matching
-            return {"totalSize": len(ACCOUNT_ROWS), "done": True, "records": ACCOUNT_ROWS}
+        if q.startswith("SELECT Id,") and obj in ("Account", "Invoice__c"):  # rows for duplicates and formats
+            rows = ACCOUNT_ROWS if obj == "Account" else INVOICE_ROWS
+            return {"totalSize": len(rows), "done": True, "records": rows}
         if not re.search(r"SELECT (\w+) v", q):  # a plain record list (e.g. a problem's affected records)
             return {"totalSize": 2, "done": True, "records": [
                 {"Id": "003000000000001AAA", "Name": "Ada Lovelace", "Email": None},
@@ -130,15 +136,20 @@ def test_full_data_quality_run(client, sf):
     res = client.get(f"{API}/assessments/{aid}/results").json()
     areas = {x["areaId"]: x for x in res["areas"]}
     ind = {i["label"]: i for i in areas["area-1"]["indicators"]}
-    assert set(ind) == {"Duplicate Accounts", "Duplicate Contacts", "Duplicate Leads", "Missing Email", "Missing Phone", "Missing Key Fields",
-                        "Data standardization issues"}
-    assert ind["Duplicate Accounts"]["value"] == 3 and ind["Duplicate Contacts"]["value"] == 1
-    me = ind["Missing Email"]
-    assert {k: me[k] for k in ("label", "value", "unit", "direction")} == {"label": "Missing Email", "value": 20.0, "unit": "%", "direction": "lower-better"}
-    assert ind["Data standardization issues"]["value"] == 15  # "United States" + "US" differ from "USA"
+    labels = [i["label"] for i in areas["area-1"]["indicators"]]
+    # Each object's cards together: Accounts get the four core cards plus two of their own.
+    assert labels[:6] == ["Duplicate Accounts", "Missing Key Fields (Accounts)", "Data Standardization Issues (Accounts)",
+                          "No Activity in 6 Months (Accounts)", "Accounts Without Contacts", "Accounts Without Open Opportunities"]
+    assert {"Duplicate Contacts", "Missing Key Fields (Contacts)", "Data Standardization Issues (Contacts)", "No Activity in 6 Months (Contacts)",
+            "Duplicate Leads", "Missing Key Fields (Leads)", "Missing Key Fields (Opportunities)"} <= set(ind)
+    assert ind["Duplicate Accounts"]["value"] == 2 and ind["Duplicate Contacts"]["value"] == 0
+    mk = ind["Missing Key Fields (Contacts)"]  # Email or Phone empty on 40 of 200 (the first condition counted by the fake)
+    assert {k: mk[k] for k in ("value", "unit", "direction")} == {"value": 20.0, "unit": "%", "direction": "lower-better"}
+    assert ind["Data Standardization Issues (Accounts)"]["value"] == 2
+    assert ind["Accounts Without Contacts"]["value"] == 25
     ind2 = {i["label"]: i for i in areas["area-2"]["indicators"]}
-    assert set(ind2) == {"Field completeness", "Missing field values", "Redundant fields", "Accounts without Contacts", "Data quality scorecard", "Empty fields others depend on"}
-    assert ind2["Accounts without Contacts"]["value"] == 25 and ind2["Redundant fields"]["value"] == 2
+    assert set(ind2) == {"Field completeness", "Missing field values", "Redundant fields", "Data quality scorecard", "Empty fields others depend on"}
+    assert ind2["Redundant fields"]["value"] == 2
     assert res["categories"][0]["categoryId"] == "data-quality"
     assert res["overallScore"] == res["dataQualityScore"] == res["categories"][0]["score"]
     assert 0 < res["overallScore"] < 100 and res["salesProcessScore"] is None
@@ -155,7 +166,7 @@ def test_full_data_quality_run(client, sf):
     assert all(f["priority"] in ("P1", "P2", "P3", "P4") and f["areaId"] in ("area-1", "area-2") for f in findings)
     by_obj = {o["name"]: o for o in res["objects"]}
     assert list(by_obj) == ["Account", "Contact", "Lead", "Opportunity"]  # default objects, in order
-    assert by_obj["Account"]["records"] == 100 and by_obj["Account"]["duplicates"] == 3 and by_obj["Account"]["problems"] >= 2
+    assert by_obj["Account"]["records"] == 100 and by_obj["Account"]["duplicates"] == 2 and by_obj["Account"]["problems"] >= 2
     assert 0 < by_obj["Contact"]["completeness"] < 100
     assert not any("Invoice__c" in q for q in sf.soql)  # not chosen, not queried
     assert sf.soql and all(q.startswith("SELECT") for q in sf.soql)
@@ -216,7 +227,7 @@ def test_only_chosen_objects_are_checked(client, sf):
     res = client.get(f"{API}/assessments/{aid}/results").json()
     assert [o["name"] for o in res["objects"]] == ["Contact"]
     ind = {i["label"] for a in res["areas"] for i in a["indicators"]}
-    assert "Duplicate Contacts" in ind and "Duplicate Accounts" not in ind and "Accounts without Contacts" not in ind
+    assert "Duplicate Contacts" in ind and "Duplicate Accounts" not in ind and "Accounts Without Contacts" not in ind
     assert not any(" FROM Account" in q or " FROM Lead" in q for q in sf.soql)
     findings = client.get(f"{API}/assessments/{aid}/findings").json()["items"]
     assert findings and all(f["objectName"] in ("Contact", None) for f in findings)
@@ -261,7 +272,7 @@ def test_checking_one_area_keeps_the_other_areas_results(client, sf):
     carried = next(f for f in findings if f["id"] == f1["id"])
     assert carried["status"] == "in-review"  # same problem, not a copy
     objs = {o["name"]: o for o in res["objects"]}
-    assert objs["Account"]["duplicates"] == 3 and objs["Account"]["completeness"] is not None  # from check 1 and check 2
+    assert objs["Account"]["duplicates"] == 2 and objs["Account"]["completeness"] is not None  # from check 1 and check 2
     assert objs["Account"]["problems"] == sum(1 for f in findings if f["objectName"] == "Account")
     latest = client.get(f"{API}/assessments/{second}").json()
     assert latest["findingsCount"] == len(findings) and latest["overallScore"] == res["overallScore"]
@@ -284,12 +295,12 @@ def test_problems_list_and_export_their_records(client, sf):
     aid = start(client, areas=("area-1",)).json()["id"]
     found = _findings(client, aid)
 
-    no_email = found["Contacts without an email"]
-    assert no_email["recordsAvailable"] is True and no_email["fixUrl"].endswith("/FieldsAndRelationships/Email/view")
+    no_email = found["Contacts missing key fields"]
+    assert no_email["recordsAvailable"] is True and no_email["fixUrl"].endswith("/FieldsAndRelationships/view")
     page = client.get(f"{API}/findings/{no_email['id']}/records").json()
     assert page["object"] == "Contact" and [r["id"] for r in page["records"]] == ["003000000000001AAA", "003000000000002AAA"]
     assert page["recordUrlPrefix"].endswith("/")
-    assert any("FROM Contact WHERE Email = null" in q for q in sf.soql)  # exactly the records the check counted
+    assert any("FROM Contact WHERE (Email = null OR Phone = null)" in q for q in sf.soql)  # exactly the records the check counted
 
     csv = client.get(f"{API}/findings/{no_email['id']}/records.csv")
     assert csv.status_code == 200 and csv.headers["content-type"].startswith("text/csv")
@@ -297,11 +308,12 @@ def test_problems_list_and_export_their_records(client, sf):
     assert lines[0].endswith("Salesforce link") and lines[1].endswith("/003000000000001AAA") and len(lines) == 3
 
     dupes = found["Duplicate Accounts"]
-    assert dupes["affectedRecords"] == 3 and dupes["fixUrl"].endswith("/lightning/setup/DuplicateRules/home")
+    assert dupes["affectedRecords"] == 2 and dupes["fixUrl"].endswith("/lightning/setup/DuplicateRules/home")
     client.get(f"{API}/findings/{dupes['id']}/records")
     q = next(x for x in sf.soql if x.startswith("SELECT") and "FROM Account WHERE Id IN" in x)
-    assert "'001000000000001AAA'" in q and "'001000000000005AAA'" in q and "'001000000000006AAA'" not in q  # Initech has no copy
-    assert "“ACME Inc” / “Acme, Inc.” / “The Acme Company LLC” (3)" in dupes["description"]
+    assert "'001000000000001AAA'" in q and "'001000000000005AAA'" in q
+    assert "'001000000000003AAA'" not in q and "'001000000000006AAA'" not in q  # different state spelling; Initech has no copy
+    assert "match another record on Website, Phone, BillingState, BillingCity (2 groups)" in dupes["description"]
 
 
 def test_second_check_compares_and_keeps_triage(client, sf):
@@ -309,23 +321,25 @@ def test_second_check_compares_and_keeps_triage(client, sf):
     first = start(client, areas=("area-1",)).json()["id"]
     f1 = _findings(client, first)
     assert all(f["change"] == "new" for f in f1.values())
-    client.patch(f"{API}/findings/{f1['Contacts without an email']['id']}", json={"status": "in-review", "notes": "Marketing owns this"})
+    client.patch(f"{API}/findings/{f1['Contacts missing key fields']['id']}", json={"status": "in-review", "notes": "Marketing owns this"})
     client.patch(f"{API}/findings/{f1['Duplicate Accounts']['id']}", json={"status": "resolved"})
 
-    MISSING[("Lead", "Email")] = 0  # leads fixed …
+    lead_fields = ("LastName", "Title", "Company", "Email", "Phone", "State", "City", "PostalCode", "LeadSource")
+    saved = dict(MISSING)
+    MISSING.update({("Lead", f): 0 for f in lead_fields})  # leads fixed …
     MISSING[("Contact", "Email")] = 60  # … contacts got worse
     try:
         second = start(client, areas=("area-1",)).json()["id"]
     finally:
-        MISSING[("Lead", "Email")] = 10
-        MISSING[("Contact", "Email")] = 40
+        MISSING.clear()
+        MISSING.update(saved)
     f2 = _findings(client, second)
-    no_email = f2["Contacts without an email"]
+    no_email = f2["Contacts missing key fields"]
     assert no_email["change"] == "worse" and no_email["previousAffected"] == 40 and no_email["affectedRecords"] == 60
     assert no_email["status"] == "in-review" and no_email["notes"] == "Marketing owns this"  # triage carried over
     assert f2["Duplicate Accounts"]["change"] == "same" and f2["Duplicate Accounts"]["status"] == "open"  # came back: reopened
     resolved = client.get(f"{API}/assessments/{second}/results").json()["resolved"]
-    assert [r["name"] for r in resolved] == ["Open Leads without an email"] and resolved[0]["previousAffected"] == 10
+    assert [r["name"] for r in resolved] == ["Open Leads missing key fields"] and resolved[0]["previousAffected"] == 10
 
 
 def test_every_problem_links_to_the_measure_that_raised_it(client, sf):
@@ -349,6 +363,7 @@ def test_older_problems_find_their_measure_by_the_same_records(client, sf):
             f.measure = None
         db.commit()
     found = client.get(f"{API}/assessments/{aid}/findings", params={"pageSize": 500}).json()["items"]
-    phone = [f for f in found if "phone" in f["name"].lower()]
-    assert phone and all(f["measure"] == "Missing Phone" for f in phone)
+    missing = [f for f in found if f["name"].endswith("missing key fields")]
+    assert missing and all(f["measure"].startswith("Missing Key Fields (") for f in missing)
+    assert next(f for f in found if f["name"] == "Contacts missing key fields")["measure"] == "Missing Key Fields (Contacts)"
     assert next(f for f in found if f["name"] == "Duplicate Accounts")["measure"] == "Duplicate Accounts"
