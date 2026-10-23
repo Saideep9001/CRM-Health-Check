@@ -7,10 +7,13 @@ export function AnimatedNumber({
   value,
   format = fmtNumber,
   duration = 1.1,
+  decimals = 0,
 }: {
   value: number;
   format?: (n: number) => string;
   duration?: number;
+  /** Decimal places shown while counting (and at the end). */
+  decimals?: number;
 }) {
   const ref = useRef<HTMLSpanElement>(null);
   const inView = useInView(ref, { once: true });
@@ -20,12 +23,12 @@ export function AnimatedNumber({
   useEffect(() => {
     if (!inView) return;
     const controls = animate(mv, value, { duration, ease: [0.16, 1, 0.3, 1] });
-    const unsub = mv.on('change', (v) => setText(format(Math.round(v))));
+    const unsub = mv.on('change', (v) => setText(format(Math.round(v * 10 ** decimals) / 10 ** decimals)));
     return () => {
       controls.stop();
       unsub();
     };
-  }, [inView, value]);
+  }, [inView, value, decimals]);
 
   return (
     <span ref={ref} className="tabular-nums">

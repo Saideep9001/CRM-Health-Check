@@ -1,5 +1,21 @@
 import { motion } from 'framer-motion';
-import { ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, Gauge, Hourglass, TriangleAlert } from 'lucide-react';
+import {
+  ArrowLeft,
+  ArrowRight,
+  Briefcase,
+  CalendarDays,
+  CheckCircle2,
+  CircleOff,
+  Clock,
+  Copy,
+  Database,
+  Gauge,
+  Hourglass,
+  SpellCheck,
+  TriangleAlert,
+  UserX,
+  type LucideIcon,
+} from 'lucide-react';
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { RunCheckPanel } from '@/components/assessment/RunCheckPanel';
@@ -11,12 +27,12 @@ import { Notice } from '@/components/ui/Page';
 import { InfoTip } from '@/components/ui/HelpTip';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/States';
 import { Tabs } from '@/components/ui/Tabs';
-import { ProgressBar, ScoreRing } from '@/components/ui/Visuals';
+import { AnimatedNumber, ProgressBar, ScoreRing } from '@/components/ui/Visuals';
 import { CATEGORY_COLORS, DIAGNOSTIC_AREAS, getArea, getAreaRelease, getCategory } from '@/config/categories';
 import { useAssessment } from '@/api/queries';
 import { DEFAULT_DQ_OBJECTS } from '@/components/assessment/RunCheckPanel';
 import { useLatestAssessment } from '@/hooks/useLatestAssessment';
-import { fmtDate, fmtNumber } from '@/lib/format';
+import { cx, fmtDate, fmtNumber } from '@/lib/format';
 import { findingsForArea, getAreaResult } from '@/lib/health';
 import type { IndicatorValue } from '@/types';
 import NotFoundPage from './NotFoundPage';
@@ -35,10 +51,34 @@ function objectOf(label: string): { group: string; title: string } | null {
   return null;
 }
 
-/** Visual fill for an indicator: percentages map directly; counts show presence vs absence of issues. */
-function indicatorFill(i: IndicatorValue): number {
-  if (i.unit === '%') return i.direction === 'higher-better' ? i.value : 100 - i.value;
-  return i.direction === 'lower-better' ? (i.value === 0 ? 100 : 25) : i.value > 0 ? 100 : 25;
+/** How a card looks for its score: healthy, needs a look, needs work, or shown for information only. */
+const TONES = {
+  good: { label: 'Healthy', chip: 'bg-good-soft text-good', bar: 'rgb(var(--good))' },
+  warn: { label: 'Needs a look', chip: 'bg-warn-soft text-warn', bar: 'rgb(var(--warn))' },
+  bad: { label: 'Needs work', chip: 'bg-bad-soft text-bad', bar: 'rgb(var(--bad))' },
+  info: { label: 'For info', chip: 'bg-brand-soft text-brand', bar: 'rgb(var(--brand))' },
+} as const;
+
+function toneOf(v: IndicatorValue): keyof typeof TONES {
+  if (v.score == null) return 'info';
+  return v.score >= 95 ? 'good' : v.score >= 80 ? 'warn' : 'bad';
+}
+
+function iconFor(title: string): LucideIcon {
+  if (/duplicate/i.test(title)) return Copy;
+  if (/missing/i.test(title)) return CircleOff;
+  if (/standardi/i.test(title)) return SpellCheck;
+  if (/activity/i.test(title)) return Clock;
+  if (/contacts/i.test(title)) return UserX;
+  if (/opportunit/i.test(title)) return Briefcase;
+  return Gauge;
+}
+
+/** Bar fill: the share of records affected (counts out of the object's records), or the share itself for higher-better %. */
+function shareOf(v: IndicatorValue, total: number | null): number {
+  if (v.unit === '%') return v.value;
+  if (total) return (100 * v.value) / total;
+  return v.direction === 'lower-better' ? (v.value === 0 ? 0 : 25) : v.value > 0 ? 100 : 25;
 }
 
 export default function DiagnosticAreaPage() {
@@ -76,69 +116,113 @@ export default function DiagnosticAreaPage() {
     else sections.push({ name, items: [{ label, i, title: o?.title ?? label }] });
   });
 
+  const objectOfGroup = (group: string) => results?.objects?.find((x) => x.label === group || x.label === `open ${group}`) ?? null;
+
   // First card of each object: how many of its records the check looked at.
   const allRecords = (group: string) => {
-    const o = results?.objects?.find((x) => x.label === group || x.label === `open ${group}`);
+    const o = objectOfGroup(group);
     if (!o || o.records == null) return null;
     return (
       <motion.button
         key="all-records"
         type="button"
         onClick={() => navigate(`/data/${encodeURIComponent(o.name)}`)}
-        initial={{ opacity: 0, y: 10 }}
+        initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
-        className="group flex flex-col rounded-xl border border-brand/25 bg-brand-soft/40 p-4 text-left transition hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-pop"
+        whileHover={{ y: -4 }}
+        className="group relative flex flex-col overflow-hidden rounded-2xl bg-brand p-5 text-left text-white shadow-pop"
         title={`Browse your ${group} in Your Data`}
       >
-        <p className="text-sm font-medium text-ink-muted">All Records</p>
-        <p className="mt-2 text-2xl font-semibold tabular-nums">{fmtNumber(o.records)}</p>
-        <p className="mt-2 text-xs text-ink-muted">
-          {o.name === 'Lead' ? 'Open (not converted) Leads' : group} the last check looked at.
-        </p>
-        <span className="mt-auto inline-flex items-center gap-1 pt-3 text-xs font-medium text-brand">
-          Browse records <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-0.5" />
+        <span className="pointer-events-none absolute -right-8 -top-10 h-36 w-36 rounded-full bg-white/10" />
+        <span className="pointer-events-none absolute -bottom-12 right-10 h-28 w-28 rounded-full bg-white/5" />
+        <span className="flex items-center gap-2.5">
+          <span className="grid h-9 w-9 place-items-center rounded-xl bg-white/15">
+            <Database className="h-4 w-4" />
+          </span>
+          <span className="text-sm font-semibold">All Records</span>
+        </span>
+        <span className="mt-4 text-4xl font-bold tabular-nums tracking-tight">
+          <AnimatedNumber value={o.records} />
+        </span>
+        <span className="mt-1 text-xs text-white/80">{o.name === 'Lead' ? 'Open (not converted) Leads' : group} the last check looked at</span>
+        {o.problems > 0 && (
+          <span className="mt-3 w-fit rounded-full bg-white/15 px-2.5 py-1 text-[11px] font-semibold">
+            {o.problems} {o.problems === 1 ? 'problem' : 'problems'} found
+          </span>
+        )}
+        <span className="mt-auto inline-flex items-center gap-1 pt-4 text-xs font-semibold">
+          Browse records <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-1" />
         </span>
       </motion.button>
     );
   };
 
-  const card = (label: string, i: number, title: string) => {
+  const card = (label: string, i: number, title: string, group = '') => {
     const v = result?.indicators.find((x) => x.label === label);
-    const Card = v ? motion.button : motion.div;
-    return (
-      <Card
-        key={label}
-        type={v ? 'button' : undefined}
-        onClick={v ? () => navigate(`/measures/${area.id}?${new URLSearchParams({ label })}`) : undefined}
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: i * 0.05 }}
-        className={v ? 'group flex flex-col rounded-xl border border-line p-4 text-left transition hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-pop' : 'rounded-xl border border-line p-4'}
-        title={v ? 'See how this is measured, the scoring rule and the records' : undefined}
-      >
-        <p className="text-sm font-medium text-ink-muted">{title}</p>
-        {v ? (
-          <>
-            <p className="mt-2 text-2xl font-semibold tabular-nums">
-              {fmtNumber(v.value)}
-              {v.unit === '%' && <span className="text-base text-ink-subtle">%</span>}
-            </p>
-            <div className="mt-3">
-              <ProgressBar value={indicatorFill(v)} delay={i * 0.05} />
-            </div>
-            <p className="mt-2 text-[11px] text-ink-subtle">{v.direction === 'higher-better' ? 'Higher is better' : 'Lower is better'}</p>
-            {v.how && <p className="mt-2 line-clamp-2 text-xs text-ink-muted">{v.how}</p>}
-            <span className="mt-auto inline-flex items-center gap-1 pt-3 text-xs font-medium text-brand">
-              Rule &amp; records <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-0.5" />
+    const Icon = iconFor(title);
+    if (!v) {
+      return (
+        <motion.div key={label} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }} className="rounded-2xl border border-dashed border-line p-5">
+          <span className="flex items-center gap-2.5">
+            <span className="grid h-9 w-9 place-items-center rounded-xl bg-muted text-ink-subtle">
+              <Icon className="h-4 w-4" />
             </span>
-          </>
-        ) : (
-          <>
-            <p className="mt-2 text-2xl font-semibold text-ink-subtle">—</p>
-            <p className="mt-3 text-[11px] text-ink-subtle">{release === 'coming-soon' ? 'Coming Soon' : 'Not measured yet'}</p>
-          </>
-        )}
-      </Card>
+            <span className="text-sm font-semibold text-ink-muted">{title}</span>
+          </span>
+          <p className="mt-4 text-3xl font-bold text-ink-subtle">—</p>
+          <p className="mt-2 text-[11px] text-ink-subtle">{release === 'coming-soon' ? 'Coming Soon' : 'Not measured yet'}</p>
+        </motion.div>
+      );
+    }
+    const tone = TONES[toneOf(v)];
+    const total = objectOfGroup(group)?.records ?? null;
+    const share = shareOf(v, total);
+    const decimals = !Number.isInteger(v.value);
+    const sub =
+      v.unit === '%'
+        ? total
+          ? `≈ ${fmtNumber(Math.round((v.value * total) / 100))} of ${fmtNumber(total)}`
+          : ''
+        : total
+          ? `${Math.round(share * 10) / 10}% of ${fmtNumber(total)}`
+          : '';
+    return (
+      <motion.button
+        key={label}
+        type="button"
+        onClick={() => navigate(`/measures/${area.id}?${new URLSearchParams({ label })}`)}
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: i * 0.04 }}
+        whileHover={{ y: -4 }}
+        className="group relative flex flex-col overflow-hidden rounded-2xl border border-line bg-surface p-5 text-left shadow-sm transition-shadow hover:border-brand/30 hover:shadow-pop"
+        title={`See how this is measured, the scoring rule and the records${v.score != null ? ` · score ${Math.round(v.score)}/100` : ''}`}
+      >
+        <span className="absolute inset-x-0 top-0 h-1" style={{ background: tone.bar }} />
+        <span className="flex items-start justify-between gap-2">
+          <span className="flex min-w-0 items-center gap-2.5 pr-1">
+            <span className={cx('grid h-9 w-9 shrink-0 place-items-center rounded-xl transition group-hover:scale-110', tone.chip)}>
+              <Icon className="h-4 w-4" />
+            </span>
+            <span className="text-sm font-semibold leading-snug">{title}</span>
+          </span>
+          <span className={cx('shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide', tone.chip)}>{tone.label}</span>
+        </span>
+        <span className="mt-4 flex flex-wrap items-baseline gap-x-2">
+          <span className="text-3xl font-bold tabular-nums tracking-tight">
+            <AnimatedNumber value={v.value} decimals={decimals ? 1 : 0} />
+            {v.unit === '%' && <span className="text-lg text-ink-subtle">%</span>}
+          </span>
+          {sub && <span className="text-xs text-ink-muted">{sub}</span>}
+        </span>
+        <span className="mt-3 block">
+          <ProgressBar value={v.direction === 'higher-better' ? share : Math.max(share, v.value > 0 ? 2 : 0)} color={tone.bar} delay={i * 0.04} />
+        </span>
+        {v.how && <span className="mt-3 line-clamp-2 text-xs text-ink-muted">{v.how}</span>}
+        <span className="mt-auto inline-flex items-center gap-1 pt-4 text-xs font-semibold text-brand">
+          Rule &amp; records <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-1" />
+        </span>
+      </motion.button>
     );
   };
 
@@ -241,10 +325,13 @@ export default function DiagnosticAreaPage() {
                   {sections.map((sec, si) =>
                     sec.name ? (
                       <section key={sec.name} className="rounded-xl border border-line bg-muted/30 p-4">
-                        <h3 className="mb-3 text-sm font-semibold">{sec.name}</h3>
+                        <h3 className="mb-4 flex items-center gap-2 text-base font-semibold">
+                          <span className="h-2.5 w-2.5 rounded-full bg-brand" />
+                          {sec.name}
+                        </h3>
                         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                           {allRecords(sec.name)}
-                          {sec.items.map((it) => card(it.label, it.i, it.title))}
+                          {sec.items.map((it) => card(it.label, it.i, it.title, sec.name))}
                         </div>
                       </section>
                     ) : (
