@@ -3,7 +3,6 @@ import { ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, Gauge, Hourglass, Tr
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { RunCheckPanel } from '@/components/assessment/RunCheckPanel';
-import { FieldCheck } from '@/components/findings/FieldCheck';
 import { FindingsTable } from '@/components/findings/FindingsTable';
 import { Badge, ReleaseBadge } from '@/components/ui/Badges';
 import { LinkButton } from '@/components/ui/Button';
@@ -49,6 +48,8 @@ export default function DiagnosticAreaPage() {
   const idx = DIAGNOSTIC_AREAS.findIndex((a) => a.id === area.id);
   const prev = DIAGNOSTIC_AREAS[idx - 1];
   const next = DIAGNOSTIC_AREAS[idx + 1];
+  // After a check, show only what it measured: checking just Accounts shows the Account measures, not Contacts or Leads.
+  const measured = assessed ? area.indicators.filter((l) => result?.indicators.some((x) => x.label === l)) : area.indicators;
   // The objects the check behind these results looked at.
   const checkedObjects = source.data ? (source.data.scope.objects?.length ? source.data.scope.objects : DEFAULT_DQ_OBJECTS) : null;
 
@@ -134,7 +135,7 @@ export default function DiagnosticAreaPage() {
             value={tab}
             onChange={setTab}
             tabs={[
-              { id: 'indicators', label: 'What we measure', icon: <Gauge className="h-4 w-4" />, count: area.indicators.length },
+              { id: 'indicators', label: 'What we measure', icon: <Gauge className="h-4 w-4" />, count: measured.length },
               { id: 'findings', label: 'Problems found', icon: <TriangleAlert className="h-4 w-4" />, count: areaFindings.length },
               { id: 'recommendations', label: 'How to fix', icon: <CheckCircle2 className="h-4 w-4" /> },
             ]}
@@ -148,7 +149,7 @@ export default function DiagnosticAreaPage() {
             <>
               {tab === 'indicators' && (
                 <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                  {area.indicators.map((label, i) => {
+                  {measured.map((label, i) => {
                     const v = result?.indicators.find((x) => x.label === label);
                     const Card = v ? motion.button : motion.div;
                     return (
@@ -181,7 +182,7 @@ export default function DiagnosticAreaPage() {
                         ) : (
                           <>
                             <p className="mt-2 text-2xl font-semibold text-ink-subtle">—</p>
-                            <p className="mt-3 text-[11px] text-ink-subtle">{release === 'coming-soon' ? 'Coming Soon' : assessed ? 'Not part of the last check (its objects weren’t chosen)' : 'Not measured yet'}</p>
+                            <p className="mt-3 text-[11px] text-ink-subtle">{release === 'coming-soon' ? 'Coming Soon' : 'Not measured yet'}</p>
                           </>
                         )}
                       </Card>
@@ -224,12 +225,6 @@ export default function DiagnosticAreaPage() {
           )}
         </div>
       </div>
-
-      {category.id === 'data-quality' && assessed && checkedObjects && (
-        <div className="mt-6">
-          <FieldCheck objects={checkedObjects} />
-        </div>
-      )}
 
       <div className="mt-8 flex flex-wrap justify-between gap-2">
         {prev ? (
