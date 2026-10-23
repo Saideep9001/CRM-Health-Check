@@ -147,6 +147,15 @@ def test_full_data_quality_run(client, sf):
     assert {k: mk[k] for k in ("value", "unit", "direction")} == {"value": 20.0, "unit": "%", "direction": "lower-better"}
     assert ind["Data Standardization Issues (Accounts)"]["value"] == 2
     assert ind["Accounts Without Contacts"]["value"] == 25
+    # each data card charts its own number per field
+    dup = {f["field"]: f for f in ind["Duplicate Accounts"]["fieldScores"]}
+    assert dup["Website"] == {"field": "Website", "label": "Website", "count": 5, "of": 6, "pct": 83.3}  # acme.com ×3, globex.io ×2
+    assert "BillingCity" not in dup  # sharing a city is normal
+    empty = {f["field"]: f for f in ind["Missing Key Fields (Accounts)"]["fieldScores"]}
+    assert (empty["Website"]["count"], empty["Website"]["of"]) == (10, 100)
+    odd = {f["field"]: f for f in ind["Data Standardization Issues (Accounts)"]["fieldScores"]}
+    assert (odd["BillingState"]["count"], odd["BillingState"]["of"]) == (1, 5)  # "California" vs "CA"
+    assert ind["No Activity in 6 Months (Accounts)"]["fieldScores"] is None
     ind2 = {i["label"]: i for i in areas["area-2"]["indicators"]}
     assert set(ind2) == {"Field completeness", "Missing field values", "Redundant fields", "Data quality scorecard", "Empty fields others depend on"}
     assert ind2["Redundant fields"]["value"] == 2

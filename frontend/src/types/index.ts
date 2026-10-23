@@ -238,6 +238,15 @@ export interface CreateAssessmentRequest {
   notes?: string;
 }
 
+/** One field's number for a card: `count` of `of` records are duplicated / empty / odd. */
+export interface FieldScore {
+  field: string;
+  label: string;
+  count: number;
+  of: number;
+  pct: number;
+}
+
 export interface IndicatorValue {
   label: string; // matches DiagnosticArea.indicators
   value: number;
@@ -251,6 +260,8 @@ export interface IndicatorValue {
   rule?: string | null;
   /** The exact rules, as [name, detail] rows. */
   criteria?: [string, string][];
+  /** Per field: this card's count (duplicated, empty or odd). */
+  fieldScores?: FieldScore[] | null;
   /** Objects whose records can be listed for this measure. */
   recordObjects?: string[];
 }

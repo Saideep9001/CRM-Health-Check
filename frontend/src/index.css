@@ -5,6 +5,8 @@
 /* ---------- Design tokens (RGB triplets so Tailwind alpha works) ---------- */
 :root {
   --bg: 246 248 251;
+  /* chart bars (one series) */
+  --series-1: #2a78d6;
   --surface: 255 255 255;
   --muted: 241 244 248;
   --line: 226 232 240;
@@ -31,6 +33,7 @@
 
 .dark {
   --bg: 9 13 22;
+  --series-1: #3987e5;
   --surface: 17 23 35;
   --muted: 25 33 48;
   --line: 38 48 66;

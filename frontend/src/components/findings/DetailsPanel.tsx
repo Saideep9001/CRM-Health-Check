@@ -33,6 +33,7 @@ import { InlineError } from '../ui/States';
 import { ChangeBadge } from './AffectedRecords';
 import { FixPlanPanel } from './FixPlanPanel';
 import { RecordsTable } from './RecordsTable';
+import { FieldScoreChart, chartKindFor } from './FieldScoreChart';
 
 /** Same thresholds the engine uses (backend/app/engine/core.py → severity_for, finding min_score). */
 const PROBLEM_BELOW = 95;
@@ -385,6 +386,8 @@ export function DetailsPanel({
                 </Stat>
               ))}
           </div>
+
+          {v?.fieldScores?.length && chartKindFor(v.label) ? <FieldScoreChart scores={v.fieldScores} kind={chartKindFor(v.label)!} /> : null}
 
           {legacy && (
             <div className="mb-6 flex flex-wrap items-center gap-3 rounded-lg border border-warn/30 bg-warn-soft px-4 py-3 text-sm text-warn">

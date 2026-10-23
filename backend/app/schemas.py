@@ -325,6 +325,15 @@ class Assessment(ApiModel):
     error_message: str | None = None
 
 
+class FieldScore(ApiModel):
+    """One field's number for a card: `count` of `of` records are duplicated / empty / odd."""
+    field: str
+    label: str
+    count: int
+    of: int
+    pct: float
+
+
 class IndicatorValue(ApiModel):
     label: str
     value: float
@@ -334,6 +343,7 @@ class IndicatorValue(ApiModel):
     how: str | None = None  # what we count
     rule: str | None = None  # how it becomes the score
     criteria: list[list[str]] = []  # the exact rules, as [name, detail] rows
+    field_scores: list[FieldScore] | None = None  # per field: this card's count (duplicated, empty or odd)
 
     @model_validator(mode="before")
     @classmethod

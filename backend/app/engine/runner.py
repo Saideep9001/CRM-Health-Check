@@ -211,7 +211,8 @@ def _run(db, http: httpx.Client, row: AssessmentRow) -> None:
             "score": score,
             "status": status,
             "indicators": [{"label": m.label, "value": m.value, "unit": m.unit, "direction": m.direction, "score": m.score,
-                            "how": m.how, "rule": m.rule, "records": m.records, "criteria": m.criteria} for m in metrics],
+                            "how": m.how, "rule": m.rule, "records": m.records, "criteria": m.criteria,
+                            "fieldScores": m.field_scores} for m in metrics],
             "recordsEvaluated": sum(ctx.totals.values()) or None,
             "message": ("Some checks couldn’t run: " + " · ".join(notes)) if notes
             else None if area_id in ran else "None of the chosen objects are covered by this area.",

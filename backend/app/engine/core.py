@@ -48,6 +48,8 @@ class Metric:
     records: list[dict] | None = None
     # The exact rules as table rows: [["Compared on", "Account Name and Website"], ["Counted", "…"]].
     criteria: list[list[str]] | None = None
+    # Per field, this card's number: [{"field", "label", "count", "of", "pct"}] (e.g. 36 of 582 empty).
+    field_scores: list[dict] | None = None
 
 
 @dataclass

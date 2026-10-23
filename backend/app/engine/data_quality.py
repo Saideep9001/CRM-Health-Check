@@ -111,6 +111,28 @@ def _flabel(ctx: Ctx, obj: str, f: str) -> str:
     return ctx.fields(obj).get(f, {}).get("label") or f
 
 
+MAX_SCORED_FIELDS = 12  # fields charted per object
+
+
+def _by_field(ctx: Ctx, obj: str, card: str, f: str, count: int, of: int) -> None:
+    """One field's number for one of the object's cards: `count` of `of` records (duplicated, empty or odd)."""
+    ctx.memo.setdefault(("by_field", obj, card), []).append(
+        {"field": f, "label": _flabel(ctx, obj, f), "count": count, "of": of, "pct": round(100 * count / of, 1) if of else 0.0})
+
+
+def _same_value(kind: str, v) -> str:
+    """A value in a form where the same thing written differently compares equal (for "unique")."""
+    if kind == "company":
+        return dupes.norm_company(v)
+    if kind == "website":
+        return dupes.norm_website(v)
+    if kind == "phone":
+        return re.sub(r"\D", "", str(v))[-10:]
+    if kind == "email":
+        return str(v).strip().lower()
+    return dupes._clean(v)
+
+
 def _present(ctx: Ctx, obj: str, names: tuple[str, ...]) -> list[str]:
     return [f for f in names if ctx.has_field(obj, f)]
 
@@ -207,6 +229,14 @@ def duplicates_on_fields(ctx: Ctx, obj: str) -> None:
     groups = sorted((g for g in members.values() if len(g) > 1), key=len, reverse=True)
     extra = sum(len(g) - 1 for g in groups)
     ctx.stat(obj).duplicates = extra
+    for f in strong:  # identifying fields only: places, titles and surnames are shared by design
+        if kinds[f] == "amount":
+            continue
+        norm = [_same_value(kinds[f], v[f]) for v in vals if filled(v[f])]
+        norm = [n for n in norm if n]
+        if norm:
+            seen = Counter(norm)
+            _by_field(ctx, obj, "duplicates", f, sum(1 for n in norm if seen[n] > 1), len(norm))  # records sharing their value
     score = rate_score(extra / total, 0.15)
     label = _label(ctx, obj)
     ids = [rows[i]["Id"] for g in groups for i in g if rows[i].get("Id")]
@@ -264,6 +294,8 @@ def missing_key_fields(ctx: Ctx, obj: str) -> None:
     if not keys:
         return
     empty = {f: total - filled_by[f] for f in keys}
+    for f in keys:
+        _by_field(ctx, obj, "missing", f, total - filled_by[f], total)
     cond = "(" + " OR ".join(f"{f} = null" for f in keys) + ")"
     n = ctx.count(obj, *base, cond)
     filled_pct = 100 - pct(sum(empty.values()), total * len(keys))
@@ -435,6 +467,8 @@ def data_standardization(ctx: Ctx, obj: str) -> None:
         with_value.update(i for i, _ in items)
         odd = _odd_values(kind, items, open_ids)
         bad |= odd
+        if items:
+            _by_field(ctx, obj, "standardization", f, len(odd), len(items))
         examples = list(dict.fromkeys(str(v) for i, v in items if i in odd))[:3]
         per_field.append((f, kind, len(odd), examples))
     score = rate_score(len(bad) / len(with_value), 0.25) if with_value else 100
@@ -577,6 +611,12 @@ def _cards(ctx: Ctx, obj: str, *checks) -> None:
             raise
         except SalesforceError as exc:  # one card failing shouldn't hide the others
             log.warning("%s on %s skipped: %s", check.__name__, obj, exc)
+    plural = ctx.label(obj)
+    cards = {f"Duplicate {plural}": "duplicates", f"Missing Key Fields ({plural})": "missing", f"Data Standardization Issues ({plural})": "standardization"}
+    for m in ctx.metrics.get(ctx.area_id, []):
+        rows = ctx.memo.get(("by_field", obj, cards.get(m.label)), [])
+        if m.label in cards and rows:
+            m.field_scores = rows[:MAX_SCORED_FIELDS]
     if not ctx.memo.get("picklists_checked") and obj in ("Account", "Contact", "Lead") and not ctx.has_field("Account", "BillingCountryCode", None):
         ctx.memo["picklists_checked"] = True
         ctx.findings.append(FindingDraft(
