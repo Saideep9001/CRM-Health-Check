@@ -376,3 +376,13 @@ def test_older_problems_find_their_measure_by_the_same_records(client, sf):
     assert missing and all(f["measure"].startswith("Missing Key Fields (") for f in missing)
     assert next(f for f in found if f["name"] == "Contacts missing key fields")["measure"] == "Missing Key Fields (Contacts)"
     assert next(f for f in found if f["name"] == "Duplicate Accounts")["measure"] == "Duplicate Accounts"
+
+
+def test_field_scores_saved_in_an_older_shape_are_skipped():
+    from app.schemas import IndicatorValue
+
+    old = {"label": "Duplicate Accounts", "value": 3, "unit": "count", "direction": "lower-better",
+           "fieldScores": [{"field": "Website", "label": "Website", "filled": 90.0, "unique": 16.7, "consistent": 83.3}]}
+    assert IndicatorValue.model_validate(old).field_scores is None
+    new = {**old, "fieldScores": [{"field": "Website", "label": "Website", "count": 5, "of": 6, "pct": 83.3}]}
+    assert IndicatorValue.model_validate(new).field_scores[0].count == 5

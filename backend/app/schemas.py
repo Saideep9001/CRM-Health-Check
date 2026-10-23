@@ -348,7 +348,13 @@ class IndicatorValue(ApiModel):
     @model_validator(mode="before")
     @classmethod
     def _no_null_criteria(cls, data):
-        return {**data, "criteria": data.get("criteria") or []} if isinstance(data, dict) else data
+        if not isinstance(data, dict):
+            return data
+        data = {**data, "criteria": data.get("criteria") or []}
+        scores = data.get("fieldScores")
+        if scores and not all(isinstance(f, dict) and {"count", "of", "pct"} <= f.keys() for f in scores):
+            data["fieldScores"] = None  # saved in an older shape: no chart until the next check, rather than an error
+        return data
     # Objects whose records can be listed for this measure (the filters themselves stay on the server).
     record_objects: list[str] = []
 
