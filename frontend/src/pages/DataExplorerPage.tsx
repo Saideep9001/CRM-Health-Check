@@ -11,6 +11,7 @@ import {
   RefreshCw,
   Rows3,
   Search,
+  SlidersHorizontal,
   Sparkles,
   Unplug,
   X,
@@ -302,6 +303,67 @@ function AnswerBanner({
   );
 }
 
+const EMPTY = '__empty__';
+const PICKLISTS_SHOWN = 6;
+// Picklists people filter by most, shown first; address codes and map accuracy go last.
+const PICKLIST_FIRST = ['Type', 'Industry', 'Rating', 'StageName', 'Status', 'LeadSource', 'AccountSource', 'ForecastCategoryName', 'Priority', 'Origin', 'Reason', 'Ownership'];
+const pickRank = (f: DataField) => {
+  const i = PICKLIST_FIRST.indexOf(f.name);
+  if (i >= 0) return i;
+  if (/(StateCode|CountryCode|GeocodeAccuracy)$/.test(f.name)) return 300;
+  return f.custom ? 200 : 100;
+};
+
+/** A dropdown for each picklist field: pick a value to see only those records (or "(Empty)" for no value). */
+function PicklistFilters({ fields, filters, onChange }: { fields: DataField[]; filters: DataFilter[]; onChange: (next: DataFilter[]) => void }) {
+  const [more, setMore] = useState(false);
+  const picklists = useMemo(
+    () => fields.filter((f) => f.type === 'picklist' && f.filterable && f.picklistValues.length > 1).sort((a, b) => pickRank(a) - pickRank(b)),
+    [fields],
+  );
+  if (!picklists.length) return null;
+  const chosen = (f: DataField) => {
+    const cur = filters.find((x) => x.field === f.name && (x.op === 'in' || x.op === 'blank'));
+    return cur ? (cur.op === 'blank' ? EMPTY : String((cur.value as string[] | undefined)?.[0] ?? '')) : '';
+  };
+  const pick = (f: DataField, v: string) => {
+    const rest = filters.filter((x) => !(x.field === f.name && (x.op === 'in' || x.op === 'blank')));
+    if (!v) return onChange(rest);
+    onChange([...rest, v === EMPTY ? { field: f.name, op: 'blank', label: `${f.label} is empty` } : { field: f.name, op: 'in', value: [v], label: `${f.label}: ${v}` }]);
+  };
+  // Picklists in use always show, so a filter is never hidden behind "More".
+  const shown = more ? picklists : picklists.filter((f, i) => i < PICKLISTS_SHOWN || chosen(f));
+  return (
+    <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
+      <SlidersHorizontal className="h-4 w-4 text-ink-subtle" aria-hidden="true" />
+      {shown.map((f) => {
+        const v = chosen(f);
+        return (
+          <select
+            key={f.name}
+            value={v}
+            onChange={(e) => pick(f, e.target.value)}
+            aria-label={`Filter by ${f.label}`}
+            title={f.label}
+            className={cx('input h-8 w-auto max-w-[15rem] py-0 pr-8 text-xs', v && 'border-brand bg-brand-soft/60 font-semibold text-brand-ink')}
+          >
+            <option value="">{f.label}: All</option>
+            {f.picklistValues.map((pv) => (
+              <option key={pv} value={pv}>{`${f.label}: ${pv}`}</option>
+            ))}
+            <option value={EMPTY}>{`${f.label}: (Empty)`}</option>
+          </select>
+        );
+      })}
+      {(more || shown.length < picklists.length) && (
+        <button type="button" onClick={() => setMore((m) => !m)} className="text-xs font-semibold text-brand hover:underline">
+          {more ? 'Fewer filters' : `More filters (${picklists.length - shown.length})`}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function RecordsTab({ detail }: { detail: DataObjectDetail }) {
   const [custom, setCustom] = useState<string[] | null>(() => loadCols(detail.name));
   const [search, setSearch] = useState('');
@@ -407,6 +469,7 @@ function RecordsTab({ detail }: { detail: DataObjectDetail }) {
           Columns
         </Button>
       </div>
+      {!only && <PicklistFilters fields={detail.fields} filters={filters} onChange={(next) => setFilters(next)} />}
 
       {recs.isLoading ? (
         <LoadingState rows={6} label="Loading records…" />
