@@ -160,7 +160,7 @@ def describe_object(sf: SalesforceClient, name: str) -> dict:
         "label_plural": desc.get("labelPlural") or name,
         "custom": bool(desc.get("custom")),
         "name_field": _name_field(desc),
-        "searchable": bool(_name_field(desc) and _fields(desc)[_name_field(desc)].get("filterable")),
+        "searchable": bool(_search_fields(desc)),
         "default_columns": default_columns(desc),
         "child_relationships": child_relationships(sf, name),
         "approx_count": _record_counts(sf).get(name),
@@ -254,6 +254,18 @@ def _soql_text(value: str) -> str:
     return out
 
 
+_SEARCH_TYPES = {"string", "email", "phone", "url", "picklist", "combobox", "textarea"}
+MAX_SEARCH_FIELDS = 60
+
+
+def _search_fields(desc: dict) -> list[str]:
+    """Text fields the search box looks in: the name first, then standard fields, then custom ones."""
+    name = _name_field(desc)
+    text = [f for f in desc.get("fields", []) if f.get("type") in _SEARCH_TYPES and f.get("filterable") and not f.get("encrypted")]
+    text.sort(key=lambda f: (f["name"] != name, bool(f.get("custom"))))
+    return [f["name"] for f in text][:MAX_SEARCH_FIELDS]
+
+
 def _ref_paths(fields: dict[str, dict], cols: list[str]) -> dict[str, str]:
     """Map reference columns (e.g. OwnerId) to a related-name path (Owner.Name) where safe."""
     paths = {}
@@ -303,7 +315,6 @@ def list_records(
     else:
         select = ", ".join(cols + list(refs.values()))
         soql = f"SELECT {select} FROM {name}"
-        name_field = _name_field(desc)
         conds = []
         if filters:
             from .finder import conditions  # finder imports this module
@@ -312,8 +323,10 @@ def list_records(
             conds += conditions(fields, filters, children)
         if ids:
             conds.append("Id IN (" + ", ".join(f"'{i}'" for i in ids) + ")")  # ids checked by _ID_RE
-        if search and search.strip() and name_field and fields[name_field].get("filterable"):
-            conds.append(f"{name_field} LIKE '%{_soql_text(search.strip()[:100])}%'")
+        searched = _search_fields(desc) if search and search.strip() else []
+        if searched:  # any text field: name, address, phone, email, picklists, custom text…
+            text = _soql_text(search.strip()[:100])
+            conds.append("(" + " OR ".join(f"{f} LIKE '%{text}%'" for f in searched) + ")")
         if conds:
             soql += " WHERE " + " AND ".join(conds)
         order = sort if sort in fields and fields[sort].get("sortable") else None

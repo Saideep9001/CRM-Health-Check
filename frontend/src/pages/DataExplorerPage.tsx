@@ -390,14 +390,14 @@ function RecordsTab({ detail }: { detail: DataObjectDetail }) {
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle" />
             <input
               className="input pl-9"
-              placeholder={`Search by ${fieldMap.get(detail.nameField!)?.label ?? 'name'}…`}
+              placeholder="Search any field: name, city, email, phone…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               aria-label="Search records"
             />
           </label>
         ) : (
-          <span className="text-xs text-ink-subtle">This object can’t be searched by name.</span>
+          <span className="text-xs text-ink-subtle">This object has no text fields to search.</span>
         )}
         <span className="text-xs text-ink-muted">
           {total !== null && `${fmtNumber(rows.length)} of ${fmtNumber(total)} records`}
@@ -415,7 +415,7 @@ function RecordsTab({ detail }: { detail: DataObjectDetail }) {
       ) : rows.length === 0 ? (
         <EmptyState
           title={q || filters.length ? 'No records match' : 'No records yet'}
-          description={filters.length ? 'Try removing a filter above.' : q ? 'Try a different name.' : `There are no ${detail.labelPlural} you can see.`}
+          description={filters.length ? 'Try removing a filter above.' : q ? 'Try different words.' : `There are no ${detail.labelPlural} you can see.`}
         />
       ) : (
         <>

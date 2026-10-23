@@ -53,6 +53,14 @@ def test_search_is_escaped_and_bad_fields_dropped(client, sf):
     assert "Evil" not in q and q.startswith("SELECT Id, Name, Industry")
 
 
+def test_search_looks_in_every_text_field(client, sf):
+    connect(client)
+    client.get(f"{API}/objects/Account/records", params={"q": "United States"})
+    q = sf.soql[-1]
+    assert "(Name LIKE '%United States%' OR " in q  # the name first, then the other text fields
+    assert "Industry LIKE '%United States%'" in q
+
+
 def test_rejects_foreign_cursor(client):
     connect(client)
     r = client.get(f"{API}/objects/Account/records", params={"cursor": "https://evil.example/steal"})
