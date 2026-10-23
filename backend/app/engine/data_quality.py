@@ -465,45 +465,68 @@ def standardization(ctx: Ctx) -> None:
     )
 
 
+# The details every object should have: phone, website and address (the object's main address — billing on Accounts,
+# mailing on Contacts). Each object is checked on the ones it has (Contacts have no Website).
+_ADDRESS_PREFIXES = ("", "Billing", "Mailing", "Shipping", "Other")
+_KEY_PARTS = (("Phone", "Phone"), ("Website", "Website"), ("City", "City"), ("State", "State"), ("PostalCode", "Postal Code"))
+
+
+def _common_key_fields(ctx: Ctx, obj: str) -> list[tuple[str, str]]:
+    """(field, part) for Phone, Website, City, State and Postal Code on this object, using one address."""
+    out = [(f, part) for f, part in (("Phone", "Phone"), ("Website", "Website")) if ctx.has_field(obj, f, "filterable")]
+    for prefix in _ADDRESS_PREFIXES:
+        address = [(f"{prefix}{f}", part) for f, part in _KEY_PARTS[2:] if ctx.has_field(obj, f"{prefix}{f}", "filterable")]
+        if address:
+            return out + address
+    return out
+
+
+def _field_label(ctx: Ctx, obj: str, name: str) -> str:
+    return ctx.fields(obj).get(name, {}).get("label") or name
+
+
 def missing_key_fields(ctx: Ctx) -> None:
-    """One "Missing <field>" measure per key field of the chosen objects (Email and Phone have their own)."""
-    by_label: dict[str, list[tuple[str, str, int, int]]] = {}  # label -> (object, field, records, missing)
+    """Records missing any of the details every object should have: phone, website and address (city, state, postal code)."""
+    parts: list[tuple[str, int, int, dict[str, int], list[str]]] = []  # (object, records, missing any, empty per field, fields)
     for obj in ctx.selected(*KEY_FIELDS, *ctx.others()):
         try:
-            fields = ctx.fields(obj)
+            ctx.fields(obj)
         except Unavailable:
             continue
-        total = _base_total(ctx, obj)
+        keys = _common_key_fields(ctx, obj)
+        total = _base_total(ctx, obj) if keys else 0
         if not total:
             continue
-        keys = [f for f in KEY_FIELDS.get(obj, ()) if ctx.has_field(obj, f)] or _generic_key_fields(fields)
-        keys = [f for f in keys if f not in ("Email", "Phone")]
-        filled_by = ctx.filled_counts(obj, keys, *BASE_CONDS.get(obj, ()))
-        for f in keys:
-            if f in filled_by:
-                label = fields[f].get("label") or f
-                if fields[f].get("type") == "reference":
-                    label = label.removesuffix(" ID")  # "Account ID" -> "Account"
-                by_label.setdefault(label, []).append((obj, f, total, total - filled_by[f]))
-    for label, parts in by_label.items():
-        total, missing = sum(p[2] for p in parts), sum(p[3] for p in parts)
-        names = ", ".join(_label(ctx, o) for o, *_ in parts)
-        ctx.metric(
-            f"Missing {label}", pct(missing, total), "%", "lower-better", None,
-            how=f"The share of {names} with no {label}: {missing:,} out of {total:,}.",
-            rule="Shown for information only; how complete key fields are overall is scored in Field completeness (area 2).",
-            records=[(o, *BASE_CONDS.get(o, ()), f"{f} = null") for o, f, n, m in parts if m],
-            columns=["Name", *dict.fromkeys(f for _, f, _, _ in parts), "OwnerId", "CreatedDate"],
-            order="Name",
-            criteria=[
-                ("Records checked", "; ".join(f"{n:,} {_label(ctx, o)}" for o, _, n, _ in parts) + _window(ctx)),
-                ("Fields checked", "; ".join(f"{_cap(_label(ctx, o))}: {label}" for o, *_ in parts)),
-                ("Counts as missing", f"The {label} field is empty."),
-                ("What's counted", "; ".join(f"{m:,} of {n:,} {_label(ctx, o)} ({pct(m, n):.0f}%)" for o, _, n, m in parts)
-                 + f" — {missing:,} of {total:,} in all."),
-                ("Records listed", f"Every record with no {label}, per object, sorted by name."),
-            ],
-        )
+        names = [f for f, _ in keys]
+        base = BASE_CONDS.get(obj, ())
+        filled_by = ctx.filled_counts(obj, names, *base)
+        any_missing = "(" + " OR ".join(f"{f} = null" for f in names) + ")"
+        parts.append((obj, total, ctx.count(obj, *base, any_missing), {f: total - filled_by.get(f, total) for f in names}, names))
+    if not parts:
+        return  # e.g. only Opportunities chosen: none of these fields to check
+    total, missing = sum(p[1] for p in parts), sum(p[2] for p in parts)
+    label_of = {f"{prefix}{f}": part for prefix in _ADDRESS_PREFIXES for f, part in _KEY_PARTS}
+
+    def per_field(obj: str, empty: dict[str, int], n: int) -> str:
+        return ", ".join(f"{label_of.get(f, f)} {e:,} ({pct(e, n):.0f}%)" for f, e in empty.items())
+
+    ctx.metric(
+        "Missing Key Fields", pct(missing, total), "%", "lower-better", None,
+        how=f"The share of {', '.join(_label(ctx, o) for o, *_ in parts) or 'records'} missing a phone number, website or address "
+        f"(city, state or postal code): {missing:,} out of {total:,}.",
+        rule="Shown for information only; it doesn’t change the area score.",
+        records=[(o, *BASE_CONDS.get(o, ()), "(" + " OR ".join(f"{f} = null" for f in names) + ")") for o, n, m, _, names in parts if m],
+        columns=["Name", *dict.fromkeys(f for *_, names in parts for f in names), "OwnerId", "CreatedDate"],
+        order="Name",
+        criteria=[
+            ("Records checked", "; ".join(f"{n:,} {_label(ctx, o)}" for o, n, *_ in parts) + _window(ctx)),
+            ("Fields checked", "; ".join(f"{_cap(_label(ctx, o))}: {', '.join(_field_label(ctx, o, f) for f in names)}" for o, *_, names in parts)),
+            ("Counts as missing", "Any of these fields is empty. A record missing several counts once."),
+            ("What's counted", "; ".join(f"{m:,} of {n:,} {_label(ctx, o)} ({pct(m, n):.0f}%) — empty: {per_field(o, e, n)}" for o, n, m, e, _ in parts)
+             + f". {missing:,} of {total:,} in all."),
+            ("Records listed", "Every record missing at least one of these fields, per object, sorted by name."),
+        ],
+    )
 
 
 # ---------------------------------------------------------------- area 2: redundant fields & scorecard
@@ -752,7 +775,7 @@ STEP_LABELS = {
     duplicate_other_objects: "Looking for duplicates in your other objects",
     missing_email: "Checking for missing emails",
     missing_phone: "Checking for missing phone numbers",
-    missing_key_fields: "Checking other key fields for missing values",
+    missing_key_fields: "Checking phone, website and address fields",
     standardization: "Checking country and state values",
     field_completeness: "Measuring how complete key fields are",
     redundant_fields: "Looking for unused custom fields",
