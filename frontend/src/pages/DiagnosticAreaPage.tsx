@@ -76,6 +76,32 @@ export default function DiagnosticAreaPage() {
     else sections.push({ name, items: [{ label, i, title: o?.title ?? label }] });
   });
 
+  // First card of each object: how many of its records the check looked at.
+  const allRecords = (group: string) => {
+    const o = results?.objects?.find((x) => x.label === group || x.label === `open ${group}`);
+    if (!o || o.records == null) return null;
+    return (
+      <motion.button
+        key="all-records"
+        type="button"
+        onClick={() => navigate(`/data/${encodeURIComponent(o.name)}`)}
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="group flex flex-col rounded-xl border border-brand/25 bg-brand-soft/40 p-4 text-left transition hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-pop"
+        title={`Browse your ${group} in Your Data`}
+      >
+        <p className="text-sm font-medium text-ink-muted">All Records</p>
+        <p className="mt-2 text-2xl font-semibold tabular-nums">{fmtNumber(o.records)}</p>
+        <p className="mt-2 text-xs text-ink-muted">
+          {o.name === 'Lead' ? 'Open (not converted) Leads' : group} the last check looked at.
+        </p>
+        <span className="mt-auto inline-flex items-center gap-1 pt-3 text-xs font-medium text-brand">
+          Browse records <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-0.5" />
+        </span>
+      </motion.button>
+    );
+  };
+
   const card = (label: string, i: number, title: string) => {
     const v = result?.indicators.find((x) => x.label === label);
     const Card = v ? motion.button : motion.div;
@@ -215,13 +241,11 @@ export default function DiagnosticAreaPage() {
                   {sections.map((sec, si) =>
                     sec.name ? (
                       <section key={sec.name} className="rounded-xl border border-line bg-muted/30 p-4">
-                        <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-                          {sec.name}
-                          <span className="rounded-full bg-surface px-2 py-0.5 text-[11px] font-medium text-ink-muted ring-1 ring-line">
-                            {sec.items.length} {sec.items.length === 1 ? 'check' : 'checks'}
-                          </span>
-                        </h3>
-                        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{sec.items.map((it) => card(it.label, it.i, it.title))}</div>
+                        <h3 className="mb-3 text-sm font-semibold">{sec.name}</h3>
+                        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                          {allRecords(sec.name)}
+                          {sec.items.map((it) => card(it.label, it.i, it.title))}
+                        </div>
                       </section>
                     ) : (
                       <div key={`plain-${si}`} className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
