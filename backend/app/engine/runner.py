@@ -22,7 +22,6 @@ log = logging.getLogger("aquarient.engine")
 
 # Deeper outcome checks added to existing areas (see deep.py). Data Quality's scorecard stays last.
 DEEP = {
-    "area-2": [deep.empty_fields_that_matter],
     "area-7": [deep.automation_health],
     "area-8": [deep.report_trust],
     "area-10": [deep.forecast_setup],
@@ -212,7 +211,8 @@ def _run(db, http: httpx.Client, row: AssessmentRow) -> None:
             "status": status,
             "indicators": [{"label": m.label, "value": m.value, "unit": m.unit, "direction": m.direction, "score": m.score,
                             "how": m.how, "rule": m.rule, "records": m.records, "criteria": m.criteria,
-                            "fieldScores": m.field_scores} for m in metrics],
+                            "fieldScores": m.field_scores, "fieldList": m.field_list, "outOf": m.out_of, "outOfLabel": m.out_of_label}
+                           for m in metrics],
             "recordsEvaluated": sum(ctx.totals.values()) or None,
             "message": ("Some checks couldn’t run: " + " · ".join(notes)) if notes
             else None if area_id in ran else "None of the chosen objects are covered by this area.",

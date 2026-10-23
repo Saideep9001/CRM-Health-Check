@@ -299,6 +299,7 @@ def missing_key_fields(ctx: Ctx, obj: str) -> None:
     cond = "(" + " OR ".join(f"{f} = null" for f in keys) + ")"
     n = ctx.count(obj, *base, cond)
     filled_pct = 100 - pct(sum(empty.values()), total * len(keys))
+    ctx.stat(obj).completeness = round(filled_pct, 1)  # "Results by object": % of key values filled in
     score = range_score(filled_pct, 50, 95)
     label = _label(ctx, obj)
     worst = sorted(keys, key=lambda f: -empty[f])
@@ -664,14 +665,7 @@ def other_object_cards(ctx: Ctx) -> None:
         _cards(ctx, obj, *CORE_CARDS)
 
 
-# ---------------------------------------------------------------- area 2: redundant fields & scorecard
-
-KEY_FIELDS: dict[str, tuple[str, ...]] = {
-    "Account": ("Industry", "Phone", "Website", "Type", "BillingCountry", "NumberOfEmployees"),
-    "Contact": ("Email", "Phone", "Title", "AccountId", "MailingCountry"),
-    "Lead": ("Email", "Phone", "Company", "Title", "LeadSource", "Industry", "Country"),
-    "Opportunity": ("Amount", "NextStep", "LeadSource", "Type"),
-}
+# ---------------------------------------------------------------- area 2: the fields themselves, per object
 
 # Fields every record has or that the system fills in; not useful for "completeness".
 _SYSTEM_FIELDS = {
@@ -693,179 +687,377 @@ def _generic_key_fields(fields: dict[str, dict], limit: int = MAX_GENERIC_FIELDS
     return [f["name"] for f in picks[:limit]]
 
 
-def field_completeness(ctx: Ctx) -> None:
-    slots = missing_total = 0
-    incomplete_records: list[tuple[str, ...]] = []  # records missing at least one key field, per object
-    per_obj: list[tuple[str, int, int, float, list[str], int]] = []  # (object, records, incomplete, % filled, key fields, empty values)
-    for obj in ctx.selected(*KEY_FIELDS, *ctx.others()):
-        try:
-            fields = ctx.fields(obj)
-        except Unavailable:
-            continue
-        total = _base_total(ctx, obj)
-        if not total:
-            continue
-        keys = [f for f in KEY_FIELDS.get(obj, ()) if ctx.has_field(obj, f)] or _generic_key_fields(fields)
-        base = BASE_CONDS.get(obj, ())
-        filled_by = ctx.filled_counts(obj, keys, *base)
-        rows = [(f, total - filled_by[f]) for f in keys if f in filled_by]
-        if not rows:
-            continue
-        any_missing = "(" + " OR ".join(f"{f} = null" for f, _ in rows) + ")"
-        incomplete = ctx.count(obj, *base, any_missing)
-        incomplete_records.append((obj, *base, any_missing))
-        slots += total * len(rows)
-        missing_total += sum(m for _, m in rows)
-        obj_pct = 100 - pct(sum(m for _, m in rows), total * len(rows))
-        ctx.stat(obj).completeness = round(obj_pct, 1)
-        per_obj.append((obj, total, incomplete, obj_pct, [fields[f].get("label") or f for f, _ in rows], sum(m for _, m in rows)))
-        worst = sorted(rows, key=lambda r: -r[1])[:4]
-        label = _label(ctx, obj)
-        ctx.finding(
-            name=f"{_cap(label)} are missing key details",
-            score=range_score(obj_pct, 50, 95),
-            affected=incomplete,
-            description=f"{incomplete:,} of {total:,} {label} are missing at least one key detail; key fields are {obj_pct:.0f}% filled in overall. Least complete: "
-            + ", ".join(f"{fields[f].get('label') or f} ({100 - pct(m, total):.0f}% filled)" for f, m in worst)
-            + ".",
-            why="Missing details make records hard to act on and make reports by industry, source, or region unreliable.",
-            impact="Poor targeting, weak forecasts, and time lost looking for information.",
-            action=f"Fill the gaps (start with the least complete fields), and make the most important ones required on the {ctx.label(obj, plural=False)} layout or with a validation rule.",
-            obj=obj,
-            url=ctx.list_url(obj),
-            min_score=90,
-            records=(obj, *base, any_missing),
-            fix=f"/lightning/setup/ObjectManager/{obj}/FieldsAndRelationships/view",
-        )
-    complete = 100 - pct(missing_total, slots) if slots else 100
-    key_columns = ["Name"] + list(dict.fromkeys(f for r in incomplete_records for f in re.findall(r"(\w+) = null", r[-1])))
-    ctx.metric(
-        "Field completeness", complete, "%", "higher-better", range_score(complete, 50, 95),
-        how="How many of the key fields are filled in, across every chosen object: for example industry, phone and website on Accounts, "
-        "email and title on Contacts, company and lead source on open Leads, and amount and next step on Opportunities.",
-        rule="0 at 50% filled in or below, 100 at 95% or above, in proportion in between. "
-        "A problem is raised for an object when its own score is below 90.",
-        records=incomplete_records,
-        columns=key_columns,
-        order="Name",
-        criteria=[
-            ("Records checked", "; ".join(f"{n:,} {_label(ctx, o)}" for o, n, *_ in per_obj) + _window(ctx) if per_obj else "No records to check"),
-            ("Fields checked", "; ".join(f"{_cap(_label(ctx, o))}: {', '.join(k)}" for o, _, _, _, k, _ in per_obj) if per_obj else ""),
-            ("Other objects", "Objects without a set list use up to 8 fields people can fill in and that aren’t required (standard fields first, "
-             "then custom), skipping checkboxes, long text, formulas and auto-numbers."),
-            ("Counts as missing", "The field is empty."),
-            ("What's counted", "; ".join(f"{_cap(_label(ctx, o))} {p:.0f}% filled ({i:,} of {n:,} missing at least one)" for o, n, i, p, _, _ in per_obj)
-             + f" — {slots - missing_total:,} of {slots:,} key values filled in all." if per_obj else ""),
-            ("Flagged when", "An object’s key fields are less than about 90% filled in (its own score drops below 90)."),
-            ("Records listed", "Every record missing at least one key field, per object, sorted by name."),
-        ],
-    )
-    ctx.metric(
-        "Missing field values", missing_total, "count", "lower-better", None,
-        how="The total number of empty key fields across every chosen object (one record missing three key fields counts as three).",
-        rule="Shown for information only; it doesn’t change the area score.",
-        records=incomplete_records,
-        columns=key_columns,
-        order="Name",
-        criteria=[
-            ("Records checked", "; ".join(f"{n:,} {_label(ctx, o)}" for o, n, *_ in per_obj) + _window(ctx) if per_obj else "No records to check"),
-            ("Fields checked", "The same key fields as Field completeness"),
-            ("What's counted", "; ".join(f"{e:,} empty values on {_label(ctx, o)}" for o, *_, e in per_obj)
-             + f" — {missing_total:,} in all. One record missing three key fields counts three times." if per_obj else ""),
-            ("Records listed", "Every record missing at least one key field, per object, sorted by name."),
-        ],
-    )
-
+# Every chosen object gets cards about its fields: All Fields, Unused Fields, Outdated Fields, Look-alike Fields,
+# Low-Completion Fields and (Accounts, Contacts, Leads, Opportunities) Empty Fields Others Depend On. One Data Quality
+# Scorecard grades each object from its area 1 and area 2 results.
 
 _LEGACY = re.compile(r"(^|[_\s])(old|v\d+|bak|backup|deprecated|legacy|do not use|dnu|copy|temp|tmp|test|unused)([_\s]|$)", re.I)
-MAX_USAGE_CHECKS = 200  # per object; counted 50 at a time
+LOW_FILL = 0.2  # "low completion": filled on fewer than 20% of records
+UNUSED_FILL = 0.01  # "unused": filled on fewer than 1%
+MIN_RECORDS = 20  # fill rates aren't judged on objects with fewer records
+MAX_FILL_FIELDS = 400  # fields whose fill rate is counted per object (50 per query)
 
 
-def redundant_fields(ctx: Ctx) -> None:
-    flagged_total = checked_total = 0
-    per_obj: list[tuple[str, int, int]] = []  # (object, flagged fields, custom fields), for the rule table
-    for obj in ctx.selected(*KEY_FIELDS, *ctx.others()):
-        try:
-            fields = ctx.fields(obj)
-        except Unavailable:
-            continue
-        custom = [f for f in fields.values() if f.get("custom") and f.get("type") != "boolean" and not f.get("calculated")]
-        total = ctx.count(obj, recent=False) if custom else 0
-        flagged: list[str] = []
-        legacy = [f for f in custom if _LEGACY.search(f["name"].removesuffix("__c")) or _LEGACY.search(f.get("label") or "")]
-        flagged += [f"{f['name']} (looks outdated)" for f in legacy]
-        to_count = [f["name"] for f in custom if f not in legacy and f.get("filterable") and f.get("type") not in _SKIP_TYPES][:MAX_USAGE_CHECKS]
-        usage = ctx.filled_counts(obj, to_count, recent=False) if total >= 20 and to_count else {}
-        for f in custom:
-            if f["name"] in usage:
-                used = usage[f["name"]]
-                if used == 0:
-                    flagged.append(f"{f['name']} (never filled in)")
-                elif total >= 100 and used / total < 0.01:
-                    flagged.append(f"{f['name']} (filled on {used} of {total:,} records)")
-        flagged_total += len(flagged)
-        checked_total += len(custom)
-        if custom:
-            per_obj.append((obj, len(flagged), len(custom)))
-        if custom:
-            label = ctx.label(obj)
-            ctx.finding(
-                name=f"Unused or outdated custom fields on {label}",
-                score=rate_score(len(flagged) / len(custom), 0.4),
-                affected=len(flagged),
-                description=f"{len(flagged)} of {len(custom)} custom fields on {label} look unused or outdated: "
-                + "; ".join(flagged[:10])
-                + (" …" if len(flagged) > 10 else "")
-                + ".",
-                why="Cluttered pages slow people down, and similar-looking fields lead to data being entered in the wrong place.",
-                impact="Lower adoption, inconsistent data, and higher admin effort.",
-                action="Confirm with the business, remove these fields from page layouts, then delete or archive them. Dynamic Forms can also hide fields that only matter sometimes.",
-                obj=obj,
-                min_score=90,
-                fix=f"/lightning/setup/ObjectManager/{obj}/FieldsAndRelationships/view",
-            )
-    score = rate_score(flagged_total / checked_total, 0.4) if checked_total else 100
-    ctx.metric(
-        "Redundant fields", flagged_total, "count", "lower-better", score,
-        how=f"Custom fields (not checkboxes or formulas) on the chosen objects that look outdated by their name, such as “old”, “backup”, “test” or “do not use”, "
-        f"or that are never filled in or filled on fewer than 1% of records. We checked {checked_total:,} custom fields.",
-        rule="Scores 100 when no custom field looks unused, falling evenly to 0 when 40% of them do. "
-        "A problem is raised for an object when its own score is below 90.",
+def _own(f: dict) -> bool:
+    """A custom field built in this org on this object — not from an installed package (namespace__Field__c), which admins
+    can't change, nor a Contact field shown on person accounts (Field__pc)."""
+    return bool(f.get("custom")) and f["name"].count("__") < 2 and not f["name"].endswith("__pc")
+
+
+def _setup_link(obj: str) -> str:
+    return f"/lightning/setup/ObjectManager/{obj}/FieldsAndRelationships/view"
+
+
+def _fillable(fields: dict[str, dict]) -> list[str]:
+    """Fields people fill in: not system fields, checkboxes, long text, formulas or auto-numbers."""
+    return [f["name"] for f in fields.values()
+            if f["name"] not in _SYSTEM_FIELDS and f.get("type") not in _SKIP_TYPES and f.get("filterable")
+            and not f.get("calculated") and not f.get("autoNumber")]
+
+
+def _fill(ctx: Ctx, obj: str) -> tuple[int, dict[str, int]]:
+    """All records of the object, and how many have each fillable field filled in (counted once per object)."""
+    key = ("fill", obj)
+    if key not in ctx.memo:
+        fields = ctx.fields(obj)
+        total = ctx.count(obj, recent=False)
+        ctx.memo[key] = (total, ctx.filled_counts(obj, _fillable(fields)[:MAX_FILL_FIELDS], recent=False) if total else {})
+    return ctx.memo[key]
+
+
+def _field_item(ctx: Ctx, obj: str, f: str, note: str = "") -> dict:
+    """One row of a card's field list."""
+    meta = ctx.fields(obj).get(f, {})
+    total, filled = _fill(ctx, obj)
+    n = filled.get(f)
+    return {"name": f, "label": meta.get("label") or f, "type": meta.get("type", ""), "custom": bool(meta.get("custom")),
+            "filled": n, "of": total if n is not None else None, "pct": round(100 * n / total, 1) if n is not None and total else None,
+            "note": note}
+
+
+def _fields_card(ctx: Ctx, obj: str, title: str, value: float, unit: str, direction: str, score: float | None, *,
+                 how: str, rule: str, items: list[dict], criteria: list[tuple[str, str]], out_of: tuple[int, str] | None = None) -> None:
+    m = ctx.metric(f"{title} ({ctx.label(obj)})", value, unit, direction, score, how=how, rule=rule, criteria=criteria)  # type: ignore[arg-type]
+    m.field_list = items
+    if out_of:
+        m.out_of, m.out_of_label = out_of
+
+
+def all_fields(ctx: Ctx, obj: str) -> None:
+    fields = ctx.fields(obj)
+    total, _ = _fill(ctx, obj)
+    custom = [f for f in fields.values() if f.get("custom")]
+    formula = [f for f in fields.values() if f.get("calculated")]
+    required = [f for f in fields.values() if not f.get("nillable", True) and f.get("createable") and not f.get("defaultedOnCreate")]
+    items = sorted((_field_item(ctx, obj, f) for f in fields), key=lambda x: (not x["custom"], x["label"].lower()))
+    label = ctx.label(obj)
+    _fields_card(
+        ctx, obj, "All Fields", len(fields), "count", "lower-better", None,
+        how=f"{label} have {len(fields):,} fields: {len(fields) - len(custom):,} from Salesforce and {len(custom):,} added in your org.",
+        rule="Shown for information only; it doesn’t change the area score.",
+        items=items,
         criteria=[
-            ("Fields checked", "; ".join(f"{c:,} custom fields on {ctx.label(o)}" for o, _, c in per_obj)
-             + ". Checkboxes and formula fields are left out." if per_obj else "No custom fields on the chosen objects"),
-            ("Looks outdated", "The field’s name or label contains a word such as old, v1/v2…, bak, backup, deprecated, legacy, "
-             "do not use, DNU, copy, temp, tmp, test or unused."),
-            ("Never filled in", "Empty on every record (checked only on objects with at least 20 records, across all records, "
-             f"up to {MAX_USAGE_CHECKS} fields per object; long text and similar fields can’t be counted)."),
-            ("Hardly used", "Filled on fewer than 1% of records (checked only on objects with at least 100 records)."),
-            ("What's counted", "; ".join(f"{f:,} of {c:,} on {ctx.label(o)}" for o, f, c in per_obj)
-             + f" — {flagged_total:,} of {checked_total:,} custom fields in all." if per_obj else ""),
-            ("Flagged when", "More than 4% of an object’s custom fields look unused or outdated (its own score drops below 90)."),
+            ("Fields", f"{len(fields):,} in all — {len(fields) - len(custom):,} standard, {len(custom):,} custom"),
+            ("Formula fields", f"{len(formula):,} (worked out by Salesforce, never typed in)"),
+            ("Required", f"{len(required):,} must be filled in to save a record"),
+            ("Records", f"{total:,} {label} (used for the fill rates in the list)"),
+            ("Fields listed", "Every field, custom ones first, with how many records have it filled in where Salesforce can count it."),
         ],
     )
+
+
+def unused_fields(ctx: Ctx, obj: str) -> None:
+    fields = ctx.fields(obj)
+    total, filled = _fill(ctx, obj)
+    custom = [f for f in _fillable(fields) if _own(fields[f]) and f in filled]
+    if total < MIN_RECORDS or not custom:
+        return
+    unused = sorted((f for f in custom if filled[f] / total < UNUSED_FILL), key=lambda f: filled[f])
+    score = rate_score(len(unused) / len(custom), 0.4)
+    label = _label(ctx, obj)
+    items = [_field_item(ctx, obj, f, "Never filled in" if not filled[f] else f"Filled on only {filled[f]:,} records") for f in unused]
+    _fields_card(
+        ctx, obj, "Unused Fields", len(unused), "count", "lower-better", score, out_of=(len(custom), "custom fields"),
+        how=f"Custom fields built in your org on {label} that are never filled in, or filled on fewer than {UNUSED_FILL:.0%} of records: "
+        f"{len(unused):,} of {len(custom):,}.",
+        rule="Scores 100 when every custom field is used, falling evenly to 0 when 40% are unused. A problem is raised when the score is below 90.",
+        items=items,
+        criteria=[
+            ("Fields checked", f"{len(custom):,} custom fields people fill in, built in your org (fields from installed packages, checkboxes, "
+             "long text and formulas are left out)"),
+            ("Records", f"{total:,} {label}, all of them"),
+            ("Counts as unused", f"Filled on fewer than {UNUSED_FILL:.0%} of records (or never)."),
+            ("What's counted", f"{len(unused):,} unused: "
+             + (", ".join(fields[f].get("label") or f for f in unused[:8]) + (" …" if len(unused) > 8 else "") if unused else "none")),
+        ],
+    )
+    ctx.finding(
+        name=f"Unused custom fields on {label}", score=score, affected=len(unused), min_score=90,
+        description=f"{len(unused):,} of {len(custom):,} custom fields on {label} are never or hardly ever filled in, e.g. "
+        + ", ".join(fields[f].get("label") or f for f in unused[:4]) + ".",
+        why="Unused fields clutter page layouts and reports, slow people down and make it unclear which field is the right one.",
+        impact="Messy layouts, confused users and harder admin work.",
+        action="Check with the owners, then hide these fields from layouts or delete them (export the few values first).",
+        obj=obj, url=ctx.list_url(obj), fix=_setup_link(obj), measure=f"Unused Fields ({ctx.label(obj)})",
+    )
+
+
+def outdated_fields(ctx: Ctx, obj: str) -> None:
+    fields = ctx.fields(obj)
+    custom = [f for f in fields.values() if _own(f)]
+    if not custom:
+        return
+    old = sorted((f for f in custom if _LEGACY.search(f["name"].removesuffix("__c")) or _LEGACY.search(f.get("label") or "")),
+                 key=lambda f: (f.get("label") or f["name"]).lower())
+    score = rate_score(len(old) / len(custom), 0.2)
+    label = _label(ctx, obj)
+
+    def why(f: dict) -> str:
+        m = _LEGACY.search(f.get("label") or "") or _LEGACY.search(f["name"].removesuffix("__c"))
+        return f"Name says “{m.group(2)}”" if m else ""
+
+    _fields_card(
+        ctx, obj, "Outdated Fields", len(old), "count", "lower-better", score, out_of=(len(custom), "custom fields"),
+        how=f"Custom fields on {label} whose name or label says they’re old, a copy or a test: {len(old):,} of {len(custom):,}.",
+        rule="Scores 100 when none look outdated, falling evenly to 0 when 20% do. A problem is raised when the score is below 95.",
+        items=[_field_item(ctx, obj, f["name"], why(f)) for f in old],
+        criteria=[
+            ("Fields checked", f"{len(custom):,} custom fields built in your org (not from installed packages)"),
+            ("Looks outdated", "The name or label contains old, v1/v2…, bak, backup, deprecated, legacy, do not use, DNU, copy, temp, tmp, test or unused."),
+            ("What's counted", f"{len(old):,}: " + (", ".join(f.get("label") or f["name"] for f in old[:8]) + (" …" if len(old) > 8 else "") if old else "none")),
+        ],
+    )
+    ctx.finding(
+        name=f"Outdated-looking fields on {label}", score=score, affected=len(old),
+        description=f"{len(old):,} custom fields on {label} are named as old, copies or tests, e.g. " + ", ".join(f.get("label") or f["name"] for f in old[:4]) + ".",
+        why="People can’t tell the live field from the leftover one, so data ends up split between them.",
+        impact="Data in the wrong field and reports that miss it.",
+        action="Move any values worth keeping into the live field, then remove the old ones from layouts and delete them.",
+        obj=obj, url=ctx.list_url(obj), fix=_setup_link(obj), measure=f"Outdated Fields ({ctx.label(obj)})",
+    )
+
+
+_NOISE = re.compile(r"\b(old|new|v\d+|bak|backup|copy|temp|tmp|test|legacy|deprecated|dnu|do not use|id|c)\b|\d+")
+
+
+def _plain(label: str) -> str:
+    s = re.sub(r"[^a-z0-9 ]+", " ", label.lower())
+    return re.sub(r"\s+", " ", _NOISE.sub(" ", s)).strip()
+
+
+def lookalike_fields(ctx: Ctx, obj: str) -> None:
+    fields = ctx.fields(obj)
+    # Parts of an address or map location (Billing Latitude, ShippingGeo__Latitude__s…) belong to their compound field.
+    candidates = [f for f in fields.values() if f["name"] not in _SYSTEM_FIELDS and f.get("type") not in ("id", "address", "location")
+                  and not f.get("compoundFieldName") and not f["name"].endswith(("__s", "__pc"))]
+    if not any(_own(f) for f in candidates):
+        return
+    plain = {f["name"]: _plain(f.get("label") or f["name"]) for f in candidates}
+    pairs: list[tuple[dict, dict]] = []
+    for i, a in enumerate(candidates):
+        for b in candidates[i + 1:]:
+            if not (_own(a) or _own(b)):
+                continue  # Salesforce's and packages' fields aren't yours to merge
+            if len(plain[a["name"]]) >= 3 and plain[a["name"]] == plain[b["name"]]:
+                pairs.append((a, b))
+    custom = sum(1 for f in candidates if _own(f))
+    score = rate_score(len(pairs) / custom, 0.2)
+    label = _label(ctx, obj)
+    named = lambda f: f"{f.get('label') or f['name']} ({f['name']})"  # noqa: E731
+    items = []
+    for a, b in pairs:
+        items.append(_field_item(ctx, obj, a["name"], f"Looks like {named(b)}"))
+        items.append(_field_item(ctx, obj, b["name"], f"Looks like {named(a)}"))
+    _fields_card(
+        ctx, obj, "Look-alike Fields", len(pairs), "count", "lower-better", score, out_of=(custom, "custom fields"),
+        how=f"Pairs of fields on {label} with the same name once words like old, copy or 2 are ignored (at least one built in your org): {len(pairs):,}.",
+        rule="Scores 100 when there are none, falling evenly to 0 when the pairs reach 20% of the custom fields. A problem is raised when the score is below 95.",
+        items=items,
+        criteria=[
+            ("Fields compared", f"{len(candidates):,} fields, {custom:,} of them built in your org (parts of addresses and map locations left out)"),
+            ("Look-alike means", "The labels match once case, punctuation, numbers and words like old, new, copy, v2 or test are ignored "
+             "(“Phone 2” = “Phone”, “Old Title” = “Title”). At least one of the two is built in your org."),
+            ("What's counted", f"{len(pairs):,} pairs: " + ("; ".join(f"{named(a)} ↔ {named(b)}" for a, b in pairs[:5]) + (" …" if len(pairs) > 5 else "") if pairs else "none")),
+        ],
+    )
+    ctx.finding(
+        name=f"Look-alike fields on {label}", score=score, affected=len(pairs),
+        description=f"{len(pairs):,} pairs of fields on {label} seem to hold the same thing, e.g. "
+        + "; ".join(f"{a.get('label')} / {b.get('label')}" for a, b in pairs[:3]) + ".",
+        why="When two fields mean the same, people fill in one or the other, so neither is complete and reports disagree.",
+        impact="Split data, conflicting reports and wasted admin time.",
+        action="Pick the field to keep, copy the other’s values into it, update reports and automation, then retire the copy.",
+        obj=obj, url=ctx.list_url(obj), fix=_setup_link(obj), measure=f"Look-alike Fields ({ctx.label(obj)})",
+    )
+
+
+def low_completion_fields(ctx: Ctx, obj: str) -> None:
+    fields = ctx.fields(obj)
+    total, filled = _fill(ctx, obj)
+    checked = [f for f in _fillable(fields) if f in filled]
+    if total < MIN_RECORDS or not checked:
+        return
+    low = sorted((f for f in checked if filled[f] / total < LOW_FILL), key=lambda f: filled[f])
+    score = rate_score(len(low) / len(checked), 0.5)
+    label = _label(ctx, obj)
+    _fields_card(
+        ctx, obj, "Low-Completion Fields", len(low), "count", "lower-better", score, out_of=(len(checked), "fields people fill in"),
+        how=f"Fields on {label} filled on fewer than {LOW_FILL:.0%} of records: {len(low):,} of {len(checked):,}.",
+        rule="Scores 100 when every field is filled on at least 20% of records, falling evenly to 0 when half are below that. "
+        "A problem is raised when the score is below 90.",
+        items=[_field_item(ctx, obj, f) for f in low],
+        criteria=[
+            ("Fields checked", f"{len(checked):,} fields people fill in, standard and custom (checkboxes, long text, formulas and system fields are left out)"),
+            ("Records", f"{total:,} {label}, all of them"),
+            ("Counts as low", f"Filled on fewer than {LOW_FILL:.0%} of records."),
+            ("What's counted", f"{len(low):,} fields; the least filled: "
+             + (", ".join(f"{fields[f].get('label') or f} ({100 * filled[f] / total:.0f}%)" for f in low[:6]) if low else "none")),
+        ],
+    )
+    ctx.metrics[ctx.area_id][-1].field_scores = [
+        {"field": f, "label": fields[f].get("label") or f, "count": filled[f], "of": total, "pct": round(100 * filled[f] / total, 1)}
+        for f in low[:12]
+    ]
+    ctx.finding(
+        name=f"Rarely filled fields on {label}", score=score, affected=len(low), min_score=90,
+        description=f"{len(low):,} of {len(checked):,} fields on {label} are filled on fewer than {LOW_FILL:.0%} of records, e.g. "
+        + ", ".join(f"{fields[f].get('label') or f} ({100 * filled[f] / total:.0f}%)" for f in low[:4]) + ".",
+        why="Fields nobody fills in make layouts longer and reports that group by them misleading.",
+        impact="Reports with mostly blank groups and slower data entry.",
+        action="Decide which of these fields matter: make those required at the right moment, and remove the rest from layouts.",
+        obj=obj, url=ctx.list_url(obj), fix=_setup_link(obj), measure=f"Low-Completion Fields ({ctx.label(obj)})",
+    )
+
+
+def depended_empty_fields(ctx: Ctx, obj: str) -> None:
+    from .core import DEFAULT_OBJECTS
+    from .deep import DEPENDENT_TYPES, _plural
+
+    if obj not in DEFAULT_OBJECTS:
+        return  # Salesforce lists dependencies by field id for these objects only
+    fields = ctx.fields(obj)
+    total, filled = _fill(ctx, obj)
+    if total < MIN_RECORDS:
+        return
+    rows = ctx.setup(f"SELECT Id, DeveloperName, NamespacePrefix FROM CustomField WHERE TableEnumOrId = '{obj}'")
+    ids = {f"{r.get('DeveloperName')}__c": r["Id"] for r in rows if not r.get("NamespacePrefix")}
+    empty = [f for f in ids if f in filled and filled[f] / total < LOW_FILL]
+    deps: dict[str, dict[str, int]] = {}
+    for i in range(0, len(empty), 100):
+        chunk = ", ".join(f"'{ids[f]}'" for f in empty[i:i + 100])
+        for r in ctx.setup("SELECT MetadataComponentType, RefMetadataComponentId FROM MetadataComponentDependency "
+                           f"WHERE RefMetadataComponentId IN ({chunk})"):
+            t = r.get("MetadataComponentType")
+            if t in DEPENDENT_TYPES:
+                d = deps.setdefault(r.get("RefMetadataComponentId"), {})
+                d[t] = d.get(t, 0) + 1
+    matter = sorted((f for f in empty if deps.get(ids[f])), key=lambda f: (-sum(deps[ids[f]].values()), filled[f]))
+    score = rate_score(len(matter) / max(len(empty), 1), 0.5) if empty else 100
+    label = _label(ctx, obj)
+    used_by = lambda f: "Used by " + ", ".join(_plural(c, DEPENDENT_TYPES[t]) for t, c in deps[ids[f]].items())  # noqa: E731
+    _fields_card(
+        ctx, obj, "Empty Fields Others Depend On", len(matter), "count", "lower-better", score, out_of=(len(empty), "nearly empty custom fields"),
+        how=f"Custom fields on {label} filled on fewer than {LOW_FILL:.0%} of records ({len(empty):,} found) that a report, flow, Apex code, "
+        f"validation rule, workflow rule or email template still uses: {len(matter):,}.",
+        rule="Scores 100 when none of the nearly empty fields are relied on, falling evenly to 0 when half of them are. A problem is raised when the score is below 95.",
+        items=[_field_item(ctx, obj, f, used_by(f)) for f in matter],
+        criteria=[
+            ("Fields checked", f"Custom fields built in your org (not from installed packages) on {label}; checkboxes, long text and formulas left out."),
+            ("Nearly empty", f"Filled on fewer than {LOW_FILL:.0%} of records: {len(empty):,} fields."),
+            ("Relied on", "At least one report, flow, Apex class or trigger, validation rule, workflow rule or email template uses the field, "
+             "according to Salesforce’s list of what depends on what."),
+            ("What's counted", f"{len(matter):,} of the {len(empty):,} nearly empty fields are relied on."),
+        ],
+    )
+    ctx.finding(
+        name=f"Nearly empty fields that reports and automation rely on ({label})", score=score, affected=len(matter),
+        description=f"{len(matter):,} custom fields on {label} are filled on less than {LOW_FILL:.0%} of records, yet reports, flows or code depend on them: "
+        + "; ".join(f"{fields[f].get('label') or f} ({100 * filled[f] / total:.0f}% filled) — {used_by(f).lower()}" for f in matter[:5]) + ".",
+        why="A report grouped by an empty field, or a flow that branches on one, quietly gives wrong answers.",
+        impact="Reports and automations that look fine but are built on missing data.",
+        action="Make these fields required at the right stage, backfill the most important records, or change what relies on them.",
+        obj=obj, url=ctx.list_url(obj), fix=_setup_link(obj), measure=f"Empty Fields Others Depend On ({ctx.label(obj)})",
+    )
+
+
+FIELD_CARDS = (all_fields, unused_fields, outdated_fields, lookalike_fields, low_completion_fields, depended_empty_fields)
+
+
+def _field_cards(ctx: Ctx, obj: str) -> None:
+    for check in FIELD_CARDS:
+        try:
+            check(ctx, obj)
+        except Unavailable:
+            continue
+        except SalesforceAuthExpired:
+            raise
+        except SalesforceError as exc:  # e.g. no "View Setup" for dependencies: the other cards still show
+            log.warning("%s on %s skipped: %s", check.__name__, obj, exc)
+
+
+def account_field_cards(ctx: Ctx) -> None:
+    ctx.selected("Account")
+    _field_cards(ctx, "Account")
+
+
+def contact_field_cards(ctx: Ctx) -> None:
+    ctx.selected("Contact")
+    _field_cards(ctx, "Contact")
+
+
+def lead_field_cards(ctx: Ctx) -> None:
+    ctx.selected("Lead")
+    _field_cards(ctx, "Lead")
+
+
+def opportunity_field_cards(ctx: Ctx) -> None:
+    ctx.selected("Opportunity")
+    _field_cards(ctx, "Opportunity")
+
+
+def other_object_field_cards(ctx: Ctx) -> None:
+    for obj in ctx.selected(*ctx.others()):
+        try:
+            ctx.fields(obj)
+        except Unavailable:
+            continue
+        _field_cards(ctx, obj)
+
+
+def _grade(score: float) -> str:
+    return "A" if score >= 90 else "B" if score >= 80 else "C" if score >= 70 else "D" if score >= 60 else "F"
 
 
 def scorecard(ctx: Ctx) -> None:
-    """Summary of every scored data quality indicator measured in this run."""
-    scores = [m.score for area in ("area-1", "area-2") for m in ctx.metrics.get(area, []) if m.score is not None]
-    value = sum(scores) / len(scores) if scores else 100
-    ctx.metric(
-        "Data quality scorecard", value, "%", "higher-better", None,
-        how=f"The average of the {len(scores)} scored data quality measures above (duplicates, missing details, consistent spellings, unused fields and more).",
-        rule="Shown for information only; it doesn’t change the area score.",
+    """A grade per object from its scored area 1 and area 2 measures, and one overall."""
+    per_obj: list[tuple[str, float, int]] = []
+    for obj in ctx.scope.objects:
+        try:
+            plural = ctx.label(obj)
+        except Unavailable:
+            continue
+        mine = [m.score for area in ("area-1", "area-2") for m in ctx.metrics.get(area, [])
+                if m.score is not None and (m.label.endswith(f"({plural})") or m.label == f"Duplicate {plural}" or m.label.startswith(f"{plural} Without"))]
+        if mine:
+            per_obj.append((plural, sum(mine) / len(mine), len(mine)))
+    value = sum(s for _, s, _ in per_obj) / len(per_obj) if per_obj else 100
+    m = ctx.metric(
+        "Data Quality Scorecard", value, "%", "higher-better", None,
+        how="A grade for each chosen object from its scored duplicates, missing fields, formats and field-health measures, and the average of them all.",
+        rule="Shown for information only; it doesn’t change the area score. Grades: A 90+, B 80–89, C 70–79, D 60–69, F below 60.",
         criteria=[
-            ("Measures included", ", ".join(f"{m.label} ({m.score:.0f})" for area in ("area-1", "area-2")
-                                            for m in ctx.metrics.get(area, []) if m.score is not None) or "None were scored"),
-            ("What's counted", f"The plain average of those {len(scores)} scores: {value:.0f}%. Every measure counts equally."),
-            ("Left out", "Measures shown for information only, and checks that couldn’t run in this org."),
+            ("Grades", "; ".join(f"{p}: {_grade(s)} ({s:.0f}, from {n} measures)" for p, s, n in per_obj) or "Nothing scored yet"),
+            ("Overall", f"{_grade(value)} ({value:.0f}) — the plain average of the objects’ scores"),
+            ("Measures included", "Every scored card of each object from this check: Duplicates, Key Fields & Standardization (area 1, "
+             "when checked together) and this area."),
         ],
     )
+    m.field_scores = [{"field": p, "label": f"{p} ({_grade(s)})", "count": round(s), "of": 100, "pct": round(s, 1)} for p, s, _ in per_obj]
 
 
 AREAS = {
     "area-1": [account_cards, contact_cards, lead_cards, opportunity_cards, other_object_cards],
-    "area-2": [field_completeness, redundant_fields, scorecard],
+    "area-2": [account_field_cards, contact_field_cards, lead_field_cards, opportunity_field_cards, other_object_field_cards, scorecard],
 }
 
 STEP_LABELS = {
@@ -874,7 +1066,10 @@ STEP_LABELS = {
     lead_cards: "Checking Leads: duplicates, missing fields, formats, activity",
     opportunity_cards: "Checking Opportunities: duplicates, missing fields, formats, activity",
     other_object_cards: "Checking your other objects",
-    field_completeness: "Measuring how complete key fields are",
-    redundant_fields: "Looking for unused custom fields",
-    scorecard: "Building the data quality scorecard",
+    account_field_cards: "Checking Account fields: unused, outdated, look-alike, rarely filled",
+    contact_field_cards: "Checking Contact fields: unused, outdated, look-alike, rarely filled",
+    lead_field_cards: "Checking Lead fields: unused, outdated, look-alike, rarely filled",
+    opportunity_field_cards: "Checking Opportunity fields: unused, outdated, look-alike, rarely filled",
+    other_object_field_cards: "Checking the fields of your other objects",
+    scorecard: "Grading each object",
 }

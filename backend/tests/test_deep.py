@@ -103,7 +103,8 @@ def test_deep_checks(client, sf):
     cats = ["data-quality", "workflows", "reporting", "integrations"]
     _, res, findings = wf.run(client, areaIds=areas, categoryIds=cats, objects=["Account", "Contact", "Lead", "Opportunity"])
     ind = {i["label"]: i["value"] for x in res["areas"] for i in x["indicators"]}
-    assert ind["Empty fields others depend on"] == 1  # Region__c: empty, used by a report and a flow (layout ignored)
+    dep_card = next(k for k in ind if k.startswith("Empty Fields Others Depend On (Opportunit"))  # the fake org's plural label
+    assert ind[dep_card] == 1  # Region__c: empty, used by a report and a flow (layout ignored)
     assert ind["Legacy automation to migrate"] == 2 and ind["Overlapping automation"] == 1  # Opportunity: PB + flow + trigger
     assert ind["Stuck or failing automations"] == 3
     assert ind["Report trust issues"] == 3  # retired "North" filter + a report that errors + a dashboard run by a leaver
@@ -111,8 +112,8 @@ def test_deep_checks(client, sf):
     assert ind["Sync health score"] == 43.0  # stalled sync (-40), 2 dupes of 100 created (-2), 10% failed jobs (-15)
 
     names = {f["name"]: f for f in findings}
-    dep = names["Nearly empty fields that reports and automation rely on"]
-    assert "Opportunity.Region__c (0% filled) — used by 1 report, 1 flow" in dep["description"]
+    dep = next(f for n, f in names.items() if n.startswith("Nearly empty fields that reports and automation rely on (Opportunit"))
+    assert "Region (0% filled) — used by 1 report, 1 flow" in dep["description"] and dep["measure"] == dep_card
     assert "Opportunity: 1 Process Builder, 1 record-triggered flow, 1 Apex trigger" in names["Objects automated by several tools at once"]["description"]
     assert "Process Builders and Workflow Rules to move to Flow" in names and "Flows stuck waiting for more than a week" in names
     assert "retired value(s) North" in names["Reports filtering on retired values or empty fields"]["description"]

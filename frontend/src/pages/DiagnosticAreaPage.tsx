@@ -2,13 +2,20 @@ import { motion } from 'framer-motion';
 import {
   ArrowLeft,
   ArrowRight,
+  Archive,
+  Award,
   Briefcase,
   CalendarDays,
   CheckCircle2,
   CircleOff,
   Clock,
+  Columns3,
   Copy,
   Database,
+  GitCompare,
+  History,
+  Link2,
+  PieChart,
   Gauge,
   Hourglass,
   SpellCheck,
@@ -65,6 +72,13 @@ function toneOf(v: IndicatorValue): keyof typeof TONES {
 }
 
 function iconFor(title: string): LucideIcon {
+  if (/^all fields/i.test(title)) return Columns3;
+  if (/^unused/i.test(title)) return Archive;
+  if (/^outdated/i.test(title)) return History;
+  if (/look-alike/i.test(title)) return GitCompare;
+  if (/low-completion/i.test(title)) return PieChart;
+  if (/depend on/i.test(title)) return Link2;
+  if (/scorecard/i.test(title)) return Award;
   if (/duplicate/i.test(title)) return Copy;
   if (/missing/i.test(title)) return CircleOff;
   if (/standardi/i.test(title)) return SpellCheck;
@@ -120,6 +134,7 @@ export default function DiagnosticAreaPage() {
 
   // First card of each object: how many of its records the check looked at.
   const allRecords = (group: string) => {
+    if (area.id !== 'area-1') return null; // area 2 is about fields: its All Fields card comes first instead
     const o = objectOfGroup(group);
     if (!o || o.records == null) return null;
     return (
@@ -175,16 +190,18 @@ export default function DiagnosticAreaPage() {
       );
     }
     const tone = TONES[toneOf(v)];
-    const total = objectOfGroup(group)?.records ?? null;
+    // Out of what: what the card says it's out of (e.g. 225 custom fields), else the object's records.
+    const total = v.outOf ?? (area.id === 'area-1' ? (objectOfGroup(group)?.records ?? null) : null);
+    const ofWhat = v.outOfLabel ? ` ${v.outOfLabel}` : '';
     const share = shareOf(v, total);
     const decimals = !Number.isInteger(v.value);
     const sub =
       v.unit === '%'
         ? total
-          ? `≈ ${fmtNumber(Math.round((v.value * total) / 100))} of ${fmtNumber(total)}`
+          ? `≈ ${fmtNumber(Math.round((v.value * total) / 100))} of ${fmtNumber(total)}${ofWhat}`
           : ''
         : total
-          ? `${Math.round(share * 10) / 10}% of ${fmtNumber(total)}`
+          ? `${Math.round(share * 10) / 10}% of ${fmtNumber(total)}${ofWhat}`
           : '';
     return (
       <motion.button
@@ -216,11 +233,15 @@ export default function DiagnosticAreaPage() {
           {sub && <span className="text-xs text-ink-muted">{sub}</span>}
         </span>
         <span className="mt-3 block">
-          <ProgressBar value={v.direction === 'higher-better' ? share : Math.max(share, v.value > 0 ? 2 : 0)} color={tone.bar} delay={i * 0.04} />
+          {/^All Fields/.test(label) ? (
+            <span className="block h-1.5" aria-hidden="true" />
+          ) : (
+            <ProgressBar value={v.direction === 'higher-better' ? share : Math.max(share, v.value > 0 ? 2 : 0)} color={tone.bar} delay={i * 0.04} />
+          )}
         </span>
         {v.how && <span className="mt-3 line-clamp-2 text-xs text-ink-muted">{v.how}</span>}
         <span className="mt-auto inline-flex items-center gap-1 pt-4 text-xs font-semibold text-brand">
-          Rule &amp; records <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-1" />
+          Rule &amp; {v.fieldList ? 'fields' : 'records'} <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-1" />
         </span>
       </motion.button>
     );

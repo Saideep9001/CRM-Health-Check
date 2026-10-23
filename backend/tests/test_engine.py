@@ -157,8 +157,15 @@ def test_full_data_quality_run(client, sf):
     assert (odd["BillingState"]["count"], odd["BillingState"]["of"]) == (1, 5)  # "California" vs "CA"
     assert ind["No Activity in 6 Months (Accounts)"]["fieldScores"] is None
     ind2 = {i["label"]: i for i in areas["area-2"]["indicators"]}
-    assert set(ind2) == {"Field completeness", "Missing field values", "Redundant fields", "Data quality scorecard", "Empty fields others depend on"}
-    assert ind2["Redundant fields"]["value"] == 2
+    labels2 = [i["label"] for i in areas["area-2"]["indicators"]]
+    # each object's field cards together, then one scorecard
+    assert labels2[:6] == ["All Fields (Accounts)", "Unused Fields (Accounts)", "Outdated Fields (Accounts)", "Look-alike Fields (Accounts)",
+                           "Low-Completion Fields (Accounts)", "Empty Fields Others Depend On (Accounts)"]
+    assert labels2[-1] == "Data Quality Scorecard"
+    assert ind2["Unused Fields (Accounts)"]["value"] == 1  # Region_Code__c is never filled in
+    assert [f["name"] for f in ind2["Outdated Fields (Accounts)"]["fieldList"]] == ["Legacy_Notes_old__c"]
+    grades = dict(ind2["Data Quality Scorecard"]["criteria"])["Grades"]
+    assert grades.startswith("Accounts: ") and "Contacts: " in grades
     assert res["categories"][0]["categoryId"] == "data-quality"
     assert res["overallScore"] == res["dataQualityScore"] == res["categories"][0]["score"]
     assert 0 < res["overallScore"] < 100 and res["salesProcessScore"] is None
@@ -167,9 +174,10 @@ def test_full_data_quality_run(client, sf):
     names = [f["name"] for f in findings]
     assert "Duplicate Accounts" in names and "State and Country picklists are turned off" in names
     assert "Duplicate Contacts" not in names  # 1 extra of 200 is too small to report
-    unused = next(f for f in findings if f["name"] == "Unused or outdated custom fields on Accounts")
-    assert unused["objectName"] == "Account"
-    assert "Region_Code__c (never filled in)" in unused["description"] and "Legacy_Notes_old__c" in unused["description"]
+    unused = next(f for f in findings if f["name"] == "Unused custom fields on Accounts")
+    assert unused["objectName"] == "Account" and unused["measure"] == "Unused Fields (Accounts)" and "Region_Code__c" in unused["description"]
+    old = next(f for f in findings if f["name"] == "Outdated-looking fields on Accounts")
+    assert old["measure"] == "Outdated Fields (Accounts)" and "Legacy Notes" in old["description"]
     order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
     assert [order[f["severity"]] for f in findings] == sorted(order[f["severity"]] for f in findings)
     assert all(f["priority"] in ("P1", "P2", "P3", "P4") and f["areaId"] in ("area-1", "area-2") for f in findings)
@@ -251,7 +259,7 @@ def test_custom_object_gets_generic_checks(client, sf):
     inv = res["objects"][0]
     assert inv["name"] == "Invoice__c" and inv["label"] == "Invoices" and inv["records"] == 40 and inv["duplicates"] == 3
     names = [f["name"] for f in client.get(f"{API}/assessments/{aid}/findings").json()["items"]]
-    assert "Duplicate Invoices" in names and "Unused or outdated custom fields on Invoices" in names
+    assert "Duplicate Invoices" in names and "Outdated-looking fields on Invoices" in names
     area1 = next(x for x in res["areas"] if x["areaId"] == "area-1")
     assert area1["status"] == "assessed" and area1["message"] is None
 

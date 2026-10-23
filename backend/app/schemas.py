@@ -334,6 +334,18 @@ class FieldScore(ApiModel):
     pct: float
 
 
+class FieldListItem(ApiModel):
+    """A field listed under a card about fields (unused, outdated, look-alike…)."""
+    name: str
+    label: str
+    type: str = ""
+    custom: bool = False
+    filled: int | None = None  # records with it filled in (None: Salesforce can't count this field)
+    of: int | None = None
+    pct: float | None = None
+    note: str = ""  # why it's listed, e.g. "Looks like Phone (Phone)"
+
+
 class IndicatorValue(ApiModel):
     label: str
     value: float
@@ -344,6 +356,9 @@ class IndicatorValue(ApiModel):
     rule: str | None = None  # how it becomes the score
     criteria: list[list[str]] = []  # the exact rules, as [name, detail] rows
     field_scores: list[FieldScore] | None = None  # per field: this card's count (duplicated, empty or odd)
+    field_list: list[FieldListItem] | None = None  # cards about fields: the fields themselves
+    out_of: int | None = None  # what the number is out of, when not the object's records (e.g. 225 custom fields)
+    out_of_label: str | None = None
 
     @model_validator(mode="before")
     @classmethod

@@ -46,70 +46,10 @@ def _plural(n: int, word: str) -> str:
     return f"{n} {word}" + ("" if n == 1 else "s")
 
 
-# ---------------------------------------------------------------- area 2: empty fields others depend on
+# ---------------------------------------------------------------- what can depend on a field (area 2's Empty Fields Others Depend On)
 
 DEPENDENT_TYPES = {"Report": "report", "Flow": "flow", "ApexClass": "Apex class", "ApexTrigger": "Apex trigger",
                    "ValidationRule": "validation rule", "WorkflowRule": "workflow rule", "EmailTemplate": "email template"}
-NEARLY_EMPTY = 0.2
-
-
-def empty_fields_that_matter(ctx: Ctx) -> None:
-    objs = [o for o in ctx.selected(*CORE) if ctx.has_object(o)]
-    ids = ctx.setup("SELECT Id, DeveloperName, TableEnumOrId, NamespacePrefix FROM CustomField WHERE TableEnumOrId IN ("
-                    + ", ".join(f"'{o}'" for o in objs) + ")")
-    field_id = {(r.get("TableEnumOrId"), f"{r.get('DeveloperName')}__c"): r["Id"] for r in ids if not r.get("NamespacePrefix")}
-    empty: list[tuple[str, str, float, str]] = []  # (object, field, fill share, field id)
-    for obj in objs:
-        fields = ctx.fields(obj)
-        names = [n for (o, n) in field_id if o == obj and n in fields and fields[n].get("filterable")
-                 and fields[n].get("type") not in ("boolean", "textarea") and not fields[n].get("calculated")]
-        total = ctx.count(obj, recent=False) if names else 0
-        if total < 20:
-            continue
-        for name, filled in ctx.filled_counts(obj, names, recent=False).items():
-            if filled / total < NEARLY_EMPTY:
-                empty.append((obj, name, filled / total, field_id[(obj, name)]))
-    deps: dict[str, dict[str, int]] = {}
-    for i in range(0, len(empty), 100):
-        chunk = ", ".join(f"'{e[3]}'" for e in empty[i:i + 100])
-        for r in ctx.setup("SELECT MetadataComponentType, MetadataComponentName, RefMetadataComponentId FROM MetadataComponentDependency "
-                           f"WHERE RefMetadataComponentId IN ({chunk})"):
-            t = r.get("MetadataComponentType")
-            if t in DEPENDENT_TYPES:
-                d = deps.setdefault(r.get("RefMetadataComponentId"), {})
-                d[t] = d.get(t, 0) + 1
-    matter = sorted(((e, deps[e[3]]) for e in empty if deps.get(e[3])), key=lambda x: (-sum(x[1].values()), x[0][2]))
-    score = rate_score(len(matter) / max(len(empty), 1), 0.5) if empty else 100
-    ctx.metric(
-        "Empty fields others depend on", len(matter), "count", "lower-better", score,
-        how=f"Custom fields on Accounts, Contacts, Leads and Opportunities that are filled on fewer than {NEARLY_EMPTY:.0%} of all records "
-        f"({len(empty)} found), and that a report, flow, Apex code, validation rule, workflow rule or email template still uses.",
-        rule="Scores 100 when none of the nearly empty fields are relied on, falling evenly to 0 when half of them are.",
-        criteria=[
-            ("Fields checked", f"Custom fields built in your org (not from installed packages) on {', '.join(ctx.label(o) for o in objs) or 'no objects'}, "
-             "across all records. Checkboxes, long text and formula fields are left out, and so are objects with fewer than 20 records."),
-            ("Nearly empty", f"Filled on fewer than {NEARLY_EMPTY:.0%} of records: {len(empty)} fields."),
-            ("Relied on", "At least one report, flow, Apex class, Apex trigger, validation rule, workflow rule or email template uses the field, "
-             "according to Salesforce’s list of what depends on what."),
-            ("What's counted", f"{len(matter)} of the {len(empty)} nearly empty fields are relied on"
-             + (": " + ", ".join(f"{o}.{n} ({share:.0%} filled)" for (o, n, share, _), _ in matter[:5]) + (" …" if len(matter) > 5 else "") if matter else "") + "."),
-            ("Flagged when", "Any nearly empty field is relied on."),
-        ],
-    )
-    if not matter:
-        return
-    lines = [f"{o}.{n} ({share:.0%} filled) — used by " + ", ".join(_plural(c, DEPENDENT_TYPES[t]) for t, c in d.items())
-             for (o, n, share, _), d in matter[:8]]
-    _setting(
-        ctx, "Nearly empty fields that reports and automation rely on",
-        f"{len(matter)} custom fields are filled on less than {NEARLY_EMPTY:.0%} of records, yet reports, flows or code depend on them: "
-        + "; ".join(lines) + (" …" if len(matter) > 8 else "") + ".",
-        "A report grouped by an empty field, or a flow that branches on one, quietly gives wrong answers — and nobody can tell from the output.",
-        "Reports and automations that look fine but are built on missing data.",
-        "Fix these fields first: make them required at the right stage, backfill the most important records, or change the reports and flows that rely on them.",
-        "high" if score < 40 else "medium", affected=len(matter),
-        fix="/lightning/setup/ObjectManager/home",
-    )
 
 
 # ---------------------------------------------------------------- area 7: automation health
@@ -473,7 +413,6 @@ def sync_health(ctx: Ctx) -> None:
 
 
 STEP_LABELS = {
-    empty_fields_that_matter: "Finding empty fields that reports and flows rely on",
     automation_health: "Checking automation health",
     report_trust: "Checking whether key reports can be trusted",
     forecast_setup: "Checking forecast setup",

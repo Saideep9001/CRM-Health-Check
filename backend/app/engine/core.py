@@ -50,6 +50,11 @@ class Metric:
     criteria: list[list[str]] | None = None
     # Per field, this card's number: [{"field", "label", "count", "of", "pct"}] (e.g. 36 of 582 empty).
     field_scores: list[dict] | None = None
+    # For cards about fields (not records), the fields themselves: [{"name", "label", "type", "custom", "filled", "of", "pct", "note"}].
+    field_list: list[dict] | None = None
+    # What the number is out of, when it isn't the object's records: e.g. (225, "custom fields").
+    out_of: int | None = None
+    out_of_label: str | None = None
 
 
 @dataclass
@@ -274,10 +279,12 @@ class Ctx:
 
     def finding(self, *, name: str, score: float, affected: int, description: str, why: str, impact: str, action: str,
                 obj: str | None, url: str | None = None, min_score: float = 95,
-                records: tuple[str, ...] | None = None, recent: bool = True, value: float | None = None, fix: str | None = None) -> None:
+                records: tuple[str, ...] | None = None, recent: bool = True, value: float | None = None, fix: str | None = None,
+                measure: str | None = None) -> None:
         """Record a problem when it's big enough to matter (score below `min_score`).
 
         `records` = (object, *conditions) selecting exactly the affected records, so people can see and export them.
+        `measure` = the card that raised it, when a step makes several cards for one object.
         """
         if affected <= 0 or score >= min_score:
             return
@@ -288,6 +295,7 @@ class Ctx:
         self.findings.append(FindingDraft(
             self.area_id, name, severity_for(score), affected, description, why, impact, action, url, obj,
             records_object=rec_obj, records_where=rec_where, value_at_risk=value, fix_url=self.setup_url(fix) if fix else None,
+            measure=measure,
         ))
 
     def setup_url(self, path: str) -> str:

@@ -33,6 +33,7 @@ import { InlineError } from '../ui/States';
 import { ChangeBadge } from './AffectedRecords';
 import { FixPlanPanel } from './FixPlanPanel';
 import { RecordsTable } from './RecordsTable';
+import { FieldListTable } from './FieldListTable';
 import { FieldScoreChart, chartKindFor } from './FieldScoreChart';
 
 /** Same thresholds the engine uses (backend/app/engine/core.py → severity_for, finding min_score). */
@@ -420,9 +421,15 @@ export function DetailsPanel({
 
           {extra}
 
-          <Section icon={<Database className="h-3.5 w-3.5" />} title={finding ? 'The records' : 'The records behind this number'}>
-            <Records area={area} indicator={v} finding={finding} measureAssessmentId={measureAssessmentId} legacy={legacy} initialObject={initialObject} />
-          </Section>
+          {v?.fieldList ? (
+            <Section icon={<Database className="h-3.5 w-3.5" />} title="The fields behind this number">
+              <FieldListTable items={v.fieldList} />
+            </Section>
+          ) : (
+            <Section icon={<Database className="h-3.5 w-3.5" />} title={finding ? 'The records' : 'The records behind this number'}>
+              <Records area={area} indicator={v} finding={finding} measureAssessmentId={measureAssessmentId} legacy={legacy} initialObject={initialObject} />
+            </Section>
+          )}
 
           {finding && (
             <>

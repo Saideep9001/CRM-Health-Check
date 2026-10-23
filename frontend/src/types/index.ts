@@ -247,6 +247,20 @@ export interface FieldScore {
   pct: number;
 }
 
+/** A field listed under a card about fields (unused, outdated, look-alike…). */
+export interface FieldListItem {
+  name: string;
+  label: string;
+  type: string;
+  custom: boolean;
+  /** Records with it filled in (null: Salesforce can't count this field). */
+  filled: number | null;
+  of: number | null;
+  pct: number | null;
+  /** Why it's listed, e.g. "Looks like Phone (Phone)". */
+  note: string;
+}
+
 export interface IndicatorValue {
   label: string; // matches DiagnosticArea.indicators
   value: number;
@@ -262,6 +276,11 @@ export interface IndicatorValue {
   criteria?: [string, string][];
   /** Per field: this card's count (duplicated, empty or odd). */
   fieldScores?: FieldScore[] | null;
+  /** Cards about fields: the fields themselves. */
+  fieldList?: FieldListItem[] | null;
+  /** What the number is out of, when not the object's records (e.g. 225 "custom fields"). */
+  outOf?: number | null;
+  outOfLabel?: string | null;
   /** Objects whose records can be listed for this measure. */
   recordObjects?: string[];
 }

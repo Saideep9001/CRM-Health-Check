@@ -8,6 +8,8 @@ const KINDS = {
   duplicates: { title: 'Duplicates by field', what: 'share their value with another record', of: 'with a value' },
   missing: { title: 'Empty by field', what: 'are empty', of: 'records' },
   standardization: { title: 'Odd values by field', what: 'are in an odd format or spelling', of: 'with a value' },
+  filled: { title: 'Filled in by field', what: 'have it filled in', of: 'records', higher: true },
+  grade: { title: 'Score by object', what: 'points', of: '', higher: true },
 } as const;
 export type FieldChartKind = keyof typeof KINDS;
 
@@ -15,6 +17,8 @@ export function chartKindFor(label: string): FieldChartKind | null {
   if (/^duplicate/i.test(label)) return 'duplicates';
   if (/missing/i.test(label)) return 'missing';
   if (/standardi/i.test(label)) return 'standardization';
+  if (/low-completion/i.test(label)) return 'filled';
+  if (/scorecard/i.test(label)) return 'grade';
   return null;
 }
 
@@ -33,7 +37,8 @@ export function FieldScoreChart({ scores, kind }: { scores: FieldScore[]; kind: 
   const k = KINDS[kind];
   const top = scaleMax(Math.max(...scores.map((s) => s.pct), 0));
   const ticks = [top, (top * 3) / 4, top / 2, top / 4, 0];
-  const say = (f: FieldScore) => `${fmtNumber(f.count)} of ${fmtNumber(f.of)} ${k.of} (${pct(f.pct)}) ${k.what}`;
+  const higher = 'higher' in k && k.higher;
+  const say = (f: FieldScore) => (kind === 'grade' ? `score ${fmtNumber(f.count)} of 100` : `${fmtNumber(f.count)} of ${fmtNumber(f.of)} ${k.of} (${pct(f.pct)}) ${k.what}`);
 
   return (
     <div className="mb-6 rounded-xl border border-line bg-muted/40 p-4">
@@ -41,7 +46,9 @@ export function FieldScoreChart({ scores, kind }: { scores: FieldScore[]; kind: 
         <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-ink-subtle">
           <BarChart3 className="h-3.5 w-3.5" /> {k.title}
         </p>
-        <span className="text-xs text-ink-muted">Bars: % of records · on top: how many · lower is better</span>
+        <span className="text-xs text-ink-muted">
+          {kind === 'grade' ? 'Bars and numbers: score out of 100' : 'Bars: % of records · on top: how many'} · {higher ? 'higher' : 'lower'} is better
+        </span>
         <button
           type="button"
           onClick={() => setTable((t) => !t)}
@@ -107,7 +114,13 @@ export function FieldScoreChart({ scores, kind }: { scores: FieldScore[]; kind: 
                       <div className="pointer-events-none absolute bottom-full z-10 mb-1 w-48 rounded-lg border border-line bg-surface p-2 text-xs shadow-pop">
                         <p className="font-semibold text-ink">{f.label}</p>
                         <p className="mt-0.5 text-ink-muted">
-                          <span className="font-semibold tabular-nums text-ink">{fmtNumber(f.count)}</span> of {fmtNumber(f.of)} {k.of} ({pct(f.pct)}) {k.what}
+                          {kind === 'grade' ? (
+                            <>Score <span className="font-semibold tabular-nums text-ink">{fmtNumber(f.count)}</span> of 100</>
+                          ) : (
+                            <>
+                              <span className="font-semibold tabular-nums text-ink">{fmtNumber(f.count)}</span> of {fmtNumber(f.of)} {k.of} ({pct(f.pct)}) {k.what}
+                            </>
+                          )}
                         </p>
                       </div>
                     )}
