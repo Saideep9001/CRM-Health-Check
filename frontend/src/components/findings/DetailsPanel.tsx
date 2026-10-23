@@ -415,11 +415,11 @@ export function DetailsPanel({
             </Section>
           )}
 
+          {extra}
+
           <Section icon={<Database className="h-3.5 w-3.5" />} title={finding ? 'The records' : 'The records behind this number'}>
             <Records area={area} indicator={v} finding={finding} measureAssessmentId={measureAssessmentId} legacy={legacy} initialObject={initialObject} />
           </Section>
-
-          {extra}
 
           {finding && (
             <>

@@ -42,7 +42,7 @@ export default function MeasurePage() {
       onClose={() => (window.history.length > 1 ? navigate(-1) : navigate(`/assessment/${area.categoryId}/${area.id}`))}
       onCheckAgain={() => navigate(`/assessment/${area.categoryId}/${area.id}`)}
       onOpenFinding={(f) => navigate(`/problems/${encodeURIComponent(f.id)}`)}
-      extra={objects.length > 0 && finder && <FieldCheck objects={objects} initialObject={object ?? objects[0]} focus={finder.kind} fieldsText={finder.fieldsText} />}
+      extra={objects.length > 0 && <FieldCheck objects={objects} initialObject={object ?? objects[0]} focus={finder?.kind} fieldsText={finder?.fieldsText} />}
     />
   );
 }
