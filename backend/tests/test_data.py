@@ -102,3 +102,15 @@ def test_related_rejects_unknown_relationships_and_bad_ids(client):
     assert client.get(f"{API}/objects/Account/records/001000000000001AAA/related/Histories").status_code == 404
     assert client.get(f"{API}/objects/Account/records/001000000000001AAA/related/Bogus").status_code == 404
     assert client.get(f"{API}/objects/Account/records/bad'id/related/Contacts").status_code == 404
+
+
+def test_column_values_follow_the_other_filters(client, sf):
+    connect(client)
+    filters = '[{"field":"Industry","op":"in","value":["Tech"]},{"field":"OwnerId","op":"in","value":["005000000000001"]}]'
+    r = client.get(f"{API}/objects/Account/values", params={"field": "OwnerId", "q": "acme", "filters": filters})
+    assert r.status_code == 200, r.text
+    q = sf.soql[-1]
+    # owners are listed by name; the column's own filter is left out so every owner can still be picked
+    assert q.startswith("SELECT OwnerId v, Owner.Name n, COUNT(Id) c FROM Account WHERE Industry IN ('Tech') AND (Name LIKE '%acme%'")
+    assert "GROUP BY OwnerId, Owner.Name ORDER BY COUNT(Id) DESC" in q and "OwnerId IN" not in q
+    assert client.get(f"{API}/objects/Account/values", params={"field": "BillingAddress"}).status_code == 422  # can't be grouped

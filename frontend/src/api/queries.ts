@@ -1,5 +1,5 @@
 import { QueryCache, QueryClient, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { AccessRequestStatus, AppSettings, Assessment, CreateAssessmentRequest, DataRecordQuery, Finding, Paginated, SalesforceAppConfig, SalesforceAppUpdate, ScanScheduleUpdate, TeamMember, TeamMemberCreate, UpdateFindingRequest, UserProfile, UserRole } from '@/types';
+import type { AccessRequestStatus, AppSettings, Assessment, CreateAssessmentRequest, DataFilter, DataRecordQuery, Finding, Paginated, SalesforceAppConfig, SalesforceAppUpdate, ScanScheduleUpdate, TeamMember, TeamMemberCreate, UpdateFindingRequest, UserProfile, UserRole } from '@/types';
 import { isApiError } from './client';
 import { accessApi, adminApi, assessmentApi, authApi, indicatorApi, connectionApi, consultantApi, dataApi, findingApi, reportApi, systemApi, teamApi, userApi } from './endpoints';
 
@@ -152,6 +152,14 @@ export const useDataRecords = (name: string | undefined, query: DataRecordQuery,
     getNextPageParam: (last) => last.nextCursor,
     staleTime: 60_000,
     enabled: !!name && enabled,
+  });
+
+export const useFieldValues = (name: string, field: string | null, q: string, filters: DataFilter[]) =>
+  useQuery({
+    queryKey: [...qk.data, 'values', name, field, q, filters],
+    queryFn: ({ signal }) => dataApi.fieldValues(name, field!, q, filters, signal),
+    enabled: !!field,
+    staleTime: 60_000,
   });
 
 export const useDataSearch = (q: string, objects: string[] | undefined, enabled = true) =>

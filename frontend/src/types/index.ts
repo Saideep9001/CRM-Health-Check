@@ -577,6 +577,8 @@ export interface DataField {
   referenceTo: string[];
   helpText: string | null;
   picklistValues: string[];
+  /** Its values can be listed (the column's filter drop-down). */
+  groupable?: boolean;
 }
 
 /** A related list: child records that point at this object (e.g. an Account's Contacts). */
@@ -644,6 +646,14 @@ export interface DataRecordQuery {
   ids?: string[];
   /** Filters from a question (checked again by the server). */
   filters?: DataFilter[];
+}
+
+/** The different values of one column, with how many records have each. */
+export interface FieldValues {
+  field: string;
+  values: { value: string | number | boolean; label: string; count: number }[];
+  blanks: number;
+  truncated: boolean;
 }
 
 export interface DataFilter {

@@ -119,6 +119,20 @@ class DataField(ApiModel):
     reference_to: list[str] = []
     help_text: str | None = None
     picklist_values: list[str] = []
+    groupable: bool = False  # its values can be listed (column filter)
+
+
+class FieldValue(ApiModel):
+    value: str | float | int | bool
+    label: str  # what to show (a name for owner/lookup ids)
+    count: int
+
+
+class FieldValues(ApiModel):
+    field: str
+    values: list[FieldValue]
+    blanks: int  # records with no value
+    truncated: bool  # more than 2,000 different values
 
 
 class DataChildRelationship(ApiModel):

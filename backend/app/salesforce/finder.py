@@ -30,10 +30,10 @@ DATES = {"date", "datetime"}
 
 OPS = {
     "text": {"eq", "ne", "contains", "in", "notin", "blank", "notblank"},
-    "number": {"eq", "ne", "gt", "gte", "lt", "lte", "blank", "notblank"},
-    "date": {"eq", "gt", "gte", "lt", "lte", "blank", "notblank"},
-    "boolean": {"eq"},
-    "reference": {"eq", "ne", "name", "blank", "notblank"},
+    "number": {"eq", "ne", "gt", "gte", "lt", "lte", "in", "notin", "blank", "notblank"},
+    "date": {"eq", "gt", "gte", "lt", "lte", "in", "notin", "blank", "notblank"},
+    "boolean": {"eq", "in"},
+    "reference": {"eq", "ne", "name", "in", "notin", "blank", "notblank"},
     "multipicklist": {"blank", "notblank"},
 }
 CHILD_OPS = {"haschild", "nochild"}
@@ -126,6 +126,8 @@ def condition(fields: dict[str, dict], f: dict, children: dict[str, dict] | None
         return f"{name} = null"
     if op == "notblank":
         return f"{name} != null"
+    if op in ("in", "notin"):
+        return _one_of(name, k, field["type"], op, value)
     if k == "boolean":
         if not isinstance(value, bool):
             raise ValueError("Filter value must be true or false.")
@@ -148,11 +150,40 @@ def condition(fields: dict[str, dict], f: dict, children: dict[str, dict] | None
         if not isinstance(value, str) or not value.strip():
             raise ValueError("Filter text can’t be empty.")
         return f"{name} LIKE '%{explorer._soql_text(value.strip()[:100])}%'"
-    if op in ("in", "notin"):
-        if not isinstance(value, list) or not 1 <= len(value) <= 50:
-            raise ValueError("Pick between 1 and 50 values.")
-        return f"{name} {'IN' if op == 'in' else 'NOT IN'} ({', '.join(_text(v) for v in value)})"
     return f"{name} {_SYMBOL[op]} {_text(value)}"
+
+
+MAX_IN = 100
+
+
+def _one_of(name: str, k: str, field_type: str, op: str, value: Any) -> str:
+    """`field IN (…)` (or NOT IN) for values of any kind; a null in the list means "or empty" (Excel's Blanks)."""
+    if not isinstance(value, list) or not 1 <= len(value) <= MAX_IN:
+        raise ValueError(f"Pick between 1 and {MAX_IN} values.")
+    vals = [v for v in value if v is not None]
+    blank = len(vals) < len(value)
+    if k == "boolean":
+        if not all(isinstance(v, bool) for v in vals):
+            raise ValueError("Filter value must be true or false.")
+        parts = [f"{name} = {'TRUE' if v else 'FALSE'}" for v in dict.fromkeys(vals)] + ([f"{name} = null"] if blank else [])
+        return "(" + " OR ".join(parts) + ")"
+    if k == "number":
+        lits = [_number(v) for v in vals]
+    elif k == "date":
+        if field_type != "date" or not all(isinstance(v, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", v) for v in vals):
+            raise ValueError("Pick dates like 2026-01-31.")
+        lits = list(vals)
+    elif k == "reference":
+        if not all(isinstance(v, str) and _ID.match(v) for v in vals):
+            raise ValueError("Filter value must be a record id.")
+        lits = [f"'{v}'" for v in vals]
+    else:
+        lits = [_text(v) for v in vals]
+    is_in = op == "in"
+    parts = [f"{name} {'IN' if is_in else 'NOT IN'} ({', '.join(lits)})"] if lits else []
+    if blank:
+        parts.append(f"{name} {'=' if is_in else '!='} null")
+    return parts[0] if len(parts) == 1 else "(" + (" OR " if is_in else " AND ").join(parts) + ")"
 
 
 def conditions(fields: dict[str, dict], filters: list[dict], children: dict[str, dict] | None = None) -> list[str]:

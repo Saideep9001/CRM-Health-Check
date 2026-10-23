@@ -192,3 +192,19 @@ def test_standard_object_wins_over_custom_with_same_label():
     for _ in range(5):
         a = finder.interpret("accounts", objs, lambda n: DESCRIBE.get(n, {"fields": []}), lambda n: [])
         assert a["object"] == "Account"
+
+
+def test_column_filter_one_of_any_kind_of_field():
+    fields = {f["name"]: f for f in DESCRIBE["Opportunity"]["fields"]}
+    c = lambda field, op, value: finder.condition(fields, {"field": field, "op": op, "value": value})  # noqa: E731
+    assert c("StageName", "in", ["Prospecting", None]) == "(StageName IN ('Prospecting') OR StageName = null)"  # None = Blanks
+    assert c("StageName", "notin", ["Closed Lost"]) == "StageName NOT IN ('Closed Lost')"
+    assert c("Amount", "in", [5000, 12.5]) == "Amount IN (5000, 12.5)"
+    assert c("CloseDate", "in", ["2026-01-31"]) == "CloseDate IN (2026-01-31)"
+    assert c("OwnerId", "in", ["005000000000001"]) == "OwnerId IN ('005000000000001')"
+    assert c("IsClosed", "in", [True, None]) == "(IsClosed = TRUE OR IsClosed = null)"
+    for bad in [("CloseDate", ["2026-01-31) OR (Id != null"]), ("OwnerId", ["x' OR Name != '"]), ("Amount", ["1 OR 1=1"])]:
+        with pytest.raises(ValueError):
+            c(bad[0], "in", bad[1])
+    with pytest.raises(ValueError):
+        c("StageName", "in", [f"v{i}" for i in range(101)])

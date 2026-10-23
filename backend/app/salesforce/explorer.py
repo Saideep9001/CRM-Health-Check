@@ -174,6 +174,7 @@ def describe_object(sf: SalesforceClient, name: str) -> dict:
                 "required": not f.get("nillable", True) and f.get("createable", False) and not f.get("defaultedOnCreate", False),
                 "sortable": bool(f.get("sortable")),
                 "filterable": bool(f.get("filterable")),
+                "groupable": bool(f.get("groupable")),
                 "column": f["type"] not in _NO_COLUMN,
                 "reference_to": f.get("referenceTo") or [],
                 "help_text": f.get("inlineHelpText"),
@@ -315,18 +316,7 @@ def list_records(
     else:
         select = ", ".join(cols + list(refs.values()))
         soql = f"SELECT {select} FROM {name}"
-        conds = []
-        if filters:
-            from .finder import conditions  # finder imports this module
-
-            children = {c["name"]: c for c in child_relationships(sf, name)}
-            conds += conditions(fields, filters, children)
-        if ids:
-            conds.append("Id IN (" + ", ".join(f"'{i}'" for i in ids) + ")")  # ids checked by _ID_RE
-        searched = _search_fields(desc) if search and search.strip() else []
-        if searched:  # any text field: name, address, phone, email, picklists, custom text…
-            text = _soql_text(search.strip()[:100])
-            conds.append("(" + " OR ".join(f"{f} LIKE '%{text}%'" for f in searched) + ")")
+        conds = _record_conditions(sf, name, desc, search, filters, ids)
         if conds:
             soql += " WHERE " + " AND ".join(conds)
         order = sort if sort in fields and fields[sort].get("sortable") else None
@@ -344,6 +334,56 @@ def list_records(
         "total_size": body.get("totalSize"),
         "next_cursor": next_url if next_url and _CURSOR_RE.match(next_url) else None,
     }
+
+
+def _record_conditions(sf: SalesforceClient, name: str, desc: dict, search: str | None, filters: list[dict] | None,
+                       ids: list[str] | None = None) -> list[str]:
+    """WHERE conditions for the records list: filters, chosen ids and the search box."""
+    conds = []
+    if filters:
+        from .finder import conditions  # finder imports this module
+
+        children = {c["name"]: c for c in child_relationships(sf, name)}
+        conds += conditions(_fields(desc), filters, children)
+    if ids:
+        conds.append("Id IN (" + ", ".join(f"'{i}'" for i in ids) + ")")  # ids checked by _ID_RE
+    searched = _search_fields(desc) if search and search.strip() else []
+    if searched:  # any text field: name, address, phone, email, picklists, custom text…
+        text = _soql_text(search.strip()[:100])
+        conds.append("(" + " OR ".join(f"{f} LIKE '%{text}%'" for f in searched) + ")")
+    return conds
+
+
+MAX_VALUES = 2000  # Salesforce returns at most 2,000 groups
+
+
+def field_values(sf: SalesforceClient, name: str, field: str, search: str | None, filters: list[dict] | None) -> dict:
+    """The distinct values of one column and how many records have each (like Excel's filter list).
+
+    Counts follow the search box and the other columns' filters, so the list shows what's left to pick from.
+    """
+    desc = _describe(sf, name)
+    fields = _fields(desc)
+    f = fields.get(field)
+    if not f or not f.get("groupable"):
+        raise ValueError(f"You can’t list the values of {field}.")
+    others = [x for x in (filters or []) if x.get("field") != field]
+    conds = _record_conditions(sf, name, desc, search, others)
+    where = " WHERE " + " AND ".join(conds) if conds else ""
+    rel = _ref_paths(fields, [field]).get(field)  # e.g. Owner.Name, to show names instead of ids
+    select = f"{field} v" + (f", {rel} n" if rel else "")
+    group = field + (f", {rel}" if rel else "")
+    soql = f"SELECT {select}, COUNT(Id) c FROM {name}{where} GROUP BY {group} ORDER BY COUNT(Id) DESC LIMIT {MAX_VALUES}"
+    rows = sf.query(soql).get("records", [])
+    values, blanks = [], 0
+    for r in rows:
+        v, c = r.get("v"), int(r.get("c") or 0)
+        if v is None or v == "":
+            blanks += c
+            continue
+        values.append({"value": v, "label": str(r.get("n") or v), "count": c})
+    values.sort(key=lambda x: x["label"].lower() if isinstance(x["value"], str) else x["value"])  # A→Z, or smallest first
+    return {"field": field, "values": values, "blanks": blanks, "truncated": len(rows) >= MAX_VALUES}
 
 
 def records_matching(sf: SalesforceClient, name: str, where: str | None, cursor: str | None = None, page_size: int = PAGE_SIZE,

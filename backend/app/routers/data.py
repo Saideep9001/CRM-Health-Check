@@ -12,7 +12,7 @@ from ..deps import http_dep, settings_dep
 from ..salesforce import duplicates, empty_fields, explorer, field_check, finder, service
 from ..salesforce.client import SalesforceClient
 from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
-from ..schemas import FieldCheckRequest, FieldCheckResult, DataAnswer, DataAskRequest, DuplicateOptions, DuplicateRequest, DuplicateResult, EmptyField, EmptyRequest, EmptyResult, DataObject, DataObjectDetail, DataRecord, DataRecordPage, DataRelatedPage, DataSearchGroup
+from ..schemas import FieldCheckRequest, FieldCheckResult, FieldValues, DataAnswer, DataAskRequest, DuplicateOptions, DuplicateRequest, DuplicateResult, EmptyField, EmptyRequest, EmptyResult, DataObject, DataObjectDetail, DataRecord, DataRecordPage, DataRelatedPage, DataSearchGroup
 
 router = APIRouter(prefix="/data", tags=["data"])
 
@@ -62,7 +62,7 @@ def records(
     dir: Literal["asc", "desc"] = "desc",
     cursor: str | None = Query(None, max_length=200),
     ids: str | None = Query(None, max_length=4000, description="Comma-separated record Ids to show only those"),
-    filters: str | None = Query(None, max_length=6000, description='JSON list of {"field","op","value"} filters'),
+    filters: str | None = Query(None, max_length=12000, description='JSON list of {"field","op","value"} filters'),
     db: Session = Depends(get_db),
     http: httpx.Client = Depends(http_dep),
     settings: Settings = Depends(settings_dep),
@@ -70,6 +70,20 @@ def records(
     cols = [f.strip() for f in fields.split(",") if f.strip()] if fields else None
     only = [i.strip() for i in ids.split(",") if i.strip()] if ids is not None else None
     return _run(db, http, settings, lambda sf: explorer.list_records(sf, name, cols, q, sort, dir, cursor, only, finder.parse_filters(filters)))
+
+
+@router.get("/objects/{name}/values", response_model=FieldValues)
+def field_values(
+    name: str,
+    field: str = Query(..., max_length=120),
+    q: str | None = Query(None, max_length=100),
+    filters: str | None = Query(None, max_length=12000),
+    db: Session = Depends(get_db),
+    http: httpx.Client = Depends(http_dep),
+    settings: Settings = Depends(settings_dep),
+):
+    """The different values of one column with how many records have each, for a column filter."""
+    return _run(db, http, settings, lambda sf: explorer.field_values(sf, name, field, q, finder.parse_filters(filters)))
 
 
 @router.get("/search", response_model=list[DataSearchGroup])

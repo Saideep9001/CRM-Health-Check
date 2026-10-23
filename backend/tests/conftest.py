@@ -100,8 +100,8 @@ class FakeSalesforce:
                 "fields": [
                 {"name": "Id", "label": "Account ID", "type": "id", "sortable": True, "filterable": True, "nillable": False},
                 {"name": "Name", "label": "Account Name", "type": "string", "nameField": True, "sortable": True, "filterable": True, "nillable": False, "createable": True},
-                {"name": "Industry", "label": "Industry", "type": "picklist", "sortable": True, "filterable": True, "nillable": True, "picklistValues": [{"value": "Tech", "active": True}]},
-                {"name": "OwnerId", "label": "Owner ID", "type": "reference", "relationshipName": "Owner", "referenceTo": ["User"], "sortable": True, "filterable": True},
+                {"name": "Industry", "label": "Industry", "type": "picklist", "sortable": True, "filterable": True, "groupable": True, "nillable": True, "picklistValues": [{"value": "Tech", "active": True}]},
+                {"name": "OwnerId", "label": "Owner ID", "type": "reference", "relationshipName": "Owner", "referenceTo": ["User"], "sortable": True, "filterable": True, "groupable": True},
                 {"name": "BillingAddress", "label": "Billing Address", "type": "address"},
                 {"name": "LastModifiedDate", "label": "Last Modified", "type": "datetime", "sortable": True, "filterable": True},
             ]})

@@ -1,4 +1,6 @@
 import type {
+  DataFilter,
+  FieldValues,
   FieldCheckResult,
   AccessRequest,
   EmptyResult,
@@ -138,6 +140,13 @@ export const dataApi = {
         filters: query.filters?.length ? JSON.stringify(query.filters.map(({ field, op, value }) => ({ field, op, value }))) : undefined,
         cursor: cursor ?? undefined,
       },
+      signal,
+    ),
+  /** The values of one column (for its filter drop-down), following the search box and the other filters. */
+  fieldValues: (name: string, field: string, q: string | undefined, filters: DataFilter[], signal?: AbortSignal) =>
+    http.get<FieldValues>(
+      `/data/objects/${encodeURIComponent(name)}/values`,
+      { field, q: q || undefined, filters: filters.length ? JSON.stringify(filters.map(({ field: f, op, value }) => ({ field: f, op, value }))) : undefined },
       signal,
     ),
   /** Records matching some text, across many objects at once. */
