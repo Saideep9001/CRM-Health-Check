@@ -23,6 +23,18 @@ import NotFoundPage from './NotFoundPage';
 
 type Tab = 'indicators' | 'findings' | 'recommendations';
 
+/** The object a measure is about and its title within that object: "Missing Key Fields (Leads)" → Leads / Missing Key
+ *  Fields, "Duplicate Accounts" → Accounts / Duplicates. Null for measures that aren't about one object. */
+function objectOf(label: string): { group: string; title: string } | null {
+  let m = label.match(/^(.+) \(([^)]+)\)$/);
+  if (m) return { group: m[2], title: m[1] };
+  m = label.match(/^Duplicate (.+)$/);
+  if (m) return { group: m[1], title: 'Duplicates' };
+  m = label.match(/^(Accounts) (Without .+)$/);
+  if (m) return { group: m[1], title: label };
+  return null;
+}
+
 /** Visual fill for an indicator: percentages map directly; counts show presence vs absence of issues. */
 function indicatorFill(i: IndicatorValue): number {
   if (i.unit === '%') return i.direction === 'higher-better' ? i.value : 100 - i.value;
@@ -53,6 +65,56 @@ export default function DiagnosticAreaPage() {
   const measured = assessed && result?.indicators.length ? result.indicators.map((x) => x.label) : area.indicators;
   // The objects the check behind these results looked at.
   const checkedObjects = source.data ? (source.data.scope.objects?.length ? source.data.scope.objects : DEFAULT_DQ_OBJECTS) : null;
+
+  // Cards grouped by the object they're about ("Missing Key Fields (Leads)" goes under Leads), in the check's order.
+  const sections: { name: string; items: { label: string; i: number; title: string }[] }[] = [];
+  measured.forEach((label, i) => {
+    const o = objectOf(label);
+    const name = o?.group ?? '';
+    const last = sections[sections.length - 1];
+    if (last && last.name === name) last.items.push({ label, i, title: o?.title ?? label });
+    else sections.push({ name, items: [{ label, i, title: o?.title ?? label }] });
+  });
+
+  const card = (label: string, i: number, title: string) => {
+    const v = result?.indicators.find((x) => x.label === label);
+    const Card = v ? motion.button : motion.div;
+    return (
+      <Card
+        key={label}
+        type={v ? 'button' : undefined}
+        onClick={v ? () => navigate(`/measures/${area.id}?${new URLSearchParams({ label })}`) : undefined}
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: i * 0.05 }}
+        className={v ? 'group flex flex-col rounded-xl border border-line p-4 text-left transition hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-pop' : 'rounded-xl border border-line p-4'}
+        title={v ? 'See how this is measured, the scoring rule and the records' : undefined}
+      >
+        <p className="text-sm font-medium text-ink-muted">{title}</p>
+        {v ? (
+          <>
+            <p className="mt-2 text-2xl font-semibold tabular-nums">
+              {fmtNumber(v.value)}
+              {v.unit === '%' && <span className="text-base text-ink-subtle">%</span>}
+            </p>
+            <div className="mt-3">
+              <ProgressBar value={indicatorFill(v)} delay={i * 0.05} />
+            </div>
+            <p className="mt-2 text-[11px] text-ink-subtle">{v.direction === 'higher-better' ? 'Higher is better' : 'Lower is better'}</p>
+            {v.how && <p className="mt-2 line-clamp-2 text-xs text-ink-muted">{v.how}</p>}
+            <span className="mt-auto inline-flex items-center gap-1 pt-3 text-xs font-medium text-brand">
+              Rule &amp; records <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-0.5" />
+            </span>
+          </>
+        ) : (
+          <>
+            <p className="mt-2 text-2xl font-semibold text-ink-subtle">—</p>
+            <p className="mt-3 text-[11px] text-ink-subtle">{release === 'coming-soon' ? 'Coming Soon' : 'Not measured yet'}</p>
+          </>
+        )}
+      </Card>
+    );
+  };
 
   return (
     <div>
@@ -149,46 +211,24 @@ export default function DiagnosticAreaPage() {
           ) : (
             <>
               {tab === 'indicators' && (
-                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                  {measured.map((label, i) => {
-                    const v = result?.indicators.find((x) => x.label === label);
-                    const Card = v ? motion.button : motion.div;
-                    return (
-                      <Card
-                        key={label}
-                        type={v ? 'button' : undefined}
-                        onClick={v ? () => navigate(`/measures/${area.id}?${new URLSearchParams({ label })}`) : undefined}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: i * 0.05 }}
-                        className={v ? 'group flex flex-col rounded-xl border border-line p-4 text-left transition hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-pop' : 'rounded-xl border border-line p-4'}
-                        title={v ? 'See how this is measured, the scoring rule and the records' : undefined}
-                      >
-                        <p className="text-sm font-medium text-ink-muted">{label}</p>
-                        {v ? (
-                          <>
-                            <p className="mt-2 text-2xl font-semibold tabular-nums">
-                              {fmtNumber(v.value)}
-                              {v.unit === '%' && <span className="text-base text-ink-subtle">%</span>}
-                            </p>
-                            <div className="mt-3">
-                              <ProgressBar value={indicatorFill(v)} delay={i * 0.05} />
-                            </div>
-                            <p className="mt-2 text-[11px] text-ink-subtle">{v.direction === 'higher-better' ? 'Higher is better' : 'Lower is better'}</p>
-                            {v.how && <p className="mt-2 line-clamp-2 text-xs text-ink-muted">{v.how}</p>}
-                            <span className="mt-auto inline-flex items-center gap-1 pt-3 text-xs font-medium text-brand">
-                              Rule &amp; records <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-0.5" />
-                            </span>
-                          </>
-                        ) : (
-                          <>
-                            <p className="mt-2 text-2xl font-semibold text-ink-subtle">—</p>
-                            <p className="mt-3 text-[11px] text-ink-subtle">{release === 'coming-soon' ? 'Coming Soon' : 'Not measured yet'}</p>
-                          </>
-                        )}
-                      </Card>
-                    );
-                  })}
+                <div className="space-y-5">
+                  {sections.map((sec, si) =>
+                    sec.name ? (
+                      <section key={sec.name} className="rounded-xl border border-line bg-muted/30 p-4">
+                        <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold">
+                          {sec.name}
+                          <span className="rounded-full bg-surface px-2 py-0.5 text-[11px] font-medium text-ink-muted ring-1 ring-line">
+                            {sec.items.length} {sec.items.length === 1 ? 'check' : 'checks'}
+                          </span>
+                        </h3>
+                        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{sec.items.map((it) => card(it.label, it.i, it.title))}</div>
+                      </section>
+                    ) : (
+                      <div key={`plain-${si}`} className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                        {sec.items.map((it) => card(it.label, it.i, it.title))}
+                      </div>
+                    ),
+                  )}
                 </div>
               )}
 
