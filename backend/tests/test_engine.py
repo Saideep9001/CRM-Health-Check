@@ -130,7 +130,10 @@ def test_full_data_quality_run(client, sf):
     res = client.get(f"{API}/assessments/{aid}/results").json()
     areas = {x["areaId"]: x for x in res["areas"]}
     ind = {i["label"]: i for i in areas["area-1"]["indicators"]}
-    assert set(ind) == {"Duplicate Accounts", "Duplicate Contacts", "Duplicate Leads", "Missing Email", "Missing Phone", "Data standardization issues"}
+    base = {"Duplicate Accounts", "Duplicate Contacts", "Duplicate Leads", "Missing Email", "Missing Phone", "Data standardization issues"}
+    assert base <= set(ind)
+    # every other measure is a "Missing <key field>" card, e.g. Missing Company on Leads
+    assert {"Missing Company", "Missing LeadSource", "Missing MailingCountry"} <= set(ind) and all(k.startswith("Missing ") for k in set(ind) - base)
     assert ind["Duplicate Accounts"]["value"] == 3 and ind["Duplicate Contacts"]["value"] == 1
     me = ind["Missing Email"]
     assert {k: me[k] for k in ("label", "value", "unit", "direction")} == {"label": "Missing Email", "value": 20.0, "unit": "%", "direction": "lower-better"}

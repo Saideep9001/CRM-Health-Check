@@ -48,8 +48,9 @@ export default function DiagnosticAreaPage() {
   const idx = DIAGNOSTIC_AREAS.findIndex((a) => a.id === area.id);
   const prev = DIAGNOSTIC_AREAS[idx - 1];
   const next = DIAGNOSTIC_AREAS[idx + 1];
-  // After a check, show only what it measured: checking just Accounts shows the Account measures, not Contacts or Leads.
-  const measured = assessed ? area.indicators.filter((l) => result?.indicators.some((x) => x.label === l)) : area.indicators;
+  // After a check, show what it measured, in its order: checking just Accounts shows the Account measures (including a
+  // "Missing …" card per key field), not Contacts or Leads.
+  const measured = assessed && result?.indicators.length ? result.indicators.map((x) => x.label) : area.indicators;
   // The objects the check behind these results looked at.
   const checkedObjects = source.data ? (source.data.scope.objects?.length ? source.data.scope.objects : DEFAULT_DQ_OBJECTS) : null;
 
