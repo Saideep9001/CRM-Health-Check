@@ -1,4 +1,4 @@
-import { ListChecks, Search } from 'lucide-react';
+import { ChevronDown, ListChecks, Search } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { errorMessage } from '@/api/client';
 import { useCheckFields, useEmptyOptions } from '@/api/queries';
@@ -108,6 +108,7 @@ export function FieldCheck({ objects, initialObject, focus, fieldsText = '' }: {
   const options = useEmptyOptions(object);
   const [chosen, setChosen] = useState<string[]>([]);
   const [fieldQuery, setFieldQuery] = useState('');
+  const [listOpen, setListOpen] = useState(true);
   const [pick, setPick] = useState<Pick | null>(null);
   const run = useCheckFields();
   const fields = options.data ?? [];
@@ -117,7 +118,9 @@ export function FieldCheck({ objects, initialObject, focus, fieldsText = '' }: {
   }, [initialObject]);
   // Start from the fields the check looked at (e.g. Email for "without an email").
   useEffect(() => {
-    setChosen(fieldsNamed(fieldsText, object, fields, MAX_FIELDS));
+    const named = fieldsNamed(fieldsText, object, fields, MAX_FIELDS);
+    setChosen(named);
+    setListOpen(named.length === 0); // fields already picked: keep the list folded
     setFieldQuery('');
     setPick(null);
     run.reset();
@@ -128,7 +131,8 @@ export function FieldCheck({ objects, initialObject, focus, fieldsText = '' }: {
   const label = (name: string) => fields.find((f) => f.name === name)?.label ?? name;
   const what = objectLabel(object).toLowerCase();
 
-  const start = () =>
+  const start = () => {
+    setListOpen(false);
     run.mutate(
       { object, fields: chosen },
       {
@@ -138,6 +142,7 @@ export function FieldCheck({ objects, initialObject, focus, fieldsText = '' }: {
         },
       },
     );
+  };
 
   const result = run.data;
   const picked = result && pick ? (pick.field === ALL ? null : result.fields.find((f) => f.name === pick.field)) : null;
@@ -184,21 +189,36 @@ export function FieldCheck({ objects, initialObject, focus, fieldsText = '' }: {
         ) : (
           <>
             <div className="rounded-lg border border-line p-4">
-              <div className="mb-3 flex flex-wrap items-center gap-3">
-                <p className="min-w-0 flex-1 text-sm">
+              <div className={cx('flex flex-wrap items-center gap-3', listOpen && 'mb-3')}>
+                <button
+                  type="button"
+                  onClick={() => setListOpen((o) => !o)}
+                  aria-expanded={listOpen}
+                  className="group flex min-w-0 flex-1 items-center gap-2 text-left text-sm"
+                  title={listOpen ? 'Hide the field list' : 'Show the field list to change the fields'}
+                >
+                  <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md border border-line bg-surface text-ink-muted transition group-hover:border-brand/40 group-hover:text-brand">
+                    <ChevronDown className={cx('h-4 w-4 transition-transform', !listOpen && '-rotate-90')} />
+                  </span>
                   Fields to check <span className="text-ink-muted">({chosen.length}/{MAX_FIELDS} chosen)</span>
-                </p>
-                <div className="relative">
-                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-subtle" />
-                  <input className="input h-8 w-56 pl-8 text-xs" placeholder="Filter fields…" value={fieldQuery} onChange={(e) => setFieldQuery(e.target.value)} />
-                </div>
+                  {!listOpen && <span className="text-xs font-medium text-brand group-hover:underline">Change</span>}
+                </button>
+                {listOpen && (
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-subtle" />
+                    <input className="input h-8 w-56 pl-8 text-xs" placeholder="Filter fields…" value={fieldQuery} onChange={(e) => setFieldQuery(e.target.value)} />
+                  </div>
+                )}
               </div>
-              {chosen.length > 0 && (
-                <p className="mb-2 text-xs text-ink-muted">
+              {chosen.length > 0 ? (
+                <p className={cx('text-xs text-ink-muted', listOpen ? 'mb-2' : 'mt-2 pl-8')}>
                   Checking: <span className="font-medium text-ink">{chosen.map(label).join(', ')}</span>
-                  <button type="button" className="ml-2 text-brand hover:underline" onClick={() => setChosen([])}>Clear</button>
+                  <button type="button" className="ml-2 text-brand hover:underline" onClick={() => (setChosen([]), setListOpen(true))}>Clear</button>
                 </p>
+              ) : (
+                !listOpen && <p className="mt-2 pl-8 text-xs text-ink-subtle">No fields picked yet. Open the list to choose some.</p>
               )}
+              {listOpen && (
               <div className="scrollbar-thin grid max-h-64 gap-1.5 overflow-y-auto sm:grid-cols-2 lg:grid-cols-3">
                 {fieldList.map((f) => {
                   const on = chosen.includes(f.name);
@@ -227,6 +247,7 @@ export function FieldCheck({ objects, initialObject, focus, fieldsText = '' }: {
                 })}
                 {fieldList.length === 0 && <p className="text-xs text-ink-subtle">No fields match “{fieldQuery}”.</p>}
               </div>
+              )}
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
