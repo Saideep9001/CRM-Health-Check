@@ -259,7 +259,7 @@ REAL_WORDS = {  # real words one letter from a business word, so never "misspell
     "chemical", "innovation", "integrator", "securities", "accountants", "distributors", "distributor", "equipments", "united",
 }
 SHORT_FORMS = {"llc", "llp", "lp", "inc", "corp", "co", "ltd", "plc", "pvt", "pty", "gmbh", "ag", "sa", "srl", "bv", "nv", "oy", "ab"}
-_SYMBOLS = re.compile(r"[^\w\s&.,'’()/+!-]")  # anything but letters, digits, spaces and the punctuation names use: & . , ' - ( ) / + !
+_SYMBOLS = re.compile(r"[^\w\s.,'’-]")  # anything but letters, digits, spaces and . , ' - (Inc., Co., O’Reilly, Hewlett-Packard)
 _JUNK = {"test", "testing", "asdf", "qwerty", "xxx", "xx", "x", "na", "n a", "none", "null", "unknown", "dummy", "sample", "temp", "tbd",
          "delete", "do not use", "no name", "noname", "name", "company", "account", "new account"}
 
@@ -273,12 +273,12 @@ def company(items: list[tuple[str, str]]) -> dict[str, str]:
         p = _plain(v)
         if v != " ".join(v.split()):
             out[i] = "unwanted spaces (at the start, at the end or doubled)"
+        elif not re.search(r"[A-Za-z]", v) or p in _JUNK or re.fullmatch(r"(test|dummy|sample|temp)\b.*|.*\btest\d*", p):
+            out[i] = "not a real name (a test or placeholder value)"  # before symbols, so "N/A" reads as a placeholder
         elif sym := sorted(set(_SYMBOLS.findall(v)) | ({"_"} if "_" in v else set())):  # \w lets "_" through
             out[i] = f"unwanted symbol {' '.join(sym)}"
         elif re.search(r"[,;:/&+-]$", v) or re.search(r"[,;:!&/+-]{2,}|\.{2}(?!\.)|[,;:]\.", v) or re.match(r"[^\w(]", v):
             out[i] = "stray punctuation"
-        elif not re.search(r"[A-Za-z]", v) or p in _JUNK or re.fullmatch(r"(test|dummy|sample|temp)\b.*|.*\btest\d*", p):
-            out[i] = "not a real name (a test or placeholder value)"
         elif r := _layout(v):  # ALL CAPITALS (more than one word) or all lower case; short names like IBM are fine
             out[i] = r
         else:
@@ -359,7 +359,7 @@ RULES = {  # shown in "How it's flagged"
              "are odd; the way most records write it counts as right",
     "city": "older or short names (Bangalore → Bengaluru, Bombay → Mumbai, NYC → New York), numbers, stray punctuation, extra spaces, "
             "ALL CAPITALS or all lower case, or the same city written differently",
-    "company": "only invalid names: unwanted spaces (at the start, at the end or doubled), unwanted symbols (# @ * _ …), stray punctuation, "
+    "company": "only invalid names: unwanted spaces (at the start, at the end or doubled), unwanted symbols (& ! ( ) / + # @ * _ …), stray punctuation, "
                "test or placeholder values (Test, N/A, Unknown, XXX), ALL CAPITALS or all lower case, and misspelled words (Technolgy, "
                "Solutons); short forms like LLC, Inc, Ltd and Corp are fine",
     "text": "extra spaces, ALL CAPITALS or all lower case, or the same value written different ways (the way most records write it counts as right)",

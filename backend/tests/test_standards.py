@@ -40,16 +40,18 @@ def test_states_countries_and_cities():
 
 def test_company_names_flag_only_invalid_values():
     assert st.company_key("Pixel Tech Inc.") == st.company_key("PIXEL Technology, Incorporated")  # still used to match duplicates
-    ok = ("Pixel Technology Inc", "Pixel Tech Inc.", "IBM", "Acme Co., Ltd.", "Johnson & Johnson", "AT&T", "Yahoo!", "Smith (UK) Ltd",
+    ok = ("Pixel Technology Inc", "Pixel Tech Inc.", "IBM", "Acme Co., Ltd.", "Hewlett-Packard",
           "Pacifica Inc", "Aquarient Technologies", "O’Reilly Media")
     assert st.company(items(*ok)) == {}  # short forms, short capitals (IBM) and another valid way of writing a name are fine
     odd = st.company(items("Acme Corp,", "  Globex  ", "Acme  LLC", "Acme #1 Holdings", "Acme_Ltd", "Test Account", "N/A", "12345",
-                           "Pixel Technolgy Inc", "Acme,, Inc", "ACME HOLDINGS LTD", "account from script"))
+                           "Pixel Technolgy Inc", "Acme,, Inc", "ACME HOLDINGS LTD", "account from script",
+                           "Johnson & Johnson", "Yahoo!", "Smith (UK) Ltd"))
     assert odd == {"id0": "stray punctuation", "id1": "unwanted spaces (at the start, at the end or doubled)",
                    "id2": "unwanted spaces (at the start, at the end or doubled)", "id3": "unwanted symbol #", "id4": "unwanted symbol _",
                    "id5": "not a real name (a test or placeholder value)", "id6": "not a real name (a test or placeholder value)",
                    "id7": "not a real name (a test or placeholder value)", "id8": "misspelled? “Technolgy” should be “Technology”",
-                   "id9": "stray punctuation", "id10": "all capitals", "id11": "all lower case"}
+                   "id9": "stray punctuation", "id10": "all capitals", "id11": "all lower case",
+                   "id12": "unwanted symbol &", "id13": "unwanted symbol !", "id14": "unwanted symbol ( )"}
 
 
 def test_every_kind_has_a_rule_to_show():
