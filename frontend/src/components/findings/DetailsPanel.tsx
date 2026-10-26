@@ -277,6 +277,18 @@ export function DetailsPanel({
   const { canEdit } = useRole();
   const v = indicator;
   const scored = v?.score != null;
+  // Missing-field cards: how many key values are filled (what the score is based on), and how many records miss any.
+  const empties = v?.fieldScores?.length && chartKindFor(v.label) === 'missing' ? v.fieldScores : null;
+  const keyValues = empties
+    ? (() => {
+        const slots = empties.reduce((n, f) => n + f.of, 0);
+        const empty = empties.reduce((n, f) => n + f.count, 0);
+        return { slots, empty, filled: slots - empty, pct: slots ? (100 * (slots - empty)) / slots : 0 };
+      })()
+    : null;
+  const recordsOf = empties?.[0]?.of ?? null;
+  const missingAny =
+    finding?.affectedRecords ?? (v && /^missing/i.test(v.label) && v.unit === '%' && recordsOf ? Math.round((v.value * recordsOf) / 100) : null);
   const legacy = !!v && !v.how && !v.rule && !(v.criteria ?? []).length;
   const urgency = scored && v!.score! < PROBLEM_BELOW ? URGENCY.find((u) => u.severity === urgencyFor(v!.score!))! : null;
   const title = finding?.name ?? v?.label ?? '';
@@ -391,6 +403,12 @@ export function DetailsPanel({
                         style={{ left: `${Math.max(0, Math.min(100, v.score!))}%`, background: urgency ? SEVERITY_COLORS[urgency.severity] : 'rgb(var(--good))' }}
                       />
                     </div>
+                    {keyValues && (
+                      <p className="mt-2 text-xs text-ink-muted" title="The score follows this: 100 at 95% filled or more, 0 at 50% or less">
+                        Based on <span className="font-semibold text-ink">{Math.round(keyValues.pct)}% of key values filled</span> ({fmtNumber(keyValues.filled)} of{' '}
+                        {fmtNumber(keyValues.slots)})
+                      </p>
+                    )}
                   </>
                 ) : (
                   <p className="text-3xl font-semibold text-ink-subtle">—</p>
@@ -410,6 +428,21 @@ export function DetailsPanel({
           </div>
 
           {v?.fieldScores?.length && chartKindFor(v.label) ? <FieldScoreChart scores={v.fieldScores} kind={chartKindFor(v.label)!} /> : null}
+          {keyValues && empties && (
+            <div className="-mt-4 mb-6 rounded-lg border border-line bg-muted/40 px-4 py-3 text-xs leading-relaxed text-ink-muted">
+              {missingAny != null && recordsOf != null && (
+                <p>
+                  <span className="font-semibold text-ink">{fmtNumber(missingAny)}</span> of {fmtNumber(recordsOf)} records miss at least one of these{' '}
+                  {empties.length} fields. A record missing several counts once, so the rows add up to more ({fmtNumber(keyValues.empty)}).
+                </p>
+              )}
+              <p className={missingAny != null ? 'mt-1' : ''}>
+                {fmtNumber(recordsOf ?? 0)} records × {empties.length} fields = {fmtNumber(keyValues.slots)} values that should be filled;{' '}
+                {fmtNumber(keyValues.empty)} are empty, so <span className="font-semibold text-ink">{Math.round(keyValues.pct)}% are filled</span> — that’s what the
+                score is based on (100 at 95% or more, 0 at 50% or less).
+              </p>
+            </div>
+          )}
 
           {legacy && (
             <div className="mb-6 flex flex-wrap items-center gap-3 rounded-lg border border-warn/30 bg-warn-soft px-4 py-3 text-sm text-warn">
