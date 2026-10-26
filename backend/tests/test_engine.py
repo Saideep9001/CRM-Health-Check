@@ -152,7 +152,7 @@ def test_full_data_quality_run(client, sf):
     assert ind["Duplicate Accounts"]["value"] == 2 and ind["Duplicate Contacts"]["value"] == 0
     mk = ind["Completeness (Contacts)"]  # Email empty on 40 and Phone on 10 of 200: 350 of 400 key values filled
     assert {k: mk[k] for k in ("value", "unit", "direction")} == {"value": 87.5, "unit": "%", "direction": "higher-better"}
-    assert ind["Valid & Consistent (Accounts)"]["value"] == 2
+    assert ind["Valid & Consistent (Accounts)"]["value"] == 5  # all 4 phones lack a country code (e.g. "415-555-1234"), and "California" vs "CA"
     assert ind["Linked Correctly (Accounts)"]["value"] == 25  # Accounts with no Contacts
     # each data card charts its own number per field
     dup = {f["field"]: f for f in ind["Duplicate Accounts"]["fieldScores"]}

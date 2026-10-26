@@ -13,6 +13,7 @@ from collections import Counter, defaultdict
 
 from ..salesforce import duplicates as dupes
 from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
+from . import standards
 from .core import Ctx, FindingDraft, Unavailable, pct, range_score, rate_score
 
 log = logging.getLogger(__name__)
@@ -348,31 +349,6 @@ def missing_key_fields(ctx: Ctx, obj: str) -> None:
 
 # ---------------- data standardization
 
-_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[a-z]{2,}$")
-_PROVIDERS = ("gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "icloud.com", "aol.com")
-_STD_RULES = {
-    "text": "the same value written different ways (upper/lower case, punctuation, spacing; the most common way counts as right), or extra spaces",
-    "country": "the same country written different ways (“USA” / “United States”); the most common spelling counts as right",
-    "state": "the same state written different ways (“California” / “CA”); the most common spelling counts as right",
-    "email": "not a valid address, spaces in it, or a misspelled common domain (“gmial.com”, “yaho.com”)",
-    "phone": "too few or too many digits (under 7 or over 15), or written in a different format from the one most used",
-    "website": "not a valid web address, or written differently from the usual form (with or without http:// and www.)",
-    "postal": "a different format from the one most used (for example 5 digits vs 5+4) ",
-    "amount": "zero or negative",
-    "date": "an open deal whose close date has passed, or a date before 2000 or more than 5 years ahead",
-}
-
-
-def _edits(a: str, b: str) -> int:
-    prev = list(range(len(b) + 1))
-    for i, ca in enumerate(a, 1):
-        cur = [i]
-        for j, cb in enumerate(b, 1):
-            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
-        prev = cur
-    return prev[-1]
-
-
 def _std_kind(f: str, field: dict) -> str:
     t = field.get("type")
     if f == "Amount" or t == "currency":
@@ -391,68 +367,11 @@ def _std_kind(f: str, field: dict) -> str:
         return "country"
     if f.endswith("State"):
         return "state"
+    if f.endswith("City"):
+        return "city"
+    if f in ("Name", "Company"):  # a company's name (Account Name, Lead Company)
+        return "company"
     return "text"
-
-
-def _spelled(items: list[tuple[str, str]], key) -> set[str]:
-    """Same value written different ways: the most common writing is right, the others are odd."""
-    buckets: dict[str, Counter] = defaultdict(Counter)
-    for _, v in items:
-        if k := key(v):
-            buckets[k][v] += 1
-    usual = {k: c.most_common(1)[0][0] for k, c in buckets.items()}
-    return {i for i, v in items if (k := key(v)) and v != usual[k]}
-
-
-def _unusual(items: list[tuple[str, str]], shape) -> set[str]:
-    """Values written in a different shape from the one most used."""
-    counts = Counter(shape(v) for _, v in items)
-    if len(counts) < 2:
-        return set()
-    usual = counts.most_common(1)[0][0]
-    return {i for i, v in items if shape(v) != usual}
-
-
-def _odd_values(kind: str, items: list[tuple[str, object]], open_ids: set[str]) -> set[str]:
-    from datetime import date, timedelta
-
-    text = [(i, str(v)) for i, v in items]
-    generic = lambda v: re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", v.lower())).strip()  # noqa: E731
-    if kind == "text":
-        return _spelled(text, generic) | {i for i, v in text if v != " ".join(v.split())}
-    if kind in ("country", "state"):
-        return _spelled(text, lambda v: _norm(v, _COUNTRY if kind == "country" else _STATES))
-    if kind == "email":
-        def bad(v: str) -> bool:
-            s = v.strip().lower()
-            domain = s.rsplit("@", 1)[-1]
-            return v != v.strip() or not _EMAIL.match(s) or any(0 < _edits(domain, p) <= 2 for p in _PROVIDERS)
-        return {i for i, v in text if bad(v)}
-    if kind == "phone":
-        digits = lambda v: len(re.sub(r"\D", "", v))  # noqa: E731
-        invalid = {i for i, v in text if not 7 <= digits(v) <= 15}
-        return invalid | _unusual([(i, v) for i, v in text if i not in invalid], lambda v: re.sub(r"\d", "9", v))
-    if kind == "website":
-        invalid = {i for i, v in text if " " in v.strip() or "@" in v or "." not in v}
-        form = lambda v: (bool(re.match(r"^[a-z]+://", v.strip().lower())), "www." in v.lower())  # noqa: E731
-        return invalid | _unusual([(i, v) for i, v in text if i not in invalid], form)
-    if kind == "postal":
-        return _unusual(text, lambda v: re.sub(r"[A-Za-z]", "A", re.sub(r"\d", "9", v.strip())))
-    if kind == "amount":
-        return {i for i, v in items if isinstance(v, (int, float)) and v <= 0}
-    if kind == "date":
-        today = date.today()
-        out = set()
-        for i, v in text:
-            try:
-                d = date.fromisoformat(v[:10])
-            except ValueError:
-                out.add(i)
-                continue
-            if d.year < 2000 or d > today + timedelta(days=5 * 365) or (i in open_ids and d < today):
-                out.add(i)
-        return out
-    return set()
 
 
 def data_standardization(ctx: Ctx, obj: str) -> None:
@@ -470,11 +389,14 @@ def data_standardization(ctx: Ctx, obj: str) -> None:
     bad: set[str] = set()
     with_value: set[str] = set()
     per_field: list[tuple[str, str, int, list[str]]] = []  # (field, kind, odd records, examples)
+    reasons: dict[str, Counter] = {}  # field -> why its values are odd, and how many of each
     for f in keys:
         kind = _std_kind(f, fields[f])
         items = [(r["Id"], r[f]) for r in rows if r.get("Id") and r.get(f) not in (None, "")]
         with_value.update(i for i, _ in items)
-        odd = _odd_values(kind, items, open_ids)
+        why = standards.odd_values(kind, items, open_ids)  # record id -> reason
+        odd = set(why)
+        reasons[f] = Counter(why.values())
         bad |= odd
         if items:
             _by_field(ctx, obj, "standardization", f, len(odd), len(items))
@@ -496,9 +418,9 @@ def data_standardization(ctx: Ctx, obj: str) -> None:
         criteria=[
             ("Records checked", f"{len(rows):,} {label}{_window(ctx)}" + (f" (the first {CARD_ROWS:,})" if len(rows) >= CARD_ROWS else "")),
             ("Fields checked", ", ".join(_flabel(ctx, obj, f) for f in keys) + ("" if obj in KEY_FIELDS_BY_OBJECT else " (text fields people fill in)")),
-            ("Counts as odd", "; ".join(f"{_flabel(ctx, obj, f)}: {_STD_RULES[k].strip()}" for f, k, _, _ in per_field)),
-            ("Found per field", "; ".join(f"{_flabel(ctx, obj, f)} {n:,}" + (f" (e.g. {', '.join(f'“{e}”' for e in ex)})" if ex else "")
-                                          for f, _, n, ex in per_field)),
+            ("Counts as odd", "; ".join(f"{_flabel(ctx, obj, f)}: {standards.RULES[k]}" for f, k, _, _ in per_field)),
+            ("Found per field", "; ".join(f"{_flabel(ctx, obj, f)} {n:,}" + (f" — {', '.join(f'{r}: {c:,}' for r, c in reasons[f].most_common(3))}" if n else "")
+                                          + (f" (e.g. {', '.join(f'“{e}”' for e in ex)})" if ex else "") for f, _, n, ex in per_field)),
             ("What's counted", f"{len(bad):,} {label} with at least one odd value; a record with several counts once."),
             ("Records listed", f"Records with an odd value (up to {LISTED}), sorted by name."),
         ],
