@@ -116,6 +116,8 @@ export function FieldCheck({
   /** Tells the page about the latest run (null when it's reset), so its chart can follow the chosen fields. */
   onResult?: (result: FieldCheckResult | null) => void;
 }) {
+  // On a duplicates / missing / spelling page, only that page's column is shown.
+  const shows = (k: FinderKind) => !focus || focus === k;
   const choices = useMemo(() => Array.from(new Set([...(initialObject ? [initialObject] : []), ...objects])), [objects, initialObject]);
   const [object, setObject] = useState(initialObject ?? choices[0]);
   const options = useEmptyOptions(object);
@@ -172,7 +174,7 @@ export function FieldCheck({
         <div className="min-w-0 flex-1">
           <h3 className="font-semibold">Check fields</h3>
           <p className="text-xs text-ink-muted">
-            Pick fields — for each one you’ll see the empty records, the duplicates and the values written different ways. Only the objects this check looked at ·
+            Pick fields — for each one you’ll see {focus === 'empty' ? 'its empty records' : focus === 'duplicates' ? 'its duplicates' : focus === 'spelling' ? 'the values written different ways' : 'the empty records, the duplicates and the values written different ways'}. Only the objects this check looked at ·
             read-only.
           </p>
         </div>
@@ -282,14 +284,14 @@ export function FieldCheck({
               {result.truncated && <span className="text-ink-muted"> (the first 20,000)</span>}. Click a number to see its records.
             </p>
             <div className="overflow-x-auto rounded-xl border border-line">
-              <table className="w-full min-w-[640px] text-left text-sm">
+              <table className={cx('w-full text-left text-sm', !focus && 'min-w-[640px]')}>
                 <thead className="bg-muted/50 text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">
                   <tr>
                     <th className="px-3 py-2">Field</th>
                     <th className="px-3 py-2">Filled in</th>
-                    <th className="px-3 py-2">Empty</th>
-                    <th className="px-3 py-2">Duplicates</th>
-                    <th className="px-3 py-2">Written differently</th>
+                    {shows('empty') && <th className="px-3 py-2">Empty</th>}
+                    {shows('duplicates') && <th className="px-3 py-2">Duplicates</th>}
+                    {shows('spelling') && <th className="px-3 py-2">Written differently</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line">
@@ -302,33 +304,39 @@ export function FieldCheck({
                       <td className="px-3 py-2 tabular-nums text-ink-muted">
                         {fmtNumber(f.filled)} <span className="text-[11px]">({result.scanned ? Math.round((100 * f.filled) / result.scanned) : 0}%)</span>
                       </td>
-                      <Cell on={isOn(f.name, 'empty')} onClick={() => setPick({ field: f.name, kind: 'empty' })} value={f.empty} hint="records" tone="text-bad" />
-                      <Cell
-                        on={isOn(f.name, 'duplicates')}
-                        onClick={() => setPick({ field: f.name, kind: 'duplicates' })}
-                        value={f.duplicates?.extraCopies}
-                        hint={f.duplicates ? `extra copies · ${fmtNumber(f.duplicates.totalGroups)} groups` : undefined}
-                        tone="text-warn"
-                        none="Picklist choices, dates, numbers and places (city, state, country, ZIP) are shared by design, so they’re only duplicates together with other fields."
-                      />
-                      <Cell
-                        on={isOn(f.name, 'spelling')}
-                        onClick={() => setPick({ field: f.name, kind: 'spelling' })}
-                        value={f.standardization?.oddRecords}
-                        hint={f.standardization ? `records · ${fmtNumber(f.standardization.valuesWithVariants)} values` : undefined}
-                        tone="text-warn"
-                        none="Only text fields are checked for spelling."
-                      />
+                      {shows('empty') && (
+                        <Cell on={isOn(f.name, 'empty')} onClick={() => setPick({ field: f.name, kind: 'empty' })} value={f.empty} hint="records" tone="text-bad" />
+                      )}
+                      {shows('duplicates') && (
+                        <Cell
+                          on={isOn(f.name, 'duplicates')}
+                          onClick={() => setPick({ field: f.name, kind: 'duplicates' })}
+                          value={f.duplicates?.extraCopies}
+                          hint={f.duplicates ? `extra copies · ${fmtNumber(f.duplicates.totalGroups)} groups` : undefined}
+                          tone="text-warn"
+                          none="Picklist choices, dates, numbers and places (city, state, country, ZIP) are shared by design, so they’re only duplicates together with other fields."
+                        />
+                      )}
+                      {shows('spelling') && (
+                        <Cell
+                          on={isOn(f.name, 'spelling')}
+                          onClick={() => setPick({ field: f.name, kind: 'spelling' })}
+                          value={f.standardization?.oddRecords}
+                          hint={f.standardization ? `records · ${fmtNumber(f.standardization.valuesWithVariants)} values` : undefined}
+                          tone="text-warn"
+                          none="Only text fields are checked for spelling."
+                        />
+                      )}
                     </tr>
                   ))}
-                  {result.combined && (
+                  {result.combined && shows('duplicates') && (
                     <tr className="bg-brand-soft/30">
                       <td className="px-3 py-2">
                         <span className="block font-medium">All fields together</span>
                         <span className="block text-[11px] text-ink-subtle">{result.combined.rules[0]?.join(' + ')}</span>
                       </td>
                       <td className="px-3 py-2 text-ink-subtle">—</td>
-                      <td className="px-3 py-2 text-ink-subtle">—</td>
+                      {shows('empty') && <td className="px-3 py-2 text-ink-subtle">—</td>}
                       <Cell
                         on={isOn(ALL, 'duplicates')}
                         onClick={() => setPick({ field: ALL, kind: 'duplicates' })}
@@ -336,7 +344,7 @@ export function FieldCheck({
                         hint={`extra copies · ${fmtNumber(result.combined.totalGroups)} groups`}
                         tone="text-warn"
                       />
-                      <td className="px-3 py-2 text-ink-subtle">—</td>
+                      {shows('spelling') && <td className="px-3 py-2 text-ink-subtle">—</td>}
                     </tr>
                   )}
                 </tbody>
