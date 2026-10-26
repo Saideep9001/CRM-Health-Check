@@ -134,6 +134,8 @@ export interface FieldCheckResult {
   object: string;
   scanned: number;
   truncated: boolean;
+  /** Records missing at least one chosen field (each counted once). */
+  anyEmpty?: number | null;
   fields: FieldCheckField[];
   /** Duplicates on all chosen fields together (when more than one was chosen). */
   combined: DuplicateResult | null;

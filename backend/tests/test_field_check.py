@@ -31,6 +31,7 @@ def test_each_field_gets_empty_duplicates_and_spellings():
     f = by_name(out)
     assert out["scanned"] == 5
     assert (f["Phone"]["filled"], f["Phone"]["empty"]) == (3, 2)
+    assert out["any_empty"] == 2  # Globex (no phone, industry) and Hooli (no phone, state): each counted once
     # Acme / ACME are the same company; the two phones are the same number written differently
     assert f["Name"]["duplicates"]["total_groups"] == 1 and f["Name"]["duplicates"]["extra_copies"] == 1
     assert f["Phone"]["duplicates"]["total_groups"] == 1

@@ -102,7 +102,20 @@ function Cell({ on, onClick, value, hint, tone, none }: { on: boolean; onClick?:
 
 /** Pick fields of an object; for each one see its empty records, duplicates and inconsistent spellings — and, with several
  *  fields, records that are duplicates on all of them together. Only the objects the health check looked at. */
-export function FieldCheck({ objects, initialObject, focus, fieldsText = '' }: { objects: string[]; initialObject?: string | null; focus?: FinderKind | null; fieldsText?: string }) {
+export function FieldCheck({
+  objects,
+  initialObject,
+  focus,
+  fieldsText = '',
+  onResult,
+}: {
+  objects: string[];
+  initialObject?: string | null;
+  focus?: FinderKind | null;
+  fieldsText?: string;
+  /** Tells the page about the latest run (null when it's reset), so its chart can follow the chosen fields. */
+  onResult?: (result: FieldCheckResult | null) => void;
+}) {
   const choices = useMemo(() => Array.from(new Set([...(initialObject ? [initialObject] : []), ...objects])), [objects, initialObject]);
   const [object, setObject] = useState(initialObject ?? choices[0]);
   const options = useEmptyOptions(object);
@@ -124,6 +137,7 @@ export function FieldCheck({ objects, initialObject, focus, fieldsText = '' }: {
     setFieldQuery('');
     setPick(null);
     run.reset();
+    onResult?.(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [object, fieldsText, options.data]);
 
@@ -137,6 +151,7 @@ export function FieldCheck({ objects, initialObject, focus, fieldsText = '' }: {
       { object, fields: chosen },
       {
         onSuccess: (r: FieldCheckResult) => {
+          onResult?.(r);
           const kind = focus ?? 'empty';
           setPick({ field: kind === 'duplicates' && r.combined ? ALL : r.fields[0].name, kind });
         },

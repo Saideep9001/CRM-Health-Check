@@ -24,7 +24,7 @@ import { SEVERITY_COLORS } from '@/components/charts/Charts';
 import { objectLabel } from '@/components/category/DiagnosticAreaCard';
 import { useToast } from '@/context/ToastContext';
 import { cx, fmtDate, fmtDateTime, fmtNumber } from '@/lib/format';
-import type { DataFilter, DiagnosticArea, Finding, FindingStatus, IndicatorValue, Severity } from '@/types';
+import type { DataFilter, DiagnosticArea, FieldCheckResult, FieldScore, Finding, FindingStatus, IndicatorValue, Severity } from '@/types';
 import { FINDING_STATUS_LABEL, FindingStatusBadge, SeverityBadge } from '../ui/Badges';
 import { Button } from '../ui/Button';
 import { Field, Select } from '../ui/Form';
@@ -136,6 +136,17 @@ function TrackFix({ finding }: { finding: Finding }) {
       </div>
     </section>
   );
+}
+
+/** A Check fields run as this card's per-field numbers: empty, duplicated or odd records per field. */
+function checkScores(r: FieldCheckResult, kind: string): FieldScore[] {
+  const row = (name: string, label: string, count: number, of: number): FieldScore => ({ field: name, label, count, of, pct: of ? Math.round((1000 * count) / of) / 10 : 0 });
+  if (kind === 'missing') return r.fields.map((f) => row(f.name, f.label, f.empty, r.scanned));
+  if (kind === 'duplicates')
+    return r.fields.filter((f) => f.duplicates).map((f) => row(f.name, f.label, f.duplicates!.totalGroups + f.duplicates!.extraCopies, f.filled));
+  if (kind === 'standardization')
+    return r.fields.filter((f) => f.standardization).map((f) => row(f.name, f.label, f.standardization!.oddRecords, f.filled));
+  return [];
 }
 
 /** The records: the measure's table (with the columns that prove why, duplicate groups) when there is one, else the problem's own list. */
@@ -253,6 +264,8 @@ export function DetailsPanel({
   initialObject,
   asPage,
   extra,
+  fieldCheck,
+  onClearFieldCheck,
 }: {
   open: boolean;
   area: DiagnosticArea | undefined;
@@ -272,13 +285,20 @@ export function DetailsPanel({
   asPage?: boolean;
   /** Extra section after the records (e.g. the duplicate finder). */
   extra?: ReactNode;
+  /** The latest Check fields run: the chart and its numbers follow the fields chosen there. */
+  fieldCheck?: FieldCheckResult | null;
+  onClearFieldCheck?: () => void;
 }) {
   const navigate = useNavigate();
   const { canEdit } = useRole();
   const v = indicator;
   const scored = v?.score != null;
+  // After Check fields runs, the chart and its numbers show the fields chosen there instead of the check's own.
+  const chartKind = v ? chartKindFor(v.label) : null;
+  const fromCheck = fieldCheck && chartKind ? checkScores(fieldCheck, chartKind) : null;
+  const shownScores = fromCheck?.length ? fromCheck : (v?.fieldScores ?? null);
   // Missing-field cards: how many key values are filled (what the score is based on), and how many records miss any.
-  const empties = v?.fieldScores?.length && chartKindFor(v.label) === 'missing' ? v.fieldScores : null;
+  const empties = shownScores?.length && chartKind === 'missing' ? shownScores : null;
   const keyValues = empties
     ? (() => {
         const slots = empties.reduce((n, f) => n + f.of, 0);
@@ -287,8 +307,9 @@ export function DetailsPanel({
       })()
     : null;
   const recordsOf = empties?.[0]?.of ?? null;
-  const missingAny =
-    finding?.affectedRecords ?? (v && /^missing/i.test(v.label) && v.unit === '%' && recordsOf ? Math.round((v.value * recordsOf) / 100) : null);
+  const missingAny = fromCheck?.length
+    ? (fieldCheck?.anyEmpty ?? null)
+    : (finding?.affectedRecords ?? (v && /^missing/i.test(v.label) && v.unit === '%' && recordsOf ? Math.round((v.value * recordsOf) / 100) : null));
   const legacy = !!v && !v.how && !v.rule && !(v.criteria ?? []).length;
   const urgency = scored && v!.score! < PROBLEM_BELOW ? URGENCY.find((u) => u.severity === urgencyFor(v!.score!))! : null;
   const title = finding?.name ?? v?.label ?? '';
@@ -403,7 +424,7 @@ export function DetailsPanel({
                         style={{ left: `${Math.max(0, Math.min(100, v.score!))}%`, background: urgency ? SEVERITY_COLORS[urgency.severity] : 'rgb(var(--good))' }}
                       />
                     </div>
-                    {keyValues && (
+                    {keyValues && !fromCheck?.length && (
                       <p className="mt-2 text-xs text-ink-muted" title="The score follows this: 100 at 95% filled or more, 0 at 50% or less">
                         Based on <span className="font-semibold text-ink">{Math.round(keyValues.pct)}% of key values filled</span> ({fmtNumber(keyValues.filled)} of{' '}
                         {fmtNumber(keyValues.slots)})
@@ -427,7 +448,18 @@ export function DetailsPanel({
               ))}
           </div>
 
-          {v?.fieldScores?.length && chartKindFor(v.label) ? <FieldScoreChart scores={v.fieldScores} kind={chartKindFor(v.label)!} /> : null}
+          {fromCheck?.length ? (
+            <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-brand/30 bg-brand-soft/50 px-3 py-2 text-xs text-brand-ink">
+              <span className="min-w-0 flex-1">
+                Showing the <span className="font-semibold">{fromCheck.length} fields you checked</span> below ({fmtNumber(fieldCheck!.scanned)}{' '}
+                {objectLabel(fieldCheck!.object).toLowerCase()} read{fieldCheck!.truncated ? ', the first 20,000' : ''}). The score above is still the health check’s.
+              </span>
+              <button type="button" onClick={onClearFieldCheck} className="font-semibold text-brand hover:underline">
+                Back to this check’s fields
+              </button>
+            </div>
+          ) : null}
+          {shownScores?.length && chartKind ? <FieldScoreChart scores={shownScores} kind={chartKind} /> : null}
           {keyValues && empties && (
             <div className="-mt-4 mb-6 rounded-lg border border-line bg-muted/40 px-4 py-3 text-xs leading-relaxed text-ink-muted">
               {missingAny != null && recordsOf != null && (

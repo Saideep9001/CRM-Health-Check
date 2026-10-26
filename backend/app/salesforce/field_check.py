@@ -153,10 +153,12 @@ def check_fields(sf: SalesforceClient, obj: str, fields: list[str]) -> dict:
     if len(chosen) > 1 and len(together) > 1:
         combined = trim(duplicates.find_duplicates(sf, obj, together, prefetched=prefetched))
 
+    any_empty = sum(1 for r in rows if any(duplicates._value(r, f) in (None, "") for f in chosen))
     return {
         "object": obj,
         "scanned": len(rows),
         "truncated": truncated,
+        "any_empty": any_empty,  # records missing at least one chosen field (each counted once)
         "fields": out_fields,
         "combined": combined,
         "record_url_prefix": f"{sf.base}/",

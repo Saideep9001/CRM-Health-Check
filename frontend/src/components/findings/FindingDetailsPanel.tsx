@@ -3,6 +3,7 @@ import { useAssessmentResults } from '@/api/queries';
 import { getArea } from '@/config/categories';
 import type { Finding } from '@/types';
 import { DetailsPanel, measureFor } from './DetailsPanel';
+import type { FieldCheckResult } from '@/types';
 
 /** A problem opened anywhere (My Results, topic pages…): the one details panel, with the measure that raised it. */
 export function FindingDetailsPanel({
@@ -12,6 +13,8 @@ export function FindingDetailsPanel({
   onOpenFinding,
   asPage,
   extra,
+  fieldCheck,
+  onClearFieldCheck,
 }: {
   finding: Finding | null;
   onClose: () => void;
@@ -20,6 +23,8 @@ export function FindingDetailsPanel({
   onOpenFinding?: (f: Finding) => void;
   asPage?: boolean;
   extra?: ReactNode;
+  fieldCheck?: FieldCheckResult | null;
+  onClearFieldCheck?: () => void;
 }) {
   const results = useAssessmentResults(finding?.assessmentId ?? null, !!finding);
   const areaRes = finding ? results.data?.areas.find((a) => a.areaId === finding.areaId) : undefined;
@@ -38,6 +43,8 @@ export function FindingDetailsPanel({
       onOpenFinding={onOpenFinding}
       asPage={asPage}
       extra={extra}
+      fieldCheck={fieldCheck}
+      onClearFieldCheck={onClearFieldCheck}
     />
   );
 }

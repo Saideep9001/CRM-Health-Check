@@ -773,6 +773,7 @@ class FieldCheckResult(ApiModel):
     object: str
     scanned: int
     truncated: bool
+    any_empty: int | None = None  # records missing at least one chosen field (each counted once)
     fields: list[FieldCheckField]
     combined: DuplicateResult | None = None  # duplicates on all chosen fields together
     record_url_prefix: str

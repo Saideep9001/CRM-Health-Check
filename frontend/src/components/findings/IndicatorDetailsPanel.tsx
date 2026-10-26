@@ -1,6 +1,7 @@
 import { SEVERITY_RANK } from '@/lib/health';
 import type { DiagnosticArea, Finding, IndicatorValue } from '@/types';
 import { DetailsPanel, findingsFor } from './DetailsPanel';
+import type { FieldCheckResult } from '@/types';
 
 /** A "What we measure" card opened: the one details panel, with the problem it raised (if any). */
 export function IndicatorDetailsPanel({
@@ -15,6 +16,8 @@ export function IndicatorDetailsPanel({
   object,
   asPage,
   extra,
+  fieldCheck,
+  onClearFieldCheck,
 }: {
   area: DiagnosticArea;
   indicator: IndicatorValue | null;
@@ -30,6 +33,8 @@ export function IndicatorDetailsPanel({
   object?: string | null;
   asPage?: boolean;
   extra?: React.ReactNode;
+  fieldCheck?: FieldCheckResult | null;
+  onClearFieldCheck?: () => void;
 }) {
   const open = findings.filter((f) => f.status !== 'resolved' && f.status !== 'accepted-risk');
   const bySeverity = (a: Finding, b: Finding) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity] || b.affectedRecords - a.affectedRecords;
@@ -55,6 +60,8 @@ export function IndicatorDetailsPanel({
       initialObject={object}
       asPage={asPage}
       extra={extra}
+      fieldCheck={fieldCheck}
+      onClearFieldCheck={onClearFieldCheck}
     />
   );
 }
