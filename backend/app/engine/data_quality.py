@@ -80,8 +80,9 @@ def _norm(value: object, table: dict[str, str]) -> str:
 
 # ---------------------------------------------------------------- per-object cards
 #
-# Every chosen object gets four cards: Duplicates, Missing Key Fields, Data Standardization Issues and No Activity in
-# 6 Months. Accounts also get Accounts Without Contacts and Accounts Without Open Opportunities. Lead, Account, Contact
+# Every chosen object gets cards on the standard data quality dimensions: Duplicates (uniqueness), Completeness,
+# Valid & Consistent (validity), Freshness (timeliness), Linked Correctly (integrity; not Leads) and Active Owners
+# (ownership). Each card also names its main cause. Lead, Account, Contact
 # and Opportunity use the fields below; any other object uses every field people fill in.
 
 DUP_FIELDS: dict[str, tuple[str, ...]] = {
@@ -247,7 +248,7 @@ def duplicates_on_fields(ctx: Ctx, obj: str) -> None:
         return f"“{r.get(name_field) or r.get('Id')}” ({len(g)})"
 
     records = _listed(ctx, obj, ids)
-    ctx.metric(
+    m = ctx.metric(
         f"Duplicate {ctx.label(obj)}", extra, "count", "lower-better", score,
         how=f"{_cap(label)} that match another record on {names}, out of {total:,}. We count only the extra copies beyond the first in each group.",
         rule=f"Scores 100 when there are no duplicates, falling evenly to 0 when the extra copies reach 15% of all {label}.",
@@ -273,11 +274,13 @@ def duplicates_on_fields(ctx: Ctx, obj: str) -> None:
         why=DUP_WHY,
         impact=DUP_IMPACT,
         action=f"Merge the duplicates, starting with the biggest groups, then turn on Matching and Duplicate Rules for {ctx.label(obj)}.",
+        measure=m.label,
         obj=obj,
         url=ctx.list_url(obj),
         records=records,
         fix="/lightning/setup/DuplicateRules/home",
     )
+    m.cause = f"{len(groups):,} groups · biggest: {show(groups[0])}" if groups else "No duplicates found"
 
 
 # ---------------- missing key fields
@@ -304,9 +307,9 @@ def missing_key_fields(ctx: Ctx, obj: str) -> None:
     label = _label(ctx, obj)
     worst = sorted(keys, key=lambda f: -empty[f])
     names = ", ".join(_flabel(ctx, obj, f) for f in keys)
-    ctx.metric(
-        f"Missing Key Fields ({ctx.label(obj)})", pct(n, total), "%", "lower-better", score,
-        how=f"{_cap(label)} missing at least one key field ({names}): {n:,} out of {total:,}.",
+    m = ctx.metric(
+        f"Completeness ({ctx.label(obj)})", filled_pct, "%", "higher-better", score,
+        how=f"{filled_pct:.0f}% of the key values on {label} are filled in ({names}); {n:,} of {total:,} records miss at least one.",
         rule="Scored on how many key values are filled in: 100 at 95% or more, 0 at 50% or less, in proportion in between. "
         "A problem is raised when the score is below 90.",
         records=(obj, *base, cond),
@@ -335,7 +338,12 @@ def missing_key_fields(ctx: Ctx, obj: str) -> None:
         min_score=90,
         records=(obj, *base, cond),
         fix=f"/lightning/setup/ObjectManager/{obj}/FieldsAndRelationships/view",
+        measure=m.label,
     )
+    m.out_of, m.out_of_label = total * len(keys), "key values"  # e.g. 5 fields × 5,069 records
+    w = worst[0]
+    m.cause = (f"Least filled: {_flabel(ctx, obj, w)} ({100 - pct(empty[w], total):.0f}% filled)" if empty[w]
+               else "Every key field is filled in")
 
 
 # ---------------- data standardization
@@ -476,8 +484,8 @@ def data_standardization(ctx: Ctx, obj: str) -> None:
     label = _label(ctx, obj)
     records = _listed(ctx, obj, sorted(bad))
     worst = sorted((p for p in per_field if p[2]), key=lambda p: -p[2])
-    ctx.metric(
-        f"Data Standardization Issues ({ctx.label(obj)})", len(bad), "count", "lower-better", score,
+    m = ctx.metric(
+        f"Valid & Consistent ({ctx.label(obj)})", len(bad), "count", "lower-better", score,
         how=f"{_cap(label)} with at least one value in an odd format or spelling ({', '.join(_flabel(ctx, obj, f) for f in keys)}), "
         f"out of {len(with_value):,} with any of them filled in.",
         rule="Scores 100 when every value is consistent, falling evenly to 0 when 25% of the records have an odd value. "
@@ -507,96 +515,148 @@ def data_standardization(ctx: Ctx, obj: str) -> None:
         obj=obj,
         url=ctx.list_url(obj),
         records=records,
+        measure=m.label,
     )
+    m.cause = ("Most odd values: " + ", ".join(f"{_flabel(ctx, obj, f)} ({n:,})" for f, _, n, _ in worst[:2])) if worst else "Every value is valid and consistent"
 
 
-# ---------------- no activity in 6 months
+# ---------------- freshness
 
-def no_recent_activity(ctx: Ctx, obj: str) -> None:
+def freshness(ctx: Ctx, obj: str) -> None:
     total = _base_total(ctx, obj)
-    fld = next((f for f in ("LastActivityDate", "LastModifiedDate") if ctx.has_field(obj, f)), None)
-    if not total or not fld:
+    has_activity = ctx.has_field(obj, "LastActivityDate")
+    if not total or not (has_activity or ctx.has_field(obj, "LastModifiedDate")):
         return
     base = BASE_CONDS.get(obj, ())
+    stale = [f"(LastActivityDate = null OR LastActivityDate < LAST_N_DAYS:{INACTIVE_DAYS})"] if has_activity else []
+    if ctx.has_field(obj, "LastModifiedDate"):
+        stale.append(f"LastModifiedDate < LAST_N_DAYS:{INACTIVE_DAYS}")
     older = [f"CreatedDate < LAST_N_DAYS:{INACTIVE_DAYS}"] if ctx.has_field(obj, "CreatedDate") else []
-    conds = (*base, f"({fld} = null OR {fld} < LAST_N_DAYS:{INACTIVE_DAYS})", *older)
+    conds = (*base, *stale, *older)
     n = ctx.count(obj, *conds, recent=False)
     label = _label(ctx, obj)
-    what = "activity (task, event, call or email logged)" if fld == "LastActivityDate" else "change"
-    ctx.metric(
-        f"No Activity in 6 Months ({ctx.label(obj)})", pct(n, total), "%", "lower-better", None,
-        how=f"{_cap(label)} with no {what} in the last 6 months: {n:,} out of {total:,}.",
+    touched = "no activity (task, event, call or email) and no edit" if has_activity else "no edit"
+    m = ctx.metric(
+        f"Freshness ({ctx.label(obj)})", pct(n, total), "%", "lower-better", None,
+        how=f"{_cap(label)} with {touched} in the last 6 months: {n:,} out of {total:,}.",
         rule="Shown for information only; it doesn’t change the area score.",
         records=(obj, *conds),
         recent=False,
-        columns=["Name", fld, "OwnerId", "CreatedDate"],
-        order=fld,
+        columns=["Name", *(["LastActivityDate"] if has_activity else []), "LastModifiedDate", "OwnerId", "CreatedDate"],
+        order="LastModifiedDate",
         criteria=[
             ("Records checked", f"{total:,} {label}"),
-            ("Activity date", f"{_flabel(ctx, obj, fld)}" + (" (the last task or event)" if fld == "LastActivityDate"
-                                                            else " (this object has no activity date, so the last change is used)")),
-            ("Counts as inactive", f"No {what} in the last {INACTIVE_DAYS} days (or never)"
-             + (", and created more than 6 months ago (newer records aren’t counted)." if older else ".")),
+            ("Counts as stale", f"{_cap(touched)} in the last {INACTIVE_DAYS} days, and created more than 6 months ago "
+             "(newer records aren’t counted)."),
             ("What's counted", f"{n:,} of {total:,} {label} ({pct(n, total):.0f}%)."),
-            ("Records listed", "Every inactive record, oldest activity first."),
+            ("Records listed", "Every stale record, least recently changed first."),
         ],
     )
+    m.cause = f"{n:,} untouched for 6+ months" if n else "Every record was worked on in the last 6 months"
 
 
-# ---------------- account extras
+# ---------------- linked correctly (integrity)
 
-def accounts_without_contacts(ctx: Ctx, obj: str = "Account") -> None:
-    total = _base_total(ctx, "Account")
-    cond = "Id NOT IN (SELECT AccountId FROM Contact WHERE AccountId != null)"
-    n = ctx.count("Account", cond) if total else 0
+# What a record should be linked to: (condition for "not linked", what's missing, why it matters)
+_LINKS = {
+    "Account": ("Id NOT IN (SELECT AccountId FROM Contact WHERE AccountId != null)", "no Contacts",
+                "You can’t sell to a company if you don’t know who works there."),
+    "Contact": ("AccountId = null", "no Account", "A Contact with no company can’t be reported on, routed or seen on the Account."),
+    "Opportunity": ("AccountId = null", "no Account", "A deal with no company is missing from Account views, territory reports and forecasts by customer."),
+}
+
+
+def linked_correctly(ctx: Ctx, obj: str) -> None:
+    if obj not in _LINKS or (obj != "Account" and not ctx.has_field(obj, "AccountId")):
+        return  # Leads and other objects have no required parent
+    cond, missing, why = _LINKS[obj]
+    total = _base_total(ctx, obj)
+    n = ctx.count(obj, cond) if total else 0
     score = rate_score(n / total, 0.5) if total else 100
-    ctx.metric(
-        "Accounts Without Contacts", n, "count", "lower-better", score,
-        how=f"Accounts that have no Contacts linked to them, out of {total:,} Accounts.",
-        rule="Scores 100 when every Account has at least one Contact, falling evenly to 0 when 50% have none.",
-        records=("Account", cond),
-        columns=["Name", "Type", "Industry", "Phone", "OwnerId", "LastActivityDate", "CreatedDate"],
+    label = _label(ctx, obj)
+    m = ctx.metric(
+        f"Linked Correctly ({ctx.label(obj)})", n, "count", "lower-better", score,
+        how=f"{_cap(label)} with {missing}, out of {total:,}.",
+        rule=f"Scores 100 when every record is linked, falling evenly to 0 when 50% have {missing}.",
+        records=(obj, cond),
+        columns=["Name", *(["AccountId"] if obj != "Account" else ["Type", "Industry"]), "OwnerId", "CreatedDate"],
         order="Name",
         criteria=[
-            ("Records checked", f"{total:,} Accounts" + _window(ctx)),
-            ("Counts as no Contacts", "No Contact record has this Account as its Account. Contacts linked through other relationships aren’t counted."),
-            ("What's counted", f"{n:,} of {total:,} Accounts ({pct(n, total):.0f}%) with no Contacts."),
-            ("Flagged when", "More than 2.5% of Accounts have no Contacts (the score drops below 95)."),
-            ("Records listed", "Every Account with no Contacts, sorted by name."),
+            ("Records checked", f"{total:,} {label}" + _window(ctx)),
+            ("Counts as not linked", f"The record has {missing}" + (" (Contacts linked through other relationships aren’t counted)." if obj == "Account" else ".")),
+            ("What's counted", f"{n:,} of {total:,} {label} ({pct(n, total):.0f}%)."),
+            ("Flagged when", f"More than 2.5% of {label} have {missing} (the score drops below 95)."),
+            ("Records listed", f"Every record with {missing}, sorted by name."),
         ],
     )
+    m.cause = f"{n:,} {label} with {missing}" if n else f"Every record has {'Contacts' if obj == 'Account' else 'an Account'}"
     ctx.finding(
-        name="Accounts with no Contacts",
+        name="Accounts with no Contacts" if obj == "Account" else f"{_cap(label)} without an Account",
         score=score,
         affected=n,
-        description=f"{n:,} of {total:,} Accounts ({pct(n, total):.0f}%) have no Contacts.",
-        why="You can’t sell to a company if you don’t know who works there.",
-        impact="Missed relationships and opportunities that stall without a known buyer.",
-        action="Add the main people for important Accounts, and review Accounts with no Contacts and no activity for cleanup.",
-        obj="Account",
-        url=ctx.list_url("Account"),
-        records=("Account", cond),
+        description=f"{n:,} of {total:,} {label} ({pct(n, total):.0f}%) have {missing}.",
+        why=why,
+        impact="Records nobody can find from the customer, and reports by customer that miss them.",
+        action="Link the records to the right Account (or add the main Contacts), and make the link required where it matters.",
+        obj=obj,
+        url=ctx.list_url(obj),
+        records=(obj, cond),
+        measure=m.label,
     )
 
 
-def accounts_without_open_deals(ctx: Ctx, obj: str = "Account") -> None:
-    ctx.fields("Opportunity")  # Unavailable when the org has no Opportunities
-    total = _base_total(ctx, "Account")
-    cond = "Id NOT IN (SELECT AccountId FROM Opportunity WHERE IsClosed = false AND AccountId != null)"
-    n = ctx.count("Account", cond) if total else 0
-    ctx.metric(
-        "Accounts Without Open Opportunities", n, "count", "lower-better", None,
-        how=f"Accounts with no open Opportunity, out of {total:,} Accounts.",
-        rule="Shown for information only; it doesn’t change the area score (many Accounts have no deal in progress).",
-        records=("Account", cond),
-        columns=["Name", "Type", "Industry", "OwnerId", "LastActivityDate", "CreatedDate"],
+# ---------------- active owners (ownership)
+
+INACTIVE_OWNER = "OwnerId IN (SELECT Id FROM User WHERE IsActive = false)"
+
+
+def active_owners(ctx: Ctx, obj: str) -> None:
+    if not ctx.has_field(obj, "OwnerId"):
+        return  # detail records take their owner from the parent
+    total = _base_total(ctx, obj)
+    base = BASE_CONDS.get(obj, ())
+    n = ctx.count(obj, *base, INACTIVE_OWNER) if total else 0
+    score = rate_score(n / total, 0.2) if total else 100
+    label = _label(ctx, obj)
+    top: list[tuple[str, int]] = []
+    if n:
+        try:  # who they belonged to (names make the clean-up easy to hand out)
+            where = ctx._where(obj, (*base, INACTIVE_OWNER), True)
+            rows = ctx.rows(f"SELECT Owner.Name n, COUNT(Id) c FROM {obj}{where} GROUP BY Owner.Name ORDER BY COUNT(Id) DESC LIMIT 3")
+            top = [(str(r.get("n")), int(r.get("c") or 0)) for r in rows if r.get("n")]
+        except SalesforceError:
+            top = []
+    m = ctx.metric(
+        f"Active Owners ({ctx.label(obj)})", n, "count", "lower-better", score,
+        how=f"{_cap(label)} owned by people whose Salesforce user is deactivated (they’ve left or changed role), out of {total:,}.",
+        rule="Scores 100 when every record has an active owner, falling evenly to 0 when 20% belong to deactivated users.",
+        records=(obj, *base, INACTIVE_OWNER),
+        columns=["Name", "OwnerId", "LastModifiedDate", "CreatedDate"],
         order="Name",
         criteria=[
-            ("Records checked", f"{total:,} Accounts" + _window(ctx)),
-            ("Counts as no open Opportunities", "No Opportunity that isn’t Closed Won or Closed Lost has this Account."),
-            ("What's counted", f"{n:,} of {total:,} Accounts ({pct(n, total):.0f}%)."),
-            ("Records listed", "Every Account with no open Opportunity, sorted by name."),
+            ("Records checked", f"{total:,} {label}" + _window(ctx)),
+            ("Counts as orphaned", "The owner is a user who is no longer active. Records owned by a queue are fine."),
+            ("What's counted", f"{n:,} of {total:,} {label} ({pct(n, total):.0f}%)"
+             + (": " + ", ".join(f"{name} ({c:,})" for name, c in top) if top else "") + "."),
+            ("Records listed", "Every record owned by a deactivated user, sorted by name."),
         ],
+    )
+    m.cause = ("Most from: " + ", ".join(f"{name} ({c:,})" for name, c in top[:2])) if top else (
+        f"{n:,} {label} with an inactive owner" if n else "Every record has an active owner")
+    ctx.finding(
+        name=f"{_cap(label)} owned by people who have left",
+        score=score,
+        affected=n,
+        description=f"{n:,} of {total:,} {label} belong to deactivated users"
+        + (", mostly " + ", ".join(f"{name} ({c:,})" for name, c in top) if top else "") + ".",
+        why="Nobody follows up on records whose owner has gone: customers get no answer and the work is lost.",
+        impact="Neglected customers and deals, and wrong numbers in reports by owner.",
+        action="Reassign these records to active people (Mass Transfer Records in Setup), and add reassignment to your leaver checklist.",
+        obj=obj,
+        url=ctx.list_url(obj),
+        records=(obj, *base, INACTIVE_OWNER),
+        fix="/lightning/setup/DataManagementMassTransfer/home",
+        measure=m.label,
     )
 
 
@@ -613,7 +673,7 @@ def _cards(ctx: Ctx, obj: str, *checks) -> None:
         except SalesforceError as exc:  # one card failing shouldn't hide the others
             log.warning("%s on %s skipped: %s", check.__name__, obj, exc)
     plural = ctx.label(obj)
-    cards = {f"Duplicate {plural}": "duplicates", f"Missing Key Fields ({plural})": "missing", f"Data Standardization Issues ({plural})": "standardization"}
+    cards = {f"Duplicate {plural}": "duplicates", f"Completeness ({plural})": "missing", f"Valid & Consistent ({plural})": "standardization"}
     for m in ctx.metrics.get(ctx.area_id, []):
         rows = ctx.memo.get(("by_field", obj, cards.get(m.label)), [])
         if m.label in cards and rows:
@@ -633,12 +693,12 @@ def _cards(ctx: Ctx, obj: str, *checks) -> None:
         ))
 
 
-CORE_CARDS = (duplicates_on_fields, missing_key_fields, data_standardization, no_recent_activity)
+CORE_CARDS = (duplicates_on_fields, missing_key_fields, data_standardization, freshness, linked_correctly, active_owners)
 
 
 def account_cards(ctx: Ctx) -> None:
     ctx.selected("Account")
-    _cards(ctx, "Account", *CORE_CARDS, accounts_without_contacts, accounts_without_open_deals)
+    _cards(ctx, "Account", *CORE_CARDS)
 
 
 def contact_cards(ctx: Ctx) -> None:
@@ -1037,7 +1097,7 @@ def scorecard(ctx: Ctx) -> None:
         except Unavailable:
             continue
         mine = [m.score for area in ("area-1", "area-2") for m in ctx.metrics.get(area, [])
-                if m.score is not None and (m.label.endswith(f"({plural})") or m.label == f"Duplicate {plural}" or m.label.startswith(f"{plural} Without"))]
+                if m.score is not None and (m.label.endswith(f"({plural})") or m.label == f"Duplicate {plural}")]
         if mine:
             per_obj.append((plural, sum(mine) / len(mine), len(mine)))
     value = sum(s for _, s, _ in per_obj) / len(per_obj) if per_obj else 100
@@ -1048,7 +1108,7 @@ def scorecard(ctx: Ctx) -> None:
         criteria=[
             ("Grades", "; ".join(f"{p}: {_grade(s)} ({s:.0f}, from {n} measures)" for p, s, n in per_obj) or "Nothing scored yet"),
             ("Overall", f"{_grade(value)} ({value:.0f}) — the plain average of the objects’ scores"),
-            ("Measures included", "Every scored card of each object from this check: Duplicates, Key Fields & Standardization (area 1, "
+            ("Measures included", "Every scored card of each object from this check: Record Data Quality (area 1, "
              "when checked together) and this area."),
         ],
     )
@@ -1061,10 +1121,10 @@ AREAS = {
 }
 
 STEP_LABELS = {
-    account_cards: "Checking Accounts: duplicates, missing fields, formats, activity",
-    contact_cards: "Checking Contacts: duplicates, missing fields, formats, activity",
-    lead_cards: "Checking Leads: duplicates, missing fields, formats, activity",
-    opportunity_cards: "Checking Opportunities: duplicates, missing fields, formats, activity",
+    account_cards: "Checking Accounts: duplicates, completeness, formats, freshness, links, owners",
+    contact_cards: "Checking Contacts: duplicates, completeness, formats, freshness, links, owners",
+    lead_cards: "Checking Leads: duplicates, completeness, formats, freshness, owners",
+    opportunity_cards: "Checking Opportunities: duplicates, completeness, formats, freshness, links, owners",
     other_object_cards: "Checking your other objects",
     account_field_cards: "Checking Account fields: unused, outdated, look-alike, rarely filled",
     contact_field_cards: "Checking Contact fields: unused, outdated, look-alike, rarely filled",

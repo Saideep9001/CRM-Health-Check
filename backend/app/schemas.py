@@ -359,6 +359,7 @@ class IndicatorValue(ApiModel):
     field_list: list[FieldListItem] | None = None  # cards about fields: the fields themselves
     out_of: int | None = None  # what the number is out of, when not the object's records (e.g. 225 custom fields)
     out_of_label: str | None = None
+    cause: str | None = None  # the main cause in a few words, e.g. "Least filled: Zip Code (2% filled)"
 
     @model_validator(mode="before")
     @classmethod

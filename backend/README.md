@@ -81,7 +81,7 @@ Each check is a fixed, read-only SOQL query in `app/engine/data_quality.py`. Fie
 
 | Area | Indicators |
 |---|---|
-| 1. Duplicates, Key Fields & Standardization | Duplicate Accounts (name / website), Contacts and open Leads (email); Missing Email; Missing Phone; country/state spelling variants and whether State & Country picklists are on |
+| 1. Record Data Quality | Per chosen object: Duplicates, Completeness, Valid & Consistent, Freshness, Linked Correctly (not Leads) and Active Owners, each with its main cause; whether State & Country picklists are on |
 | 2. Redundant Fields & Scorecard | Key-field completeness; missing values; custom fields that look outdated or are never/rarely filled (up to 30 per object); Accounts without Contacts; overall scorecard |
 
 Workflows & Automation (areas 3–7) is in `app/engine/workflows.py`:

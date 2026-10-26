@@ -15,8 +15,8 @@ export type FieldChartKind = keyof typeof KINDS;
 
 export function chartKindFor(label: string): FieldChartKind | null {
   if (/^duplicate/i.test(label)) return 'duplicates';
-  if (/missing/i.test(label)) return 'missing';
-  if (/standardi/i.test(label)) return 'standardization';
+  if (/missing|^completeness/i.test(label)) return 'missing';
+  if (/standardi|valid & consistent/i.test(label)) return 'standardization';
   if (/low-completion/i.test(label)) return 'filled';
   if (/scorecard/i.test(label)) return 'grade';
   return null;

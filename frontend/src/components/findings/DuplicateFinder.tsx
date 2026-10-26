@@ -13,7 +13,7 @@ export type FinderKind = 'duplicates' | 'empty' | 'spelling';
 export function finderFor(name: string, criteria: [string, string][] = []): { kind: FinderKind; fieldsText: string } | null {
   const fieldsText = criteria.find(([k]) => k === 'Fields checked' || k === 'Compared on')?.[1] ?? '';
   if (/duplicate/i.test(name)) return { kind: 'duplicates', fieldsText };
-  if (/standardi[sz]|inconsistent|spell/i.test(name)) return { kind: 'spelling', fieldsText };
+  if (/standardi[sz]|consistent|spell/i.test(name)) return { kind: 'spelling', fieldsText };
   if (criteria.some(([k]) => k === 'Counts as missing' || k === 'Incomplete lead') || /missing|incomplete|completeness|empty|blank/i.test(name))
     return { kind: 'empty', fieldsText };
   return null;

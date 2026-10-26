@@ -22,10 +22,10 @@ def _f(name, **kw):
 DESCRIBE = {
     "Account": [_f("Id", type="id"), _f("Name"), _f("Website", type="url"), _f("Phone", type="phone"), _f("Industry"), _f("Type"), _f("BillingCountry"),
                 _f("BillingState"), _f("BillingCity"),
-                _f("NumberOfEmployees", type="int"), _f("LastModifiedDate", type="datetime"),
+                _f("NumberOfEmployees", type="int"), _f("LastModifiedDate", type="datetime"), _f("OwnerId", type="reference"),
                 _f("Used__c", custom=True), _f("Region_Code__c", custom=True), _f("Legacy_Notes_old__c", custom=True, label="Legacy Notes")],
     "Contact": [_f("Id", type="id"), _f("Email", type="email"), _f("Phone"), _f("MobilePhone"), _f("Title"), _f("AccountId", type="reference"),
-                _f("MailingCountry"), _f("LastModifiedDate", type="datetime")],
+                _f("MailingCountry"), _f("LastModifiedDate", type="datetime"), _f("OwnerId", type="reference")],
     "Lead": [_f("Id", type="id"), _f("Email", type="email"), _f("Phone"), _f("Company"), _f("Title"), _f("LeadSource"), _f("Industry"), _f("Country"),
              _f("State"), _f("IsConverted", type="boolean")],
     "Opportunity": [_f("Id", type="id"), _f("Amount", type="currency"), _f("NextStep"), _f("LeadSource"), _f("Type")],
@@ -79,6 +79,8 @@ class FakeOrg(FakeSalesforce):
         if q.startswith("SELECT COUNT()"):
             if "NOT IN (SELECT AccountId" in q:
                 n = 25
+            elif "FROM User WHERE IsActive = false" in q:  # records owned by people who have left
+                n = 5
             elif "BillingCountry IN (" in q:  # records with an odd spelling ("United States", "US")
                 n = 15
             elif m := re.search(r"(\w+__c) != null", q):
@@ -138,24 +140,29 @@ def test_full_data_quality_run(client, sf):
     ind = {i["label"]: i for i in areas["area-1"]["indicators"]}
     labels = [i["label"] for i in areas["area-1"]["indicators"]]
     # Each object's cards together: Accounts get the four core cards plus two of their own.
-    assert labels[:6] == ["Duplicate Accounts", "Missing Key Fields (Accounts)", "Data Standardization Issues (Accounts)",
-                          "No Activity in 6 Months (Accounts)", "Accounts Without Contacts", "Accounts Without Open Opportunities"]
-    assert {"Duplicate Contacts", "Missing Key Fields (Contacts)", "Data Standardization Issues (Contacts)", "No Activity in 6 Months (Contacts)",
-            "Duplicate Leads", "Missing Key Fields (Leads)", "Missing Key Fields (Opportunities)"} <= set(ind)
+    # the same data quality dimensions for every object, in the same order
+    assert labels[:6] == ["Duplicate Accounts", "Completeness (Accounts)", "Valid & Consistent (Accounts)", "Freshness (Accounts)",
+                          "Linked Correctly (Accounts)", "Active Owners (Accounts)"]
+    assert {"Duplicate Contacts", "Completeness (Contacts)", "Valid & Consistent (Contacts)", "Freshness (Contacts)",
+            "Linked Correctly (Contacts)", "Active Owners (Contacts)", "Duplicate Leads", "Completeness (Leads)",
+            "Completeness (Opportunities)"} <= set(ind)
+    assert "Linked Correctly (Leads)" not in ind  # Leads have no parent record
+    assert ind["Active Owners (Accounts)"]["value"] == 5 and ind["Linked Correctly (Contacts)"]["value"] == 10
+    assert ind["Completeness (Accounts)"]["cause"].startswith("Least filled: ") and ind["Duplicate Accounts"]["cause"].startswith("2 groups")
     assert ind["Duplicate Accounts"]["value"] == 2 and ind["Duplicate Contacts"]["value"] == 0
-    mk = ind["Missing Key Fields (Contacts)"]  # Email or Phone empty on 40 of 200 (the first condition counted by the fake)
-    assert {k: mk[k] for k in ("value", "unit", "direction")} == {"value": 20.0, "unit": "%", "direction": "lower-better"}
-    assert ind["Data Standardization Issues (Accounts)"]["value"] == 2
-    assert ind["Accounts Without Contacts"]["value"] == 25
+    mk = ind["Completeness (Contacts)"]  # Email empty on 40 and Phone on 10 of 200: 350 of 400 key values filled
+    assert {k: mk[k] for k in ("value", "unit", "direction")} == {"value": 87.5, "unit": "%", "direction": "higher-better"}
+    assert ind["Valid & Consistent (Accounts)"]["value"] == 2
+    assert ind["Linked Correctly (Accounts)"]["value"] == 25  # Accounts with no Contacts
     # each data card charts its own number per field
     dup = {f["field"]: f for f in ind["Duplicate Accounts"]["fieldScores"]}
     assert dup["Website"] == {"field": "Website", "label": "Website", "count": 5, "of": 6, "pct": 83.3}  # acme.com ×3, globex.io ×2
     assert "BillingCity" not in dup  # sharing a city is normal
-    empty = {f["field"]: f for f in ind["Missing Key Fields (Accounts)"]["fieldScores"]}
+    empty = {f["field"]: f for f in ind["Completeness (Accounts)"]["fieldScores"]}
     assert (empty["Website"]["count"], empty["Website"]["of"]) == (10, 100)
-    odd = {f["field"]: f for f in ind["Data Standardization Issues (Accounts)"]["fieldScores"]}
+    odd = {f["field"]: f for f in ind["Valid & Consistent (Accounts)"]["fieldScores"]}
     assert (odd["BillingState"]["count"], odd["BillingState"]["of"]) == (1, 5)  # "California" vs "CA"
-    assert ind["No Activity in 6 Months (Accounts)"]["fieldScores"] is None
+    assert ind["Freshness (Accounts)"]["fieldScores"] is None
     ind2 = {i["label"]: i for i in areas["area-2"]["indicators"]}
     labels2 = [i["label"] for i in areas["area-2"]["indicators"]]
     # each object's field cards together, then one scorecard
@@ -244,7 +251,7 @@ def test_only_chosen_objects_are_checked(client, sf):
     res = client.get(f"{API}/assessments/{aid}/results").json()
     assert [o["name"] for o in res["objects"]] == ["Contact"]
     ind = {i["label"] for a in res["areas"] for i in a["indicators"]}
-    assert "Duplicate Contacts" in ind and "Duplicate Accounts" not in ind and "Accounts Without Contacts" not in ind
+    assert "Duplicate Contacts" in ind and "Duplicate Accounts" not in ind and "Linked Correctly (Accounts)" not in ind
     assert not any(" FROM Account" in q or " FROM Lead" in q for q in sf.soql)
     findings = client.get(f"{API}/assessments/{aid}/findings").json()["items"]
     assert findings and all(f["objectName"] in ("Contact", None) for f in findings)
@@ -381,8 +388,8 @@ def test_older_problems_find_their_measure_by_the_same_records(client, sf):
         db.commit()
     found = client.get(f"{API}/assessments/{aid}/findings", params={"pageSize": 500}).json()["items"]
     missing = [f for f in found if f["name"].endswith("missing key fields")]
-    assert missing and all(f["measure"].startswith("Missing Key Fields (") for f in missing)
-    assert next(f for f in found if f["name"] == "Contacts missing key fields")["measure"] == "Missing Key Fields (Contacts)"
+    assert missing and all(f["measure"].startswith("Completeness (") for f in missing)
+    assert next(f for f in found if f["name"] == "Contacts missing key fields")["measure"] == "Completeness (Contacts)"
     assert next(f for f in found if f["name"] == "Duplicate Accounts")["measure"] == "Duplicate Accounts"
 
 

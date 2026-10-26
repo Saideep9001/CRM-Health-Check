@@ -55,6 +55,8 @@ class Metric:
     # What the number is out of, when it isn't the object's records: e.g. (225, "custom fields").
     out_of: int | None = None
     out_of_label: str | None = None
+    # The main cause in a few words, shown on the card: "Least filled: Zip Code (2% filled)".
+    cause: str | None = None
 
 
 @dataclass

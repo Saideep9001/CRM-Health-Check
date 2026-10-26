@@ -15,6 +15,8 @@ import {
   GitCompare,
   History,
   Link2,
+  ListChecks,
+  Network,
   PieChart,
   Gauge,
   Hourglass,
@@ -46,8 +48,8 @@ import NotFoundPage from './NotFoundPage';
 
 type Tab = 'indicators' | 'findings' | 'recommendations';
 
-/** The object a measure is about and its title within that object: "Missing Key Fields (Leads)" → Leads / Missing Key
- *  Fields, "Duplicate Accounts" → Accounts / Duplicates. Null for measures that aren't about one object. */
+/** The object a measure is about and its title within that object: "Completeness (Leads)" → Leads / Completeness,
+ *  "Duplicate Accounts" → Accounts / Duplicates. Null for measures that aren't about one object. */
 function objectOf(label: string): { group: string; title: string } | null {
   let m = label.match(/^(.+) \(([^)]+)\)$/);
   if (m) return { group: m[2], title: m[1] };
@@ -80,6 +82,11 @@ function iconFor(title: string): LucideIcon {
   if (/depend on/i.test(title)) return Link2;
   if (/scorecard/i.test(title)) return Award;
   if (/duplicate/i.test(title)) return Copy;
+  if (/^completeness/i.test(title)) return ListChecks;
+  if (/valid & consistent/i.test(title)) return SpellCheck;
+  if (/^freshness/i.test(title)) return Clock;
+  if (/^linked/i.test(title)) return Network;
+  if (/^active owners/i.test(title)) return UserX;
   if (/missing/i.test(title)) return CircleOff;
   if (/standardi/i.test(title)) return SpellCheck;
   if (/activity/i.test(title)) return Clock;
@@ -120,7 +127,7 @@ export default function DiagnosticAreaPage() {
   // The objects the check behind these results looked at.
   const checkedObjects = source.data ? (source.data.scope.objects?.length ? source.data.scope.objects : DEFAULT_DQ_OBJECTS) : null;
 
-  // Cards grouped by the object they're about ("Missing Key Fields (Leads)" goes under Leads), in the check's order.
+  // Cards grouped by the object they're about ("Completeness (Leads)" goes under Leads), in the check's order.
   const sections: { name: string; items: { label: string; i: number; title: string }[] }[] = [];
   measured.forEach((label, i) => {
     const o = objectOf(label);
@@ -239,7 +246,14 @@ export default function DiagnosticAreaPage() {
             <ProgressBar value={v.direction === 'higher-better' ? share : Math.max(share, v.value > 0 ? 2 : 0)} color={tone.bar} delay={i * 0.04} />
           )}
         </span>
-        {v.how && <span className="mt-3 line-clamp-2 text-xs text-ink-muted">{v.how}</span>}
+        {v.cause ? (
+          <span className="mt-3 text-xs" title={v.how ?? undefined}>
+            <span className="font-medium text-ink-subtle">Main cause · </span>
+            <span className="font-medium text-ink">{v.cause}</span>
+          </span>
+        ) : (
+          v.how && <span className="mt-3 line-clamp-2 text-xs text-ink-muted">{v.how}</span>
+        )}
         <span className="mt-auto inline-flex items-center gap-1 pt-4 text-xs font-semibold text-brand">
           Rule &amp; {v.fieldList ? 'fields' : 'records'} <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-1" />
         </span>

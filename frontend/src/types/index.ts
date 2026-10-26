@@ -281,6 +281,8 @@ export interface IndicatorValue {
   /** What the number is out of, when not the object's records (e.g. 225 "custom fields"). */
   outOf?: number | null;
   outOfLabel?: string | null;
+  /** The main cause in a few words, e.g. "Least filled: Zip Code (2% filled)". */
+  cause?: string | null;
   /** Objects whose records can be listed for this measure. */
   recordObjects?: string[];
 }
