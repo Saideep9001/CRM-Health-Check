@@ -25,6 +25,7 @@ import { objectLabel } from '@/components/category/DiagnosticAreaCard';
 import { useToast } from '@/context/ToastContext';
 import { cx, fmtDate, fmtDateTime, fmtNumber } from '@/lib/format';
 import type { DataFilter, DiagnosticArea, FieldCheckResult, FieldScore, Finding, FindingStatus, IndicatorValue, Severity } from '@/types';
+import { InfoTip } from '@/components/ui/HelpTip';
 import { FINDING_STATUS_LABEL, FindingStatusBadge, SeverityBadge } from '../ui/Badges';
 import { Button } from '../ui/Button';
 import { Field, Select } from '../ui/Form';
@@ -65,12 +66,17 @@ function Section({ icon, title, children }: { icon: ReactNode; title: string; ch
   );
 }
 
-function Stat({ label, icon, children, sub }: { label: string; icon: ReactNode; children: ReactNode; sub?: ReactNode }) {
+function Stat({ label, icon, children, sub, info }: { label: string; icon: ReactNode; children: ReactNode; sub?: ReactNode; info?: ReactNode }) {
   return (
     <div className="rounded-xl border border-line bg-muted/40 p-4">
       <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-ink-subtle">
         {icon}
         {label}
+        {info && (
+          <InfoTip size="md" label={`What “${label}” means`}>
+            <span className="normal-case tracking-normal">{info}</span>
+          </InfoTip>
+        )}
       </p>
       <div className="mt-1">{children}</div>
       {sub && <p className="mt-1 text-xs text-ink-muted">{sub}</p>}
@@ -307,6 +313,29 @@ export function DetailsPanel({
       })()
     : null;
   const recordsOf = empties?.[0]?.of ?? null;
+  // The number in "Affected records", worked out from the Check fields run when it can be (else the health check's).
+  const plural = fieldCheck ? objectLabel(fieldCheck.object) : '';
+  const checkAffected: { n: number; text: string } | null = (() => {
+    if (!fromCheck?.length || !fieldCheck) return null;
+    if (chartKind === 'missing' && fieldCheck.anyEmpty != null) {
+      const worst = [...fromCheck].sort((a, b) => b.count - a.count).filter((f) => f.count).slice(0, 4);
+      return {
+        n: fieldCheck.anyEmpty,
+        text:
+          `${fmtNumber(fieldCheck.anyEmpty)} of ${fmtNumber(fieldCheck.scanned)} ${plural} miss at least one of the ${fromCheck.length} fields you checked.` +
+          (worst.length ? ` Most often empty: ${worst.map((f) => `${f.label} (${Math.round(f.pct)}% empty)`).join(', ')}.` : ''),
+      };
+    }
+    if (chartKind === 'duplicates') {
+      const dup = fieldCheck.combined ?? (fieldCheck.fields.length === 1 ? fieldCheck.fields[0].duplicates : null);
+      if (!dup) return null;
+      return {
+        n: dup.extraCopies,
+        text: `${fmtNumber(dup.extraCopies)} extra ${plural} (${fmtNumber(dup.totalGroups)} groups) match another record on ${dup.rules[0]?.join(' + ')}, out of ${fmtNumber(dup.scanned)} read.`,
+      };
+    }
+    return null;
+  })();
   const missingAny = fromCheck?.length
     ? (fieldCheck?.anyEmpty ?? null)
     : (finding?.affectedRecords ?? (v && /^missing/i.test(v.label) && v.unit === '%' && recordsOf ? Math.round((v.value * recordsOf) / 100) : null));
@@ -377,12 +406,30 @@ export function DetailsPanel({
           {/* the numbers */}
           <div className={cx('mb-6 grid gap-3', finding && v ? 'sm:grid-cols-3' : 'sm:grid-cols-2')}>
             {finding ? (
-              <Stat label="Affected records" icon={<Users className="h-3.5 w-3.5" />} sub={finding.previousAffected != null ? `${fmtNumber(finding.previousAffected)} last check` : 'New since the last check'}>
-                <p className="text-3xl font-semibold tabular-nums tracking-tight">{fmtNumber(finding.affectedRecords)}</p>
+              <Stat
+                label="Affected records"
+                icon={<Users className="h-3.5 w-3.5" />}
+                info={checkAffected?.text ?? finding.description}
+                sub={
+                  checkAffected
+                    ? `From the fields you checked · health check: ${fmtNumber(finding.affectedRecords)}`
+                    : finding.previousAffected != null
+                      ? `${fmtNumber(finding.previousAffected)} last check`
+                      : 'New since the last check'
+                }
+              >
+                <p className={cx('text-3xl font-semibold tabular-nums tracking-tight', checkAffected && 'text-brand')}>
+                  {fmtNumber(checkAffected?.n ?? finding.affectedRecords)}
+                </p>
               </Stat>
             ) : (
               v && (
-                <Stat label="Result" icon={<Target className="h-3.5 w-3.5" />} sub={v.direction === 'higher-better' ? 'Higher is better' : 'Lower is better'}>
+                <Stat
+                  label="Result"
+                  icon={<Target className="h-3.5 w-3.5" />}
+                  info={checkAffected ? `${checkAffected.text} (The result below is the health check’s.)` : (v.how ?? undefined)}
+                  sub={v.direction === 'higher-better' ? 'Higher is better' : 'Lower is better'}
+                >
                   <p className="text-3xl font-semibold tabular-nums tracking-tight">
                     {fmtNumber(v.value)}
                     {v.unit === '%' && <span className="text-lg text-ink-subtle">%</span>}
