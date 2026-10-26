@@ -53,7 +53,6 @@ export default function MeasurePage() {
       fieldCheck={checked}
       onClearFieldCheck={() => setChecked(null)}
       shownFields={shown}
-      onShownFieldsChange={setShown}
     />
   );
 }

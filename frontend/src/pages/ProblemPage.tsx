@@ -40,7 +40,6 @@ export default function ProblemPage() {
       fieldCheck={checked}
       onClearFieldCheck={() => setChecked(null)}
       shownFields={shown}
-      onShownFieldsChange={setShown}
     />
   );
 }

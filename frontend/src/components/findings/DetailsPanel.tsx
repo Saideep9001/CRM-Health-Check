@@ -166,7 +166,6 @@ function Records({
   keyFields,
   fieldChoices = [],
   shownFields,
-  onShownFieldsChange,
 }: {
   area: DiagnosticArea;
   indicator: IndicatorValue | null;
@@ -178,14 +177,11 @@ function Records({
   keyFields?: string[];
   /** Fields the records can be narrowed to (empty key fields, or fields with invalid data), with how many records. */
   fieldChoices?: { field: string; label: string; count: number }[];
-  /** The fields picked in the selector (shared with Check fields on the page); kept here when the page doesn't. */
+  /** The fields ticked in Check fields on the page: only records with a problem in one of them. */
   shownFields?: string[];
-  onShownFieldsChange?: (fields: string[]) => void;
 }) {
   const objects = indicator?.recordObjects ?? [];
-  const [ownShown, setOwnShown] = useState<string[]>([]);
-  const shown = shownFields ?? ownShown;
-  const setShown = onShownFieldsChange ?? setOwnShown;
+  const shown = shownFields ?? [];
   const preferred =
     (initialObject && objects.includes(initialObject) ? initialObject : null) ??
     (finding?.objectName && objects.includes(finding.objectName) ? finding.objectName : objects[0] ?? null);
@@ -220,43 +216,6 @@ function Records({
           </div>
         )}
         <div id="records-table" className="scroll-mt-20">
-        {choices.length > 0 && (
-          <div className="mb-3 rounded-xl border border-line bg-muted/30 px-3 py-2.5">
-            <p className="mb-2 text-xs text-ink-muted">
-              Show records {missing ? 'missing' : 'with invalid data in'}{' '}
-              <span className="text-ink-subtle">(pick one or more fields — a record shows when any of them {missing ? 'is empty' : 'is flagged'})</span>
-            </p>
-            <div className="flex flex-wrap gap-1.5">
-              <button
-                type="button"
-                onClick={() => setShown([])}
-                className={cx('rounded-full border px-3 py-1 text-xs font-medium transition', only.length === 0 ? 'border-brand bg-brand text-white' : 'border-line bg-surface hover:border-brand/40')}
-              >
-                All fields
-              </button>
-              {choices.map((c) => {
-                const on = only.includes(c.field);
-                return (
-                  <button
-                    key={c.field}
-                    type="button"
-                    aria-pressed={on}
-                    onClick={() => setShown(on ? only.filter((f) => f !== c.field) : [...only, c.field])}
-                    className={cx(
-                      'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition',
-                      on ? 'border-brand bg-brand-soft text-brand-ink' : 'border-line bg-surface hover:border-brand/40',
-                      !c.count && !on && 'opacity-50',
-                    )}
-                  >
-                    <span className={cx('grid h-3.5 w-3.5 place-items-center rounded border text-[9px] leading-none', on ? 'border-brand bg-brand text-white' : 'border-ink-subtle/50')}>{on ? '✓' : ''}</span>
-                    {c.label}
-                    <span className={cx('tabular-nums', c.count ? 'text-bad' : 'text-ink-subtle')}>{fmtNumber(c.count)}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
         <RecordsTable
           query={measureRecords}
           title={only.length ? `${objectLabel(object!)} · ${only.map((f) => choices.find((c) => c.field === f)?.label ?? f).join(', ')}` : objectLabel(object!)}
@@ -331,7 +290,6 @@ export function DetailsPanel({
   fieldCheck,
   onClearFieldCheck,
   shownFields,
-  onShownFieldsChange,
 }: {
   open: boolean;
   area: DiagnosticArea | undefined;
@@ -354,9 +312,8 @@ export function DetailsPanel({
   /** The latest Check fields run: the chart and its numbers follow the fields chosen there. */
   fieldCheck?: FieldCheckResult | null;
   onClearFieldCheck?: () => void;
-  /** Fields picked in the records' field selector (shared with Check fields on the page). */
+  /** Fields ticked in Check fields on the page: the records show only those with a problem in one of them. */
   shownFields?: string[];
-  onShownFieldsChange?: (fields: string[]) => void;
 }) {
   const navigate = useNavigate();
   const { canEdit } = useRole();
@@ -649,7 +606,7 @@ export function DetailsPanel({
               <Records area={area} indicator={v} finding={finding} measureAssessmentId={measureAssessmentId} legacy={legacy} initialObject={initialObject}
                 keyFields={empties?.map((f) => f.field)}
                 fieldChoices={(chartKind === 'missing' ? shownScores : chartKind === 'standardization' ? v?.fieldScores : null)?.map((f) => ({ field: f.field, label: f.label, count: f.count })) ?? []}
-                shownFields={shownFields} onShownFieldsChange={onShownFieldsChange} />
+                shownFields={shownFields} />
             </Section>
           )}
 
