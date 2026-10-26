@@ -29,7 +29,7 @@ export default function ProblemPage() {
       others={all.data ?? []}
       onClose={() => (window.history.length > 1 ? navigate(-1) : navigate('/results'))}
       onOpenFinding={(o) => navigate(`/problems/${encodeURIComponent(o.id)}`)}
-      extra={objects.length > 0 && <FieldCheck objects={objects} initialObject={f.objectName ?? objects[0]} focus={finder?.kind} fieldsText={finder?.fieldsText} />}
+      extra={objects.length > 0 && finder && <FieldCheck objects={objects} initialObject={f.objectName ?? objects[0]} focus={finder.kind} fieldsText={finder.fieldsText} />}
     />
   );
 }

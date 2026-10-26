@@ -2,9 +2,13 @@ import { ArrowDownAZ, ArrowUpAZ, ChevronDown, Filter, Search } from 'lucide-reac
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { errorMessage } from '@/api/client';
-import { useFieldValues } from '@/api/queries';
+import { useQuery } from '@tanstack/react-query';
+import { dataApi } from '@/api/endpoints';
 import { cx, fmtDate, fmtNumber } from '@/lib/format';
-import type { DataField, DataFilter } from '@/types';
+import type { DataField, DataFilter, FieldValues } from '@/types';
+
+/** Where a column's values come from: a cache key and a loader (field, the other columns' filters). */
+export type ValuesSource = { key: unknown[]; load: (field: string, others: DataFilter[], signal?: AbortSignal) => Promise<FieldValues> };
 
 const BLANK = '__blank__';
 const MAX_PICK = 100; // values one filter can name (the rest are left out instead, like Excel)
@@ -33,6 +37,7 @@ export function ColumnFilter({
   filters,
   onApply,
   onSort,
+  source,
 }: {
   object: string;
   field: DataField;
@@ -40,6 +45,8 @@ export function ColumnFilter({
   filters: DataFilter[];
   onApply: (filter: DataFilter | null) => void;
   onSort?: (dir: 'asc' | 'desc') => void;
+  /** Where the values come from; by default every record of the object (Your Data). */
+  source?: ValuesSource;
 }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ top?: number; bottom?: number; left: number; maxHeight: number }>({ top: 0, left: 0, maxHeight: 440 });
@@ -49,7 +56,13 @@ export function ColumnFilter({
   const panel = useRef<HTMLDivElement>(null);
   const current = columnFilter(filters, field.name);
   const others = useMemo(() => filters.filter((f) => f.field !== field.name), [filters, field.name]);
-  const values = useFieldValues(object, open ? field.name : null, search, others);
+  const from: ValuesSource = source ?? { key: ['data', object, search], load: (f, o, signal) => dataApi.fieldValues(object, f, search, o, signal) };
+  const values = useQuery({
+    queryKey: ['column-values', ...from.key, field.name, others],
+    queryFn: ({ signal }) => from.load(field.name, others, signal),
+    enabled: open,
+    staleTime: 60_000,
+  });
 
   const items = useMemo(() => {
     const list = (values.data?.values ?? []).map((v) => ({ key: keyOf(v.value), value: v.value as unknown, text: show(field, v.value, v.label), count: v.count }));

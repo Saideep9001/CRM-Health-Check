@@ -154,14 +154,6 @@ export const useDataRecords = (name: string | undefined, query: DataRecordQuery,
     enabled: !!name && enabled,
   });
 
-export const useFieldValues = (name: string, field: string | null, q: string, filters: DataFilter[]) =>
-  useQuery({
-    queryKey: [...qk.data, 'values', name, field, q, filters],
-    queryFn: ({ signal }) => dataApi.fieldValues(name, field!, q, filters, signal),
-    enabled: !!field,
-    staleTime: 60_000,
-  });
-
 export const useDataSearch = (q: string, objects: string[] | undefined, enabled = true) =>
   useQuery({
     queryKey: [...qk.data, 'search', q, objects ?? null],
@@ -276,20 +268,20 @@ export function useCancelAssessment() {
   });
 }
 
-export const useFindingRecords = (findingId: string | null, enabled = true) =>
+export const useFindingRecords = (findingId: string | null, enabled = true, filters: DataFilter[] = []) =>
   useInfiniteQuery({
-    queryKey: ['finding-records', findingId],
-    queryFn: ({ signal, pageParam }) => findingApi.records(findingId!, pageParam, signal),
+    queryKey: ['finding-records', findingId, filters],
+    queryFn: ({ signal, pageParam }) => findingApi.records(findingId!, pageParam, signal, filters),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.nextCursor,
     enabled: !!findingId && enabled,
     staleTime: 60_000,
   });
 
-export const useIndicatorRecords = (assessmentId: string | null, areaId: string, label: string, object: string | null) =>
+export const useIndicatorRecords = (assessmentId: string | null, areaId: string, label: string, object: string | null, filters: DataFilter[] = []) =>
   useInfiniteQuery({
-    queryKey: ['indicator-records', assessmentId, areaId, label, object],
-    queryFn: ({ signal, pageParam }) => indicatorApi.records(assessmentId!, areaId, label, object!, pageParam, signal),
+    queryKey: ['indicator-records', assessmentId, areaId, label, object, filters],
+    queryFn: ({ signal, pageParam }) => indicatorApi.records(assessmentId!, areaId, label, object!, pageParam, signal, filters),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.nextCursor,
     enabled: !!assessmentId && !!object,

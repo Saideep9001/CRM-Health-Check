@@ -19,9 +19,10 @@ from ..engine.combine import combined_view
 from ..engine import jobs
 from ..engine.runner import EXECUTABLE_AREA_IDS
 from ..models import AssessmentRow, FindingRow
-from ..salesforce import explorer, service
+from ..salesforce import explorer, finder, service
 from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
 from ..schemas import (
+    FieldValues,
     Assessment,
     AssessmentResults,
     AssessmentStatus,
@@ -295,13 +296,37 @@ def _salesforce(db: Session, http: httpx.Client, settings: Settings, fn, org_id:
 def finding_records(
     finding_id: str,
     cursor: str | None = Query(None, max_length=200),
+    filters: str | None = Query(None, max_length=12000, description='JSON list of {"field","op","value"} column filters'),
     db: Session = Depends(get_db),
     http: httpx.Client = Depends(http_dep),
     settings: Settings = Depends(settings_dep),
 ):
     """The records a problem is about, live from Salesforce (200 per page)."""
     row, org_id = _finding_with_records(db, finding_id)
-    return _salesforce(db, http, settings, lambda sf: explorer.records_matching(sf, row.records_object, row.records_where, cursor), org_id)
+    return _salesforce(db, http, settings, lambda sf: explorer.records_matching(
+        sf, row.records_object, row.records_where, cursor, filters=_filters(filters)), org_id)
+
+
+@router.get("/findings/{finding_id}/values", response_model=FieldValues)
+def finding_values(
+    finding_id: str,
+    field: str = Query(..., max_length=120),
+    filters: str | None = Query(None, max_length=12000),
+    db: Session = Depends(get_db),
+    http: httpx.Client = Depends(http_dep),
+    settings: Settings = Depends(settings_dep),
+):
+    """The values of one column among a problem's records, for its filter drop-down."""
+    row, org_id = _finding_with_records(db, finding_id)
+    return _salesforce(db, http, settings, lambda sf: explorer.field_values(
+        sf, row.records_object, field, None, _filters(filters), base_where=row.records_where), org_id)
+
+
+def _filters(raw: str | None) -> list[dict]:
+    try:
+        return finder.parse_filters(raw)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
 
 
 CSV_LIMIT = 10_000
@@ -310,19 +335,20 @@ CSV_LIMIT = 10_000
 @router.get("/findings/{finding_id}/records.csv")
 def finding_records_csv(
     finding_id: str,
+    filters: str | None = Query(None, max_length=12000),
     db: Session = Depends(get_db),
     http: httpx.Client = Depends(http_dep),
     settings: Settings = Depends(settings_dep),
 ):
-    """Download the affected records (up to 10,000) as a spreadsheet."""
+    """Download the affected records (up to 10,000) as a spreadsheet — only those the column filters keep."""
     row, org_id = _finding_with_records(db, finding_id)
-    return _records_csv(db, http, settings, org_id, row.records_object, row.records_where, row.name)
+    return _records_csv(db, http, settings, org_id, row.records_object, row.records_where, row.name, filters=_filters(filters))
 
 
 def _records_csv(db: Session, http: httpx.Client, settings: Settings, org_id: str | None, obj: str, where: str | None, title: str,
-                 columns: list[str] | None = None, order: str | None = None) -> Response:
+                 columns: list[str] | None = None, order: str | None = None, filters: list[dict] | None = None) -> Response:
     def collect(sf):
-        page = explorer.records_matching(sf, obj, where, page_size=2000, columns=columns, order=order)
+        page = explorer.records_matching(sf, obj, where, page_size=2000, columns=columns, order=order, filters=filters)
         rows = list(page["records"])
         while page["next_cursor"] and len(rows) < CSV_LIMIT:
             page = explorer.records_matching(sf, obj, where, page["next_cursor"], page_size=2000, columns=columns, order=order)
@@ -364,6 +390,7 @@ def indicator_records(
     label: str = Query(..., max_length=200),
     object: str | None = Query(None, max_length=80),
     cursor: str | None = Query(None, max_length=200),
+    filters: str | None = Query(None, max_length=12000, description='JSON list of {"field","op","value"} column filters'),
     db: Session = Depends(get_db),
     http: httpx.Client = Depends(http_dep),
     settings: Settings = Depends(settings_dep),
@@ -371,7 +398,25 @@ def indicator_records(
     """The records a measure counted, live from Salesforce (200 per page)."""
     rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, object)
     return _salesforce(db, http, settings, lambda sf: explorer.records_matching(
-        sf, rec["object"], rec.get("where"), cursor, columns=rec.get("columns"), order=rec.get("order")), org_id)
+        sf, rec["object"], rec.get("where"), cursor, columns=rec.get("columns"), order=rec.get("order"), filters=_filters(filters)), org_id)
+
+
+@router.get("/assessments/{assessment_id}/areas/{area_id}/indicator-values", response_model=FieldValues)
+def indicator_values(
+    assessment_id: str,
+    area_id: str,
+    label: str = Query(..., max_length=200),
+    field: str = Query(..., max_length=120),
+    object: str | None = Query(None, max_length=80),
+    filters: str | None = Query(None, max_length=12000),
+    db: Session = Depends(get_db),
+    http: httpx.Client = Depends(http_dep),
+    settings: Settings = Depends(settings_dep),
+):
+    """The values of one column among a measure's records, for its filter drop-down."""
+    rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, object)
+    return _salesforce(db, http, settings, lambda sf: explorer.field_values(
+        sf, rec["object"], field, None, _filters(filters), base_where=rec.get("where")), org_id)
 
 
 @router.get("/assessments/{assessment_id}/areas/{area_id}/indicator-records.csv")
@@ -380,12 +425,13 @@ def indicator_records_csv(
     area_id: str,
     label: str = Query(..., max_length=200),
     object: str | None = Query(None, max_length=80),
+    filters: str | None = Query(None, max_length=12000),
     db: Session = Depends(get_db),
     http: httpx.Client = Depends(http_dep),
     settings: Settings = Depends(settings_dep),
 ):
     rec, org_id, title = _indicator_records(db, assessment_id, area_id, label, object)
-    return _records_csv(db, http, settings, org_id, rec["object"], rec.get("where"), title, rec.get("columns"), rec.get("order"))
+    return _records_csv(db, http, settings, org_id, rec["object"], rec.get("where"), title, rec.get("columns"), rec.get("order"), _filters(filters))
 
 
 @router.get("/findings/{finding_id}", response_model=Finding)

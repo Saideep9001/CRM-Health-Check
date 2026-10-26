@@ -24,7 +24,7 @@ import { SEVERITY_COLORS } from '@/components/charts/Charts';
 import { objectLabel } from '@/components/category/DiagnosticAreaCard';
 import { useToast } from '@/context/ToastContext';
 import { cx, fmtDate, fmtDateTime, fmtNumber } from '@/lib/format';
-import type { DiagnosticArea, Finding, FindingStatus, IndicatorValue, Severity } from '@/types';
+import type { DataFilter, DiagnosticArea, Finding, FindingStatus, IndicatorValue, Severity } from '@/types';
 import { FINDING_STATUS_LABEL, FindingStatusBadge, SeverityBadge } from '../ui/Badges';
 import { Button } from '../ui/Button';
 import { Field, Select } from '../ui/Form';
@@ -160,9 +160,12 @@ function Records({
     (finding?.objectName && objects.includes(finding.objectName) ? finding.objectName : objects[0] ?? null);
   const [object, setObject] = useState<string | null>(preferred);
   useEffect(() => setObject(preferred), [preferred, indicator?.label, finding?.id]);
+  // Excel-style column filters, for the records shown (start fresh for another object or measure).
+  const [filters, setFilters] = useState<DataFilter[]>([]);
+  useEffect(() => setFilters([]), [object, indicator?.label, finding?.id]);
   const useMeasure = !!object && !!measureAssessmentId && !!indicator;
-  const measureRecords = useIndicatorRecords(useMeasure ? measureAssessmentId : null, area.id, indicator?.label ?? '', object);
-  const findingRecords = useFindingRecords(finding?.id ?? null, !useMeasure && !!finding?.recordsAvailable);
+  const measureRecords = useIndicatorRecords(useMeasure ? measureAssessmentId : null, area.id, indicator?.label ?? '', object, filters);
+  const findingRecords = useFindingRecords(finding?.id ?? null, !useMeasure && !!finding?.recordsAvailable, filters);
   const duplicates = /duplicate/i.test(indicator?.label ?? finding?.name ?? '');
 
   if (useMeasure) {
@@ -182,7 +185,18 @@ function Records({
             ))}
           </div>
         )}
-        <RecordsTable query={measureRecords} title={objectLabel(object!)} grouped={duplicates} csvUrl={indicatorApi.csvUrl(measureAssessmentId!, area.id, indicator!.label, object!)} />
+        <RecordsTable
+          query={measureRecords}
+          title={objectLabel(object!)}
+          grouped={duplicates}
+          csvUrl={indicatorApi.csvUrl(measureAssessmentId!, area.id, indicator!.label, object!, filters)}
+          filters={filters}
+          onFiltersChange={setFilters}
+          valuesSource={{
+            key: ['indicator', measureAssessmentId, area.id, indicator!.label, object],
+            load: (field, others, signal) => indicatorApi.values(measureAssessmentId!, area.id, indicator!.label, object!, field, others, signal),
+          }}
+        />
         <p className="mt-2 text-[11px] text-ink-subtle">
           {duplicates ? 'Each shaded block is one duplicate group (#group · records in it). ' : ''}
           Read live from Salesforce with the connected user’s access. Click a name to open the record.
@@ -193,7 +207,14 @@ function Records({
   if (finding?.recordsAvailable) {
     return (
       <>
-        <RecordsTable query={findingRecords} title="Affected records" csvUrl={findingApi.recordsCsvUrl(finding.id)} />
+        <RecordsTable
+          query={findingRecords}
+          title="Affected records"
+          csvUrl={findingApi.recordsCsvUrl(finding.id, filters)}
+          filters={filters}
+          onFiltersChange={setFilters}
+          valuesSource={{ key: ['finding', finding.id], load: (field, others, signal) => findingApi.values(finding.id, field, others, signal) }}
+        />
         <p className="mt-2 text-[11px] text-ink-subtle">Read live from Salesforce with the connected user’s access. Click a name to open the record.</p>
       </>
     );

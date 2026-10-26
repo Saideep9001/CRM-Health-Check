@@ -357,10 +357,12 @@ def _record_conditions(sf: SalesforceClient, name: str, desc: dict, search: str 
 MAX_VALUES = 2000  # Salesforce returns at most 2,000 groups
 
 
-def field_values(sf: SalesforceClient, name: str, field: str, search: str | None, filters: list[dict] | None) -> dict:
+def field_values(sf: SalesforceClient, name: str, field: str, search: str | None, filters: list[dict] | None,
+                 base_where: str | None = None) -> dict:
     """The distinct values of one column and how many records have each (like Excel's filter list).
 
     Counts follow the search box and the other columns' filters, so the list shows what's left to pick from.
+    `base_where` keeps it to a fixed set of records the health check chose (never user input).
     """
     desc = _describe(sf, name)
     fields = _fields(desc)
@@ -368,7 +370,7 @@ def field_values(sf: SalesforceClient, name: str, field: str, search: str | None
     if not f or not f.get("groupable"):
         raise ValueError(f"You can’t list the values of {field}.")
     others = [x for x in (filters or []) if x.get("field") != field]
-    conds = _record_conditions(sf, name, desc, search, others)
+    conds = ([f"({base_where})"] if base_where else []) + _record_conditions(sf, name, desc, search, others)
     where = " WHERE " + " AND ".join(conds) if conds else ""
     rel = _ref_paths(fields, [field]).get(field)  # e.g. Owner.Name, to show names instead of ids
     select = f"{field} v" + (f", {rel} n" if rel else "")
@@ -387,10 +389,11 @@ def field_values(sf: SalesforceClient, name: str, field: str, search: str | None
 
 
 def records_matching(sf: SalesforceClient, name: str, where: str | None, cursor: str | None = None, page_size: int = PAGE_SIZE,
-                     columns: list[str] | None = None, order: str | None = None) -> dict:
+                     columns: list[str] | None = None, order: str | None = None, filters: list[dict] | None = None) -> dict:
     """Records of `name` matching a filter the health check engine built (never user input).
 
     `columns` (shown first) and `order` come from the engine too; any the object doesn't have are skipped.
+    `filters` are the person's column filters ({field, op, value}), checked and escaped like everywhere else.
     """
     desc = _describe(sf, name)
     fields = _fields(desc)
@@ -410,7 +413,9 @@ def records_matching(sf: SalesforceClient, name: str, where: str | None, cursor:
         else:
             latest = next((f for f in ("LastModifiedDate", "CreatedDate") if f in fields and fields[f].get("sortable")), None)
             sort = f" ORDER BY {latest} DESC" if latest else ""
-        soql = f"SELECT {', '.join(cols + list(refs.values()))} FROM {name}" + (f" WHERE {where}" if where else "") + sort
+        extra = _record_conditions(sf, name, desc, None, filters)
+        conds = ([f"({where})" if extra else where] if where else []) + extra  # brackets only when combining
+        soql = f"SELECT {', '.join(cols + list(refs.values()))} FROM {name}" + (f" WHERE {' AND '.join(conds)}" if conds else "") + sort
         body = sf.get(f"{_api(sf)}/query?q={quote(soql)}", headers=headers)
     next_url = body.get("nextRecordsUrl")
     return {

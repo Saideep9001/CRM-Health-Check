@@ -168,23 +168,38 @@ export const dataApi = {
 export const findingApi = {
   get: (id: string, signal?: AbortSignal) => http.get<Finding>(`/findings/${encodeURIComponent(id)}`, undefined, signal),
   update: (id: string, body: UpdateFindingRequest) => http.patch<Finding>(`/findings/${encodeURIComponent(id)}`, body),
-  /** The records a problem is about, live from Salesforce. */
-  records: (id: string, cursor: string | null, signal?: AbortSignal) =>
-    http.get<FindingRecordsPage>(`/findings/${encodeURIComponent(id)}/records`, { cursor: cursor ?? undefined }, signal),
-  /** Link that downloads the affected records as a CSV file. */
-  recordsCsvUrl: (id: string) => `${API_BASE_URL}/findings/${encodeURIComponent(id)}/records.csv`,
+  /** The records a problem is about, live from Salesforce (narrowed by column filters). */
+  records: (id: string, cursor: string | null, signal?: AbortSignal, filters: DataFilter[] = []) =>
+    http.get<FindingRecordsPage>(`/findings/${encodeURIComponent(id)}/records`, { cursor: cursor ?? undefined, filters: filterParam(filters) }, signal),
+  /** The values of one column among a problem's records (for its filter drop-down). */
+  values: (id: string, field: string, filters: DataFilter[], signal?: AbortSignal) =>
+    http.get<FieldValues>(`/findings/${encodeURIComponent(id)}/values`, { field, filters: filterParam(filters) }, signal),
+  /** Link that downloads the affected records (only those the column filters keep) as a CSV file. */
+  recordsCsvUrl: (id: string, filters: DataFilter[] = []) =>
+    `${API_BASE_URL}/findings/${encodeURIComponent(id)}/records.csv${filters.length ? `?${new URLSearchParams({ filters: filterParam(filters)! })}` : ''}`,
 };
+
+/** Column filters as the API takes them (labels stay in the browser). */
+const filterParam = (filters: DataFilter[]) =>
+  filters.length ? JSON.stringify(filters.map(({ field, op, value }) => ({ field, op, value }))) : undefined;
 
 /** The records one measure ("What we measure") counted, live from Salesforce. */
 export const indicatorApi = {
-  records: (assessmentId: string, areaId: string, label: string, object: string, cursor: string | null, signal?: AbortSignal) =>
+  records: (assessmentId: string, areaId: string, label: string, object: string, cursor: string | null, signal?: AbortSignal, filters: DataFilter[] = []) =>
     http.get<FindingRecordsPage>(
       `/assessments/${encodeURIComponent(assessmentId)}/areas/${encodeURIComponent(areaId)}/indicator-records`,
-      { label, object, cursor: cursor ?? undefined },
+      { label, object, cursor: cursor ?? undefined, filters: filterParam(filters) },
       signal,
     ),
-  csvUrl: (assessmentId: string, areaId: string, label: string, object: string) =>
-    `${API_BASE_URL}/assessments/${encodeURIComponent(assessmentId)}/areas/${encodeURIComponent(areaId)}/indicator-records.csv?${new URLSearchParams({ label, object })}`,
+  /** The values of one column among a measure's records (for its filter drop-down). */
+  values: (assessmentId: string, areaId: string, label: string, object: string, field: string, filters: DataFilter[], signal?: AbortSignal) =>
+    http.get<FieldValues>(
+      `/assessments/${encodeURIComponent(assessmentId)}/areas/${encodeURIComponent(areaId)}/indicator-values`,
+      { label, object, field, filters: filterParam(filters) },
+      signal,
+    ),
+  csvUrl: (assessmentId: string, areaId: string, label: string, object: string, filters: DataFilter[] = []) =>
+    `${API_BASE_URL}/assessments/${encodeURIComponent(assessmentId)}/areas/${encodeURIComponent(areaId)}/indicator-records.csv?${new URLSearchParams({ label, object, ...(filters.length ? { filters: filterParam(filters)! } : {}) })}`,
 };
 
 /** Team management (admins only). */

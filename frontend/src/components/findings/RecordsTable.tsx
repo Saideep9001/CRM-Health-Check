@@ -1,11 +1,13 @@
 import type { InfiniteData, UseInfiniteQueryResult } from '@tanstack/react-query';
-import { Download, ExternalLink, Search } from 'lucide-react';
+import { Download, ExternalLink, Search, X } from 'lucide-react';
 import { useState } from 'react';
+import { useDataObject } from '@/api/queries';
+import { ColumnFilter, columnFilter, type ValuesSource } from '@/components/data/ColumnFilter';
 import { formatValue } from '@/components/data/format';
 import { Button } from '@/components/ui/Button';
 import { ErrorState, LoadingState } from '@/components/ui/States';
 import { cx, fmtNumber } from '@/lib/format';
-import type { DataField, FindingRecordsPage } from '@/types';
+import type { DataField, DataFilter, FindingRecordsPage } from '@/types';
 
 /** The engine's own cleaning (backend/app/engine/data_quality.py → norm_company / norm_website), to band duplicate groups. */
 const COMPANY_WORDS = /\b(the|incorporated|inc|llc|llp|ltd|limited|corp|corporation|co|company|plc|gmbh|ag|pvt|private|pty|sa|srl|bv)\b/g;
@@ -25,15 +27,30 @@ export function RecordsTable({
   title = 'Records',
   empty = 'No matching records right now — this may already be fixed.',
   grouped,
+  filters = [],
+  onFiltersChange,
+  valuesSource,
 }: {
   query: UseInfiniteQueryResult<InfiniteData<FindingRecordsPage, unknown>, Error>;
   csvUrl?: string;
   title?: string;
   empty?: string;
   grouped?: boolean;
+  /** Excel-style column filters (applied by the server to all the records, not just the loaded ones). */
+  filters?: DataFilter[];
+  onFiltersChange?: (next: DataFilter[]) => void;
+  /** Where a column's filter values come from (this measure's or problem's records). */
+  valuesSource?: ValuesSource;
 }) {
   const pages = query.data?.pages ?? [];
   const first = pages[0];
+  // Which columns can be filtered: from the object's field list (cached; Your Data uses the same).
+  const describe = useDataObject(onFiltersChange ? (first?.object ?? undefined) : undefined);
+  const fieldOf = (name: string) => describe.data?.fields.find((f) => f.name === name);
+  const setColumn = (col: string, f: DataFilter | null) => {
+    const rest = filters.filter((x) => x !== columnFilter(filters, col));
+    onFiltersChange?.(f ? [...rest, f] : rest);
+  };
   // Duplicate groups: rows with the same cleaned value of the matched field, kept together.
   const groupCol = grouped ? first?.sortedBy ?? null : null;
   const [filter, setFilter] = useState('');
@@ -73,19 +90,42 @@ export function RecordsTable({
           <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-subtle" />
           <input className="input h-7 pl-7 text-xs" placeholder="Filter by any value…" value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Filter records" />
         </span>
-        {first?.totalSize != null && <span className="rounded-full bg-surface px-2 text-[11px] tabular-nums text-ink-muted">{fmtNumber(first.totalSize)}</span>}
+        {first?.totalSize != null && (
+          <span className={cx('rounded-full px-2 text-[11px] tabular-nums', filters.length ? 'bg-brand-soft font-semibold text-brand-ink' : 'bg-surface text-ink-muted')}>
+            {fmtNumber(first.totalSize)}
+            {filters.length ? ' match' : ''}
+          </span>
+        )}
         {csvUrl && (
           <a href={csvUrl} download className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-brand hover:underline" title="Download these records as a spreadsheet (up to 10,000)">
             <Download className="h-3.5 w-3.5" /> Download CSV
           </a>
         )}
       </header>
+      {filters.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-line bg-brand-soft/30 px-3 py-1.5">
+          <span className="text-[11px] font-medium text-ink-muted">Filtered:</span>
+          {filters.map((f, i) => (
+            <span key={`${f.field}-${i}`} className="inline-flex items-center gap-1 rounded-full border border-brand/30 bg-surface px-2 py-0.5 text-[11px]">
+              {f.label ?? f.field}
+              <button type="button" onClick={() => onFiltersChange?.(filters.filter((_, j) => j !== i))} className="text-ink-subtle hover:text-bad" aria-label={`Remove filter ${f.label ?? f.field}`}>
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+          <button type="button" onClick={() => onFiltersChange?.([])} className="ml-1 text-[11px] font-semibold text-brand hover:underline">
+            Clear all
+          </button>
+        </div>
+      )}
       {query.isLoading ? (
         <LoadingState rows={4} label="Loading records from Salesforce…" />
       ) : query.error ? (
         <ErrorState error={query.error} onRetry={() => query.refetch()} className="py-6" />
       ) : rows.length === 0 ? (
-        <p className="px-3 py-6 text-center text-xs text-ink-subtle">{term ? `No loaded records match “${filter}”.` : empty}</p>
+        <p className="px-3 py-6 text-center text-xs text-ink-subtle">
+          {term ? `No loaded records match “${filter}”.` : filters.length ? 'No records match these column filters.' : empty}
+        </p>
       ) : (
         <>
           <div className="scrollbar-thin max-h-[26rem] overflow-auto">
@@ -93,9 +133,26 @@ export function RecordsTable({
               <thead className="sticky top-0 z-10 bg-surface shadow-[0_1px_0_rgb(var(--line))]">
                 <tr>
                   {groupCol && <th className="whitespace-nowrap px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">Group</th>}
-                  {cols.map((c) => (
-                    <th key={c.name} className="whitespace-nowrap px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">{c.type === 'reference' ? c.label.replace(/ ID$/, '') : c.label}</th>
-                  ))}
+                  {cols.map((c) => {
+                    const meta = fieldOf(c.name);
+                    const filtered = !!columnFilter(filters, c.name);
+                    return (
+                      <th
+                        key={c.name}
+                        className={cx(
+                          'whitespace-nowrap px-3 py-2 text-[11px] font-semibold uppercase tracking-wide',
+                          filtered ? 'bg-brand-soft text-brand-ink shadow-[inset_0_-2px_0_rgb(var(--brand))]' : 'text-ink-subtle',
+                        )}
+                      >
+                        <span className="inline-flex items-center">
+                          {c.type === 'reference' ? c.label.replace(/ ID$/, '') : c.label}
+                          {onFiltersChange && first && meta?.groupable && meta.filterable && meta.type !== 'id' && (
+                            <ColumnFilter object={first.object} field={meta} search="" filters={filters} onApply={(f) => setColumn(c.name, f)} source={valuesSource} />
+                          )}
+                        </span>
+                      </th>
+                    );
+                  })}
                   <th className="w-8" />
                 </tr>
               </thead>
@@ -119,7 +176,7 @@ export function RecordsTable({
                       {cols.map((c, ci) => {
                         const v = formatValue(asField(c), r.values[c.name], r.refNames[c.name]);
                         return (
-                          <td key={c.name} className="max-w-[16rem] truncate px-3 py-2" title={v}>
+                          <td key={c.name} className={cx('max-w-[16rem] truncate px-3 py-2', columnFilter(filters, c.name) && 'bg-brand-soft/40')} title={v}>
                             {ci === 0 && href ? (
                               <a href={href} target="_blank" rel="noopener noreferrer" className="font-medium text-ink hover:text-brand hover:underline">
                                 {v === '—' ? r.id : v}
