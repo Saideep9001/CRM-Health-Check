@@ -15,7 +15,7 @@ const ALL = '__all__'; // the "all chosen fields together" row
 
 type Pick = { field: string; kind: FinderKind };
 
-/** Values of one field written different ways, and the records using a less common spelling. */
+/** Invalid values of one field (the health check's Data Standardization rules), with why each one is flagged. */
 function SpellingResults({ field, prefix }: { field: FieldCheckField; prefix: string }) {
   const std = field.standardization!;
   const [query, setQuery] = useState('');
@@ -30,7 +30,7 @@ function SpellingResults({ field, prefix }: { field: FieldCheckField; prefix: st
     <div className="space-y-3">
       {std.rule && (
         <p className="text-xs text-ink-muted">
-          <span className="font-semibold text-ink">Counts as odd:</span> {std.rule}
+          <span className="font-semibold text-ink">Counts as invalid:</span> {std.rule}
         </p>
       )}
       {reasons.length > 0 && (
@@ -220,7 +220,7 @@ export function FieldCheck({
         <div className="min-w-0 flex-1">
           <h3 className="font-semibold">Check fields</h3>
           <p className="text-xs text-ink-muted">
-            Pick fields — for each one you’ll see {focus === 'empty' ? 'its empty records' : focus === 'duplicates' ? 'its duplicates' : focus === 'spelling' ? 'the values written different ways' : 'the empty records, the duplicates and the values written different ways'}. Only the objects this check looked at ·
+            Pick fields — for each one you’ll see {focus === 'empty' ? 'its empty records' : focus === 'duplicates' ? 'its duplicates' : focus === 'spelling' ? 'its invalid values and why' : 'the empty records, the duplicates and the invalid values'}. Only the objects this check looked at ·
             read-only.
           </p>
         </div>
@@ -337,7 +337,7 @@ export function FieldCheck({
                     <th className="px-3 py-2">Filled in</th>
                     {shows('empty') && <th className="px-3 py-2">Empty</th>}
                     {shows('duplicates') && <th className="px-3 py-2">Duplicates</th>}
-                    {shows('spelling') && <th className="px-3 py-2">Written differently</th>}
+                    {shows('spelling') && <th className="px-3 py-2">Invalid data</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line">
@@ -406,7 +406,7 @@ export function FieldCheck({
                       ? `${objectLabel(object)} with no ${picked?.label}`
                       : pick.kind === 'duplicates'
                         ? `Duplicates on ${picked?.label}`
-                        : `${picked?.label}: odd values and why`}
+                        : `${picked?.label}: invalid data and why`}
                 </h4>
                 {pick.field === ALL && result.combined ? (
                   <DuplicateResults result={result.combined} fileName={`duplicate-${object.toLowerCase()}s.csv`} />

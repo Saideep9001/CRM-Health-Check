@@ -38,10 +38,18 @@ def test_states_countries_and_cities():
                    "id6": "misspelled? looks like San Francisco"}  # Madrid is a real city, not "Madras"
 
 
-def test_company_names_read_short_forms_in_full():
-    assert st.company_key("Pixel Tech Inc.") == st.company_key("PIXEL Technology, Incorporated")
-    odd = st.company(items("Pixel Technology Inc", "Pixel Technology Inc", "Pixel Tech Inc.", "Acme Corp,", "  Globex  "))
-    assert odd == {"id2": "written differently — usually “Pixel Technology Inc”", "id3": "stray punctuation at the end", "id4": "extra spaces"}
+def test_company_names_flag_only_invalid_values():
+    assert st.company_key("Pixel Tech Inc.") == st.company_key("PIXEL Technology, Incorporated")  # still used to match duplicates
+    ok = ("Pixel Technology Inc", "Pixel Tech Inc.", "ACME LTD", "Acme Co., Ltd.", "Johnson & Johnson", "AT&T", "Yahoo!", "Smith (UK) Ltd",
+          "Pacifica Inc", "Aquarient Technologies", "O’Reilly Media")
+    assert st.company(items(*ok)) == {}  # short forms, capitals and another valid way of writing a name are fine
+    odd = st.company(items("Acme Corp,", "  Globex  ", "Acme  LLC", "Acme #1 Holdings", "Acme_Ltd", "Test Account", "N/A", "12345",
+                           "Pixel Technolgy Inc", "Acme,, Inc"))
+    assert odd == {"id0": "stray punctuation", "id1": "unwanted spaces (at the start, at the end or doubled)",
+                   "id2": "unwanted spaces (at the start, at the end or doubled)", "id3": "unwanted symbol #", "id4": "unwanted symbol _",
+                   "id5": "not a real name (a test or placeholder value)", "id6": "not a real name (a test or placeholder value)",
+                   "id7": "not a real name (a test or placeholder value)", "id8": "misspelled? “Technolgy” should be “Technology”",
+                   "id9": "stray punctuation"}
 
 
 def test_every_kind_has_a_rule_to_show():

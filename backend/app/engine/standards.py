@@ -239,15 +239,55 @@ def city(items: list[tuple[str, str]]) -> dict[str, str]:
     return out | _written_differently(rest, lambda v: _plain(CITY_OF.get(_plain(v), v)))
 
 
+BUSINESS_WORDS = sorted(set(ABBREVIATIONS.values()) | {  # words company names use, to catch misspellings ("Technolgy", "Solutons")
+    "technologies", "corporation", "incorporated", "limited", "company", "solutions", "services", "systems", "international",
+    "industries", "enterprises", "global", "group", "partners", "consulting", "consultants", "software", "communications",
+    "management", "associates", "holdings", "logistics", "healthcare", "financial", "manufacturing", "marketing", "networks",
+    "digital", "analytics", "insurance", "energy", "engineering", "development", "products", "resources", "ventures",
+    "media", "design", "construction", "pharmaceuticals", "electronics", "capital", "investments", "trading", "private",
+    "partnership", "agency", "laboratories", "foundation", "university", "hospital", "medical", "properties", "realty",
+    "automotive", "motors", "foods", "textiles", "chemicals", "infrastructure", "innovations", "integrated", "security",
+    "computers", "computing", "telecom", "wireless", "advisors", "advisory", "accounting", "distribution", "supplies",
+    "equipment", "industrial", "national", "american", "pacific", "atlantic", "united", "universal", "creative", "strategic",
+})
+REAL_WORDS = {  # real words one letter from a business word, so never "misspelled"
+    "assurance", "associated", "association", "consultancy", "capitol", "capitals", "products", "produce", "producer", "productions",
+    "designs", "designer", "designers", "medics", "nationals", "nationwide", "service", "servicing", "system", "solution", "network",
+    "networking", "partner", "venture", "resource", "property", "investment", "investor", "investors", "advisor", "advisers", "adviser",
+    "engineers", "engineer", "developer", "developers", "developments", "supply", "supplier", "suppliers", "trader", "traders",
+    "computer", "industry", "enterprise", "holding", "laboratory", "agencies", "foundations", "hospitals", "motor", "food", "textile",
+    "chemical", "innovation", "integrator", "securities", "accountants", "distributors", "distributor", "equipments", "united",
+}
+SHORT_FORMS = {"llc", "llp", "lp", "inc", "corp", "co", "ltd", "plc", "pvt", "pty", "gmbh", "ag", "sa", "srl", "bv", "nv", "oy", "ab"}
+_SYMBOLS = re.compile(r"[^\w\s&.,'’()/+!-]")  # anything but letters, digits, spaces and the punctuation names use: & . , ' - ( ) / + !
+_JUNK = {"test", "testing", "asdf", "qwerty", "xxx", "xx", "x", "na", "n a", "none", "null", "unknown", "dummy", "sample", "temp", "tbd",
+         "delete", "do not use", "no name", "noname", "name", "company", "account", "new account"}
+
+
 def company(items: list[tuple[str, str]]) -> dict[str, str]:
+    """Only invalid names: unwanted spaces or symbols, stray punctuation, test values and misspelled words. Short forms (LLC, Inc,
+    Ltd, Corp…) and capitals are fine, and a name written another valid way isn't flagged."""
     out: dict[str, str] = {}
+    used = Counter(w for _, v in items for w in set(_plain(v).split()))  # how many names use each word
     for i, v in items:
-        if re.search(r"[,;:/\\-]\s*$", v.strip()):
-            out[i] = "stray punctuation at the end"
-        elif r := _layout(v):
-            out[i] = r
-    rest = [(i, v) for i, v in items if i not in out]
-    return out | _written_differently(rest, company_key)
+        p = _plain(v)
+        if v != " ".join(v.split()):
+            out[i] = "unwanted spaces (at the start, at the end or doubled)"
+        elif sym := sorted(set(_SYMBOLS.findall(v)) | ({"_"} if "_" in v else set())):  # \w lets "_" through
+            out[i] = f"unwanted symbol {' '.join(sym)}"
+        elif re.search(r"[,;:/&+-]$", v) or re.search(r"[,;:!&/+-]{2,}|\.{2}(?!\.)|[,;:]\.", v) or re.match(r"[^\w(]", v):
+            out[i] = "stray punctuation"
+        elif not re.search(r"[A-Za-z]", v) or p in _JUNK or re.fullmatch(r"(test|dummy|sample|temp)\b.*|.*\btest\d*", p):
+            out[i] = "not a real name (a test or placeholder value)"
+        else:
+            for w in p.split():
+                if len(w) < 6 or w in SHORT_FORMS or w in ABBREVIATIONS or w in BUSINESS_WORDS or w in REAL_WORDS or used[w] >= 3:
+                    continue  # a word several names use is a real word, not a typo
+                near = _close_to(w, BUSINESS_WORDS, most=1)
+                if near and not w.startswith(near) and not near.startswith(w):  # "Pacifica" is a name, not a misspelled "Pacific"
+                    out[i] = f"misspelled? “{w.capitalize()}” should be “{near.capitalize()}”"
+                    break
+    return out
 
 
 def text(items: list[tuple[str, str]]) -> dict[str, str]:
@@ -317,8 +357,9 @@ RULES = {  # shown in "How it's flagged"
              "are odd; the way most records write it counts as right",
     "city": "older or short names (Bangalore → Bengaluru, Bombay → Mumbai, NYC → New York), numbers, stray punctuation, extra spaces, "
             "ALL CAPITALS or all lower case, or the same city written differently",
-    "company": "the same name written differently once short forms are read in full (Tech = Technology, Inc = Incorporated, Corp, Ltd, Co, "
-               "Intl, Mfg, Svcs…), stray punctuation, extra spaces, ALL CAPITALS or all lower case",
+    "company": "only invalid names: unwanted spaces (at the start, at the end or doubled), unwanted symbols (# @ * _ …), stray punctuation, "
+               "test or placeholder values (Test, N/A, Unknown, XXX) and misspelled words (Technolgy, Solutons); short forms like LLC, "
+               "Inc, Ltd and Corp are fine",
     "text": "extra spaces, ALL CAPITALS or all lower case, or the same value written different ways (the way most records write it counts as right)",
     "website": "not a valid web address, or written in a different form from the one most used (with or without https:// and www.)",
     "postal": "invalid characters, or a different format from the one most used (for example 5 digits vs 5+4)",
