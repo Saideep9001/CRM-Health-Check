@@ -266,7 +266,7 @@ _JUNK = {"test", "testing", "asdf", "qwerty", "xxx", "xx", "x", "na", "n a", "no
 
 def company(items: list[tuple[str, str]]) -> dict[str, str]:
     """Only invalid names: unwanted spaces or symbols, stray punctuation, test values and misspelled words. Short forms (LLC, Inc,
-    Ltd, Corp…) and capitals are fine, and a name written another valid way isn't flagged."""
+    Ltd, Corp…) are fine, and a name written another valid way isn't flagged; ALL CAPITALS and all lower case are flagged."""
     out: dict[str, str] = {}
     used = Counter(w for _, v in items for w in set(_plain(v).split()))  # how many names use each word
     for i, v in items:
@@ -279,6 +279,8 @@ def company(items: list[tuple[str, str]]) -> dict[str, str]:
             out[i] = "stray punctuation"
         elif not re.search(r"[A-Za-z]", v) or p in _JUNK or re.fullmatch(r"(test|dummy|sample|temp)\b.*|.*\btest\d*", p):
             out[i] = "not a real name (a test or placeholder value)"
+        elif r := _layout(v):  # ALL CAPITALS (more than one word) or all lower case; short names like IBM are fine
+            out[i] = r
         else:
             for w in p.split():
                 if len(w) < 6 or w in SHORT_FORMS or w in ABBREVIATIONS or w in BUSINESS_WORDS or w in REAL_WORDS or used[w] >= 3:
@@ -358,8 +360,8 @@ RULES = {  # shown in "How it's flagged"
     "city": "older or short names (Bangalore → Bengaluru, Bombay → Mumbai, NYC → New York), numbers, stray punctuation, extra spaces, "
             "ALL CAPITALS or all lower case, or the same city written differently",
     "company": "only invalid names: unwanted spaces (at the start, at the end or doubled), unwanted symbols (# @ * _ …), stray punctuation, "
-               "test or placeholder values (Test, N/A, Unknown, XXX) and misspelled words (Technolgy, Solutons); short forms like LLC, "
-               "Inc, Ltd and Corp are fine",
+               "test or placeholder values (Test, N/A, Unknown, XXX), ALL CAPITALS or all lower case, and misspelled words (Technolgy, "
+               "Solutons); short forms like LLC, Inc, Ltd and Corp are fine",
     "text": "extra spaces, ALL CAPITALS or all lower case, or the same value written different ways (the way most records write it counts as right)",
     "website": "not a valid web address, or written in a different form from the one most used (with or without https:// and www.)",
     "postal": "invalid characters, or a different format from the one most used (for example 5 digits vs 5+4)",
