@@ -14,6 +14,7 @@ export default function ProblemPage() {
   const navigate = useNavigate();
   const finding = useFinding(findingId);
   const [checked, setChecked] = useState<FieldCheckResult | null>(null); // the latest Check fields run
+  const [shown, setShown] = useState<string[]>([]); // fields picked to show in the records table (from Check fields or its selector)
   const f = finding.data ?? null;
   const results = useAssessmentResults(f?.assessmentId ?? null, !!f);
   const all = useFindings(f?.assessmentId ?? null, !!f);
@@ -33,10 +34,13 @@ export default function ProblemPage() {
       onClose={() => (window.history.length > 1 ? navigate(-1) : navigate('/results'))}
       onOpenFinding={(o) => navigate(`/problems/${encodeURIComponent(o.id)}`)}
       extra={objects.length > 0 && finder && (
-        <FieldCheck objects={objects} initialObject={f.objectName ?? objects[0]} focus={finder.kind} fieldsText={finder.fieldsText} onResult={setChecked} />
+        <FieldCheck objects={objects} initialObject={f.objectName ?? objects[0]} focus={finder.kind} fieldsText={finder.fieldsText} onResult={setChecked}
+          shownFields={shown} onPickFields={setShown} recordFields={(indicator?.fieldScores ?? []).map((s) => s.field)} />
       )}
       fieldCheck={checked}
       onClearFieldCheck={() => setChecked(null)}
+      shownFields={shown}
+      onShownFieldsChange={setShown}
     />
   );
 }

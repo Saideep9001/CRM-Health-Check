@@ -374,8 +374,11 @@ def _records_csv(db: Session, http: httpx.Client, settings: Settings, org_id: st
 
 # ---------------- the records behind one measure ("What we measure") ----------------
 
-def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str, obj: str | None) -> tuple[dict, str, str]:
-    """(object, where, org id, title) for one measure of one area, as saved by the health check that measured it."""
+def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str, obj: str | None,
+                       only: str | None = None) -> tuple[dict, str, str]:
+    """(object, where, org id, title) for one measure of one area, as saved by the health check that measured it.
+    `only` = comma-separated fields: just the records with a problem in one of them (a flagged value, or for a
+    missing-fields measure an empty value)."""
     row = _get(db, assessment_id)
     area = next((a for a in (row.results or {}).get("areas", []) if a.get("areaId") == area_id), None)
     ind = next((i for i in (area or {}).get("indicators", []) if i.get("label") == label), None)
@@ -383,6 +386,20 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
     rec = next((r for r in recs if obj in (None, r.get("object"))), None)
     if rec is None:
         raise HTTPException(404, "This measure isn’t about specific records.")
+    if only:
+        fields = [f.strip() for f in only.split(",") if f.strip()][:20]
+        if any(not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", f) for f in fields):
+            raise HTTPException(422, "Unknown field.")
+        notes = rec.get("notes")
+        if notes is not None:  # flagged values (Data Standardization): the records with a reason on one of these fields
+            ids = [i for i, n in notes.items() if any(f in n for f in fields)]
+            where = "Id IN (" + ", ".join(f"'{i}'" for i in ids if re.fullmatch(r"[A-Za-z0-9]{15,18}", i)) + ")" if ids else "Id = null"
+        elif label.startswith("Missing"):  # the records with any of these fields empty
+            where = " OR ".join(f"{f} = null" for f in fields)
+        else:
+            raise HTTPException(422, "This measure can’t be narrowed to fields.")
+        cols = rec.get("columns") or []  # the chosen fields right after the name, so they're always in view
+        rec = {**rec, "where": where, "columns": list(dict.fromkeys(cols[:1] + fields + cols[1:]))}
     return rec, row.org_id, f"{label} {rec['object']}"
 
 
@@ -394,12 +411,13 @@ def indicator_records(
     object: str | None = Query(None, max_length=80),
     cursor: str | None = Query(None, max_length=200),
     filters: str | None = Query(None, max_length=12000, description='JSON list of {"field","op","value"} column filters'),
+    only: str | None = Query(None, max_length=1200, description="Comma-separated fields: only records with a problem in one of them"),
     db: Session = Depends(get_db),
     http: httpx.Client = Depends(http_dep),
     settings: Settings = Depends(settings_dep),
 ):
     """The records a measure counted, live from Salesforce (200 per page)."""
-    rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, object)
+    rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, object, only)
     page = _salesforce(db, http, settings, lambda sf: explorer.records_matching(
         sf, rec["object"], rec.get("where"), cursor, columns=rec.get("columns"), order=rec.get("order"), filters=_filters(filters)), org_id)
     notes = rec.get("notes") or {}  # why each value was flagged, saved by the check (e.g. Data Standardization)
@@ -415,12 +433,13 @@ def indicator_values(
     field: str = Query(..., max_length=120),
     object: str | None = Query(None, max_length=80),
     filters: str | None = Query(None, max_length=12000),
+    only: str | None = Query(None, max_length=1200),
     db: Session = Depends(get_db),
     http: httpx.Client = Depends(http_dep),
     settings: Settings = Depends(settings_dep),
 ):
     """The values of one column among a measure's records, for its filter drop-down."""
-    rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, object)
+    rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, object, only)
     return _salesforce(db, http, settings, lambda sf: explorer.field_values(
         sf, rec["object"], field, None, _filters(filters), base_where=rec.get("where")), org_id)
 
@@ -432,11 +451,12 @@ def indicator_records_csv(
     label: str = Query(..., max_length=200),
     object: str | None = Query(None, max_length=80),
     filters: str | None = Query(None, max_length=12000),
+    only: str | None = Query(None, max_length=1200),
     db: Session = Depends(get_db),
     http: httpx.Client = Depends(http_dep),
     settings: Settings = Depends(settings_dep),
 ):
-    rec, org_id, title = _indicator_records(db, assessment_id, area_id, label, object)
+    rec, org_id, title = _indicator_records(db, assessment_id, area_id, label, object, only)
     return _records_csv(db, http, settings, org_id, rec["object"], rec.get("where"), title, rec.get("columns"), rec.get("order"), _filters(filters),
                         notes=rec.get("notes"))
 

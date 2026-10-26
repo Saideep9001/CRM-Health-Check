@@ -147,6 +147,9 @@ export function FieldCheck({
   focus,
   fieldsText = '',
   onResult,
+  shownFields,
+  onPickFields,
+  recordFields = [],
 }: {
   objects: string[];
   initialObject?: string | null;
@@ -154,6 +157,11 @@ export function FieldCheck({
   fieldsText?: string;
   /** Tells the page about the latest run (null when it's reset), so its chart can follow the chosen fields. */
   onResult?: (result: FieldCheckResult | null) => void;
+  /** Fields picked to show in the page's records table (its field selector); a number here picks its field there. */
+  shownFields?: string[];
+  onPickFields?: (fields: string[]) => void;
+  /** Fields the page's records table can narrow to for invalid data (empty values work for any field). */
+  recordFields?: string[];
 }) {
   // On a duplicates / missing / spelling page, only that page's column is shown.
   const shows = (k: FinderKind) => !focus || focus === k;
@@ -185,7 +193,10 @@ export function FieldCheck({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [object, fieldsText, options.data]);
 
-  const fieldList = fields.filter((f) => !fieldQuery || `${f.label} ${f.name}`.toLowerCase().includes(fieldQuery.toLowerCase()));
+  // The chosen fields first, in the order they were picked, so they're seen without scrolling.
+  const fieldList = [...chosen.flatMap((n) => fields.filter((f) => f.name === n)), ...fields.filter((f) => !chosen.includes(f.name))].filter(
+    (f) => !fieldQuery || `${f.label} ${f.name}`.toLowerCase().includes(fieldQuery.toLowerCase()),
+  );
   const label = (name: string) => fields.find((f) => f.name === name)?.label ?? name;
   const what = objectLabel(object).toLowerCase();
 
@@ -209,7 +220,15 @@ export function FieldCheck({
 
   const result = run.data;
   const picked = result && pick ? (pick.field === ALL ? null : result.fields.find((f) => f.name === pick.field)) : null;
-  const isOn = (field: string, kind: FinderKind) => pick?.field === field && pick.kind === kind;
+  // Empty values and invalid data are shown in the page's records table (one table), not in a second one here.
+  const inRecords = (field: string, kind: FinderKind) => !!onPickFields && (kind === 'empty' || (kind === 'spelling' && recordFields.includes(field)));
+  const isOn = (field: string, kind: FinderKind) => (inRecords(field, kind) ? !!shownFields?.includes(field) : pick?.field === field && pick.kind === kind);
+  const choose = (field: string, kind: FinderKind) => {
+    if (!inRecords(field, kind)) return setPick({ field, kind });
+    const now = shownFields ?? [];
+    onPickFields!(now.includes(field) ? now.filter((f) => f !== field) : [...now, field]);
+    document.getElementById('records-table')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
 
   return (
     <section className="mb-7 overflow-hidden rounded-xl border border-brand/25">
@@ -327,7 +346,7 @@ export function FieldCheck({
           <div className="space-y-4">
             <p className="text-sm">
               <span className="font-semibold tabular-nums">{fmtNumber(result.scanned)}</span> {what} checked
-              {result.truncated && <span className="text-ink-muted"> (the first 20,000)</span>}. Click a number to see its records.
+              {result.truncated && <span className="text-ink-muted"> (the first 20,000)</span>}. {onPickFields && focus !== 'duplicates' ? 'Click a number to show those records in the table below.' : 'Click a number to see its records.'}
             </p>
             <div className="overflow-x-auto rounded-xl border border-line">
               <table className={cx('w-full text-left text-sm', !focus && 'min-w-[640px]')}>
@@ -351,7 +370,7 @@ export function FieldCheck({
                         {fmtNumber(f.filled)} <span className="text-[11px]">({result.scanned ? Math.round((100 * f.filled) / result.scanned) : 0}%)</span>
                       </td>
                       {shows('empty') && (
-                        <Cell on={isOn(f.name, 'empty')} onClick={() => setPick({ field: f.name, kind: 'empty' })} value={f.empty} hint="records" tone="text-bad" />
+                        <Cell on={isOn(f.name, 'empty')} onClick={() => choose(f.name, 'empty')} value={f.empty} hint="records" tone="text-bad" />
                       )}
                       {shows('duplicates') && (
                         <Cell
@@ -366,7 +385,7 @@ export function FieldCheck({
                       {shows('spelling') && (
                         <Cell
                           on={isOn(f.name, 'spelling')}
-                          onClick={() => setPick({ field: f.name, kind: 'spelling' })}
+                          onClick={() => choose(f.name, 'spelling')}
                           value={f.standardization?.oddRecords}
                           hint={f.standardization ? `records · ${fmtNumber(f.standardization.valuesWithVariants)} values` : undefined}
                           tone="text-warn"
@@ -397,7 +416,7 @@ export function FieldCheck({
               </table>
             </div>
 
-            {pick && (
+            {pick && !(pick.field !== ALL && inRecords(pick.field, pick.kind)) && (
               <div className="rounded-xl border border-line p-4">
                 <h4 className="mb-3 text-sm font-semibold">
                   {pick.field === ALL

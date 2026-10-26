@@ -83,3 +83,20 @@ def test_flagged_values_come_with_the_reason_on_their_cell(client, sf, monkeypat
     assert list(got) == [shown[0]] and got[shown[0]]["Phone"].startswith("no country code")  # "415-555-1234"
     csv = client.get(f"{API}/assessments/{aid}/areas/area-1/indicator-records.csv", params=params).text
     assert "Why it’s flagged" in csv.splitlines()[0]
+
+
+def test_a_measures_records_narrow_to_chosen_fields(client, sf):
+    connect(client)
+    aid = start(client, areas=("area-1",), objects=["Account"]).json()["id"]
+    base = f"{API}/assessments/{aid}/areas/area-1"
+    # missing key fields: records with any chosen field empty
+    params = {"label": "Missing Key Fields (Accounts)", "object": "Account", "only": "Phone,Website"}
+    assert client.get(f"{base}/indicator-records", params=params).status_code == 200
+    assert "WHERE (Phone = null OR Website = null)" in sf.soql[-1] or "WHERE Phone = null OR Website = null" in sf.soql[-1]
+    # data standardization: records with a reason on a chosen field
+    params = {"label": "Data Standardization Issues (Accounts)", "object": "Account", "only": "Phone"}
+    assert client.get(f"{base}/indicator-records", params=params).status_code == 200
+    assert "Id IN ('001000000000001AAA'" in sf.soql[-1]
+    assert client.get(f"{base}/indicator-records.csv", params=params).status_code == 200
+    bad = {**params, "only": "Phone) FROM User --"}
+    assert client.get(f"{base}/indicator-records", params=bad).status_code == 422

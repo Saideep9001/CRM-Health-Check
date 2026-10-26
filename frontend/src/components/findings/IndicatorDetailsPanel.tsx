@@ -18,6 +18,8 @@ export function IndicatorDetailsPanel({
   extra,
   fieldCheck,
   onClearFieldCheck,
+  shownFields,
+  onShownFieldsChange,
 }: {
   area: DiagnosticArea;
   indicator: IndicatorValue | null;
@@ -35,6 +37,8 @@ export function IndicatorDetailsPanel({
   extra?: React.ReactNode;
   fieldCheck?: FieldCheckResult | null;
   onClearFieldCheck?: () => void;
+  shownFields?: string[];
+  onShownFieldsChange?: (fields: string[]) => void;
 }) {
   const open = findings.filter((f) => f.status !== 'resolved' && f.status !== 'accepted-risk');
   const bySeverity = (a: Finding, b: Finding) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity] || b.affectedRecords - a.affectedRecords;
@@ -62,6 +66,8 @@ export function IndicatorDetailsPanel({
       extra={extra}
       fieldCheck={fieldCheck}
       onClearFieldCheck={onClearFieldCheck}
+      shownFields={shownFields}
+      onShownFieldsChange={onShownFieldsChange}
     />
   );
 }

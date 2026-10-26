@@ -18,6 +18,7 @@ export default function MeasurePage() {
   const object = params.get('object');
   const navigate = useNavigate();
   const [checked, setChecked] = useState<FieldCheckResult | null>(null); // the latest Check fields run
+  const [shown, setShown] = useState<string[]>([]); // fields picked to show in the records table (from Check fields or its selector)
   const area = getArea(areaId);
   const { state, error, refetch, latest, results, findings } = useLatestAssessment();
 
@@ -46,10 +47,13 @@ export default function MeasurePage() {
       onCheckAgain={() => navigate(`/assessment/${area.categoryId}/${area.id}`)}
       onOpenFinding={(f) => navigate(`/problems/${encodeURIComponent(f.id)}`)}
       extra={objects.length > 0 && finder && (
-        <FieldCheck objects={objects} initialObject={object ?? objects[0]} focus={finder.kind} fieldsText={finder.fieldsText} onResult={setChecked} />
+        <FieldCheck objects={objects} initialObject={object ?? objects[0]} focus={finder.kind} fieldsText={finder.fieldsText} onResult={setChecked}
+          shownFields={shown} onPickFields={setShown} recordFields={(indicator?.fieldScores ?? []).map((s) => s.field)} />
       )}
       fieldCheck={checked}
       onClearFieldCheck={() => setChecked(null)}
+      shownFields={shown}
+      onShownFieldsChange={setShown}
     />
   );
 }

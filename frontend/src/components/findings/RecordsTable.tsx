@@ -31,6 +31,7 @@ export function RecordsTable({
   onFiltersChange,
   valuesSource,
   keyFields,
+  markOnly,
 }: {
   query: UseInfiniteQueryResult<InfiniteData<FindingRecordsPage, unknown>, Error>;
   csvUrl?: string;
@@ -44,6 +45,8 @@ export function RecordsTable({
   valuesSource?: ValuesSource;
   /** Key fields (Missing Key Fields): an empty one is marked on its cell. */
   keyFields?: string[];
+  /** When fields are picked in the page's selector: only their cells are marked. */
+  markOnly?: string[];
 }) {
   const pages = query.data?.pages ?? [];
   const first = pages[0];
@@ -72,6 +75,7 @@ export function RecordsTable({
   const notes: Record<string, Record<string, string>> = Object.assign({}, ...pages.map((p) => p.cellNotes ?? {}));
   const key = new Set(keyFields ?? []);
   const why = (r: { id?: string | null; values: Record<string, unknown> }, field: string): string | null => {
+    if (markOnly?.length && !markOnly.includes(field)) return null;
     const n = r.id ? notes[r.id]?.[field] : undefined;
     if (n) return n;
     const val = r.values[field];
