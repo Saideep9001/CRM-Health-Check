@@ -123,7 +123,7 @@ Why it’s flagged: ${r.note}` : show(r.values[c.name])}>
   );
 }
 
-function Cell({ on, onClick, value, hint, tone, none }: { on: boolean; onClick?: () => void; value?: number; hint?: string; tone: string; none?: string }) {
+function Cell({ on, onClick, value, hint, tone, none, tick }: { on: boolean; onClick?: () => void; value?: number; hint?: string; tone: string; none?: string; tick?: boolean }) {
   if (value === undefined) return <td className="px-3 py-2 text-ink-subtle" title={none}>—</td>;
   return (
     <td className="px-1.5 py-1.5">
@@ -132,8 +132,25 @@ function Cell({ on, onClick, value, hint, tone, none }: { on: boolean; onClick?:
         onClick={onClick}
         className={cx('w-full rounded-lg border px-2.5 py-1.5 text-left transition', on ? 'border-brand bg-brand-soft/60' : 'border-transparent hover:border-brand/30 hover:bg-muted/60')}
       >
-        <span className={cx('block text-sm font-semibold tabular-nums', value ? tone : 'text-good')}>{fmtNumber(value)}</span>
-        {hint && <span className="block text-[11px] text-ink-muted">{hint}</span>}
+        {tick ? (
+          // picks the field in the records table: a tick box beside the number, all on one line
+          <span className="flex items-center gap-2">
+            <span
+              role="checkbox"
+              aria-checked={on}
+              className={cx('grid h-4 w-4 shrink-0 place-items-center rounded border text-[10px] leading-none', on ? 'border-brand bg-brand text-white' : 'border-ink-subtle/60 bg-surface')}
+            >
+              {on ? '✓' : ''}
+            </span>
+            <span className={cx('text-sm font-semibold tabular-nums', value ? tone : 'text-good')}>{fmtNumber(value)}</span>
+            {hint && <span className="text-[11px] text-ink-muted">{hint}</span>}
+          </span>
+        ) : (
+          <>
+            <span className={cx('block text-sm font-semibold tabular-nums', value ? tone : 'text-good')}>{fmtNumber(value)}</span>
+            {hint && <span className="block text-[11px] text-ink-muted">{hint}</span>}
+          </>
+        )}
       </button>
     </td>
   );
@@ -346,7 +363,7 @@ export function FieldCheck({
           <div className="space-y-4">
             <p className="text-sm">
               <span className="font-semibold tabular-nums">{fmtNumber(result.scanned)}</span> {what} checked
-              {result.truncated && <span className="text-ink-muted"> (the first 20,000)</span>}. {onPickFields && focus !== 'duplicates' ? 'Click a number to show those records in the table below.' : 'Click a number to see its records.'}
+              {result.truncated && <span className="text-ink-muted"> (the first 20,000)</span>}. {onPickFields && focus !== 'duplicates' ? 'Tick a field to show its records in the table below.' : 'Click a number to see its records.'}
             </p>
             <div className="overflow-x-auto rounded-xl border border-line">
               <table className={cx('w-full text-left text-sm', !focus && 'min-w-[640px]')}>
@@ -370,7 +387,7 @@ export function FieldCheck({
                         {fmtNumber(f.filled)} <span className="text-[11px]">({result.scanned ? Math.round((100 * f.filled) / result.scanned) : 0}%)</span>
                       </td>
                       {shows('empty') && (
-                        <Cell on={isOn(f.name, 'empty')} onClick={() => choose(f.name, 'empty')} value={f.empty} hint="records" tone="text-bad" />
+                        <Cell on={isOn(f.name, 'empty')} onClick={() => choose(f.name, 'empty')} tick={inRecords(f.name, 'empty')} value={f.empty} hint="records" tone="text-bad" />
                       )}
                       {shows('duplicates') && (
                         <Cell
@@ -386,6 +403,7 @@ export function FieldCheck({
                         <Cell
                           on={isOn(f.name, 'spelling')}
                           onClick={() => choose(f.name, 'spelling')}
+                          tick={inRecords(f.name, 'spelling')}
                           value={f.standardization?.oddRecords}
                           hint={f.standardization ? `records · ${fmtNumber(f.standardization.valuesWithVariants)} values` : undefined}
                           tone="text-warn"
