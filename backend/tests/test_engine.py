@@ -337,7 +337,7 @@ def test_problems_list_and_export_their_records(client, sf):
     q = next(x for x in sf.soql if x.startswith("SELECT") and "FROM Account WHERE Id IN" in x)
     assert "'001000000000001AAA'" in q and "'001000000000005AAA'" in q
     assert "'001000000000003AAA'" not in q and "'001000000000006AAA'" not in q  # different state spelling; Initech has no copy
-    assert "match another record on Website, Phone, BillingState, BillingCity (2 groups)" in dupes["description"]
+    assert "match another record on Name, Website, Phone, BillingState, BillingCity (2 groups)" in dupes["description"]
 
 
 def test_second_check_compares_and_keeps_triage(client, sf):

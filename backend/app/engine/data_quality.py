@@ -87,13 +87,13 @@ def _norm(value: object, table: dict[str, str]) -> str:
 
 DUP_FIELDS: dict[str, tuple[str, ...]] = {
     "Lead": ("LastName", "Company", "Email", "Phone", "Title", "State", "City", "PostalCode"),
-    "Account": ("Website", "Phone", "BillingState", "BillingCity", "BillingPostalCode", "Title"),
+    "Account": ("Name", "Website", "Phone", "BillingState", "BillingCity", "BillingPostalCode", "Title"),
     "Contact": ("LastName", "Email", "Phone", "MailingState", "MailingCity", "MailingPostalCode"),
     "Opportunity": ("Amount", "CloseDate"),
 }
 KEY_FIELDS_BY_OBJECT: dict[str, tuple[str, ...]] = {
     "Lead": ("LastName", "Title", "Company", "Email", "Phone", "State", "City", "PostalCode", "LeadSource"),
-    "Account": ("Website", "Phone", "BillingState", "BillingCity", "BillingPostalCode", "Title"),
+    "Account": ("Name", "Website", "Phone", "BillingState", "BillingCity", "BillingPostalCode", "Title"),
     "Contact": ("LastName", "Email", "Phone", "MailingState", "MailingCity", "MailingPostalCode"),
     "Opportunity": ("Amount", "CloseDate"),
 }
@@ -191,7 +191,7 @@ def duplicates_on_fields(ctx: Ctx, obj: str) -> None:
     else:
         keys = ([name_field] if name_field and not fields[name_field].get("autoNumber") else []) + _text_fields(ctx, obj)[:MAX_DUP_FIELDS]
     total = _base_total(ctx, obj)
-    kinds = {f: _dup_kind(f, fields[f], name_field) for f in keys}
+    kinds = {f: "company" if (obj, f) == ("Account", "Name") else _dup_kind(f, fields[f], name_field) for f in keys}  # "Acme, Inc." = "ACME"
     strong = [f for f in keys if kinds[f] in STRONG_KINDS or f in STRONG_FIELDS]
     if not total or not strong:
         return
