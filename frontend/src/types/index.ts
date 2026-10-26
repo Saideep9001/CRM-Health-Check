@@ -387,6 +387,8 @@ export interface FindingRecordsPage {
   recordUrlPrefix: string;
   /** Field the rows are sorted by (e.g. the one duplicates were matched on). */
   sortedBy?: string | null;
+  /** Record id → field → why that value was flagged (e.g. "no country code"). */
+  cellNotes?: Record<string, Record<string, string>>;
 }
 
 export interface UpdateFindingRequest {

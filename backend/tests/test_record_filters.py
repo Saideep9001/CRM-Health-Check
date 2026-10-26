@@ -65,3 +65,21 @@ def test_a_column_asked_for_twice_is_selected_once(monkeypatch):
                                                                      for n in ("Id", "Name", "Website")]})
     ex.records_matching(fake, "Account", None, columns=["Name", "Name", "Website"])  # e.g. the name and a compared field
     assert fake.soql[-1].startswith("SELECT Name, Website") and fake.soql[-1].count("Name,") == 1
+
+
+def test_flagged_values_come_with_the_reason_on_their_cell(client, sf, monkeypatch):
+    from app.routers import assessments as routes
+    from app.salesforce import explorer
+
+    connect(client)
+    aid = start(client, areas=("area-1",), objects=["Account"]).json()["id"]
+    params = {"label": "Data Standardization Issues (Accounts)", "object": "Account"}
+    shown = ["001000000000001AAA", "001000000000099AAA"]  # a flagged record, and one that isn't
+    page = {"object": "Account", "columns": [{"name": "Phone", "label": "Phone", "type": "phone"}], "totalSize": 2, "next_cursor": None,
+            "record_url_prefix": "https://acme.my.salesforce.com/", "records": [{"id": i, "values": {"Phone": "415-555-1234"}, "ref_names": {}} for i in shown]}
+    monkeypatch.setattr(explorer, "records_matching", lambda *a, **k: page)
+    monkeypatch.setattr(routes, "_salesforce", lambda db, http, settings, fn, org_id: fn(None))
+    got = client.get(f"{API}/assessments/{aid}/areas/area-1/indicator-records", params=params).json()["cellNotes"]
+    assert list(got) == [shown[0]] and got[shown[0]]["Phone"].startswith("no country code")  # "415-555-1234"
+    csv = client.get(f"{API}/assessments/{aid}/areas/area-1/indicator-records.csv", params=params).text
+    assert "Why it’s flagged" in csv.splitlines()[0]

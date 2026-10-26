@@ -390,6 +390,7 @@ def data_standardization(ctx: Ctx, obj: str) -> None:
     with_value: set[str] = set()
     per_field: list[tuple[str, str, int, list[str]]] = []  # (field, kind, odd records, examples)
     reasons: dict[str, Counter] = {}  # field -> why its values are odd, and how many of each
+    notes: dict[str, dict[str, str]] = defaultdict(dict)  # record id -> field -> why that value is odd
     for f in keys:
         kind = _std_kind(f, fields[f])
         items = [(r["Id"], r[f]) for r in rows if r.get("Id") and r.get(f) not in (None, "")]
@@ -397,6 +398,8 @@ def data_standardization(ctx: Ctx, obj: str) -> None:
         why = standards.odd_values(kind, items, open_ids)  # record id -> reason
         odd = set(why)
         reasons[f] = Counter(why.values())
+        for i, r in why.items():
+            notes[i][f] = r
         bad |= odd
         if items:
             _by_field(ctx, obj, "standardization", f, len(odd), len(items))
@@ -425,6 +428,9 @@ def data_standardization(ctx: Ctx, obj: str) -> None:
             ("Records listed", f"Records with an odd value (up to {LISTED}), sorted by name."),
         ],
     )
+    if records:  # shown on the listed records' cells: why each value is odd
+        listed = sorted(bad)[:LISTED]
+        ctx.metrics[ctx.area_id][-1].records[0]["notes"] = {i: notes[i] for i in listed}
     ctx.finding(
         name=f"Inconsistent data on {label}",
         score=score,

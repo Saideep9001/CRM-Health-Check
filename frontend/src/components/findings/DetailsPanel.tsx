@@ -163,6 +163,7 @@ function Records({
   measureAssessmentId,
   legacy,
   initialObject,
+  keyFields,
 }: {
   area: DiagnosticArea;
   indicator: IndicatorValue | null;
@@ -170,6 +171,8 @@ function Records({
   measureAssessmentId: string | null;
   legacy: boolean;
   initialObject?: string | null;
+  /** Missing Key Fields: the key fields, so their empty cells are marked. */
+  keyFields?: string[];
 }) {
   const objects = indicator?.recordObjects ?? [];
   const preferred =
@@ -209,6 +212,7 @@ function Records({
           csvUrl={indicatorApi.csvUrl(measureAssessmentId!, area.id, indicator!.label, object!, filters)}
           filters={filters}
           onFiltersChange={setFilters}
+          keyFields={keyFields}
           valuesSource={{
             key: ['indicator', measureAssessmentId, area.id, indicator!.label, object],
             load: (field, others, signal) => indicatorApi.values(measureAssessmentId!, area.id, indicator!.label, object!, field, others, signal),
@@ -583,7 +587,8 @@ export function DetailsPanel({
             </Section>
           ) : (
             <Section icon={<Database className="h-3.5 w-3.5" />} title={finding ? 'The records' : 'The records behind this number'}>
-              <Records area={area} indicator={v} finding={finding} measureAssessmentId={measureAssessmentId} legacy={legacy} initialObject={initialObject} />
+              <Records area={area} indicator={v} finding={finding} measureAssessmentId={measureAssessmentId} legacy={legacy} initialObject={initialObject}
+                keyFields={empties?.map((f) => f.field)} />
             </Section>
           )}
 

@@ -346,7 +346,8 @@ def finding_records_csv(
 
 
 def _records_csv(db: Session, http: httpx.Client, settings: Settings, org_id: str | None, obj: str, where: str | None, title: str,
-                 columns: list[str] | None = None, order: str | None = None, filters: list[dict] | None = None) -> Response:
+                 columns: list[str] | None = None, order: str | None = None, filters: list[dict] | None = None,
+                 notes: dict[str, dict[str, str]] | None = None) -> Response:
     def collect(sf):
         page = explorer.records_matching(sf, obj, where, page_size=2000, columns=columns, order=order, filters=filters)
         rows = list(page["records"])
@@ -359,11 +360,13 @@ def _records_csv(db: Session, http: httpx.Client, settings: Settings, org_id: st
     out = io.StringIO()
     out.write("\ufeff")  # so Excel opens accents correctly
     w = csv.writer(out)
-    w.writerow([c["label"] for c in columns] + ["Salesforce link"])
+    labels = {c["name"]: c["label"] for c in columns}
+    w.writerow([c["label"] for c in columns] + (["Why it’s flagged"] if notes else []) + ["Salesforce link"])
     for r in rows:
         vals = r["values"]
+        why = "; ".join(f"{labels.get(f, f)}: {n}" for f, n in (notes or {}).get(r.get("id") or "", {}).items())
         w.writerow([r["ref_names"].get(c["name"]) or ("" if vals.get(c["name"]) is None else vals.get(c["name"])) for c in columns]
-                   + [f"{prefix}{r['id']}" if r.get("id") else ""])
+                   + ([why] if notes else []) + [f"{prefix}{r['id']}" if r.get("id") else ""])
     name = re.sub(r"[^A-Za-z0-9]+", "-", title).strip("-").lower() or "records"
     return Response(out.getvalue(), media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="{name}.csv"'})
@@ -397,8 +400,11 @@ def indicator_records(
 ):
     """The records a measure counted, live from Salesforce (200 per page)."""
     rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, object)
-    return _salesforce(db, http, settings, lambda sf: explorer.records_matching(
+    page = _salesforce(db, http, settings, lambda sf: explorer.records_matching(
         sf, rec["object"], rec.get("where"), cursor, columns=rec.get("columns"), order=rec.get("order"), filters=_filters(filters)), org_id)
+    notes = rec.get("notes") or {}  # why each value was flagged, saved by the check (e.g. Data Standardization)
+    page["cell_notes"] = {r["id"]: notes[r["id"]] for r in page["records"] if r.get("id") in notes}
+    return page
 
 
 @router.get("/assessments/{assessment_id}/areas/{area_id}/indicator-values", response_model=FieldValues)
@@ -431,7 +437,8 @@ def indicator_records_csv(
     settings: Settings = Depends(settings_dep),
 ):
     rec, org_id, title = _indicator_records(db, assessment_id, area_id, label, object)
-    return _records_csv(db, http, settings, org_id, rec["object"], rec.get("where"), title, rec.get("columns"), rec.get("order"), _filters(filters))
+    return _records_csv(db, http, settings, org_id, rec["object"], rec.get("where"), title, rec.get("columns"), rec.get("order"), _filters(filters),
+                        notes=rec.get("notes"))
 
 
 @router.get("/findings/{finding_id}", response_model=Finding)

@@ -1,5 +1,5 @@
 import type { InfiniteData, UseInfiniteQueryResult } from '@tanstack/react-query';
-import { Download, ExternalLink, Search, X } from 'lucide-react';
+import { AlertTriangle, Download, ExternalLink, Search, X } from 'lucide-react';
 import { useState } from 'react';
 import { useDataObject } from '@/api/queries';
 import { ColumnFilter, columnFilter, type ValuesSource } from '@/components/data/ColumnFilter';
@@ -30,6 +30,7 @@ export function RecordsTable({
   filters = [],
   onFiltersChange,
   valuesSource,
+  keyFields,
 }: {
   query: UseInfiniteQueryResult<InfiniteData<FindingRecordsPage, unknown>, Error>;
   csvUrl?: string;
@@ -41,6 +42,8 @@ export function RecordsTable({
   onFiltersChange?: (next: DataFilter[]) => void;
   /** Where a column's filter values come from (this measure's or problem's records). */
   valuesSource?: ValuesSource;
+  /** Key fields (Missing Key Fields): an empty one is marked on its cell. */
+  keyFields?: string[];
 }) {
   const pages = query.data?.pages ?? [];
   const first = pages[0];
@@ -65,6 +68,16 @@ export function RecordsTable({
   // The server lists the columns that explain the result first (e.g. Name, Website for duplicates).
   const cols = first ? first.columns.filter((c) => c.type !== 'id').slice(0, 8) : [];
   const asField = (c: { name: string; label: string; type: string }) => c as unknown as DataField;
+  // Why each flagged value was flagged, from the check (record id → field → reason), across the loaded pages.
+  const notes: Record<string, Record<string, string>> = Object.assign({}, ...pages.map((p) => p.cellNotes ?? {}));
+  const key = new Set(keyFields ?? []);
+  const why = (r: { id?: string | null; values: Record<string, unknown> }, field: string): string | null => {
+    const n = r.id ? notes[r.id]?.[field] : undefined;
+    if (n) return n;
+    const val = r.values[field];
+    return key.has(field) && (val == null || String(val).trim() === '') ? 'Empty — key field' : null;
+  };
+  const flagged = rows.some((r) => cols.some((c) => why(r, c.name)));
 
   const groupOf: number[] = [];
   const groupSize = new Map<number, number>();
@@ -175,14 +188,26 @@ export function RecordsTable({
                       )}
                       {cols.map((c, ci) => {
                         const v = formatValue(asField(c), r.values[c.name], r.refNames[c.name]);
+                        const reason = why(r, c.name);
                         return (
-                          <td key={c.name} className={cx('max-w-[16rem] truncate px-3 py-2', columnFilter(filters, c.name) && 'bg-brand-soft/40')} title={v}>
+                          <td
+                            key={c.name}
+                            className={cx('max-w-[16rem] truncate px-3 py-2', reason ? 'bg-bad-soft/60' : columnFilter(filters, c.name) && 'bg-brand-soft/40')}
+                            title={reason ? `${v === '—' ? 'Empty' : v}
+Why it’s flagged: ${reason}` : v}
+                          >
                             {ci === 0 && href ? (
                               <a href={href} target="_blank" rel="noopener noreferrer" className="font-medium text-ink hover:text-brand hover:underline">
                                 {v === '—' ? r.id : v}
                               </a>
                             ) : (
                               <span className={v === '—' ? 'text-ink-subtle' : ''}>{v}</span>
+                            )}
+                            {reason && (
+                              <span className="mt-0.5 flex min-w-[11rem] items-start gap-1 whitespace-normal text-[10.5px] font-medium leading-snug text-bad">
+                                <AlertTriangle className="mt-px h-3 w-3 shrink-0" />
+                                {reason}
+                              </span>
                             )}
                           </td>
                         );
@@ -200,6 +225,11 @@ export function RecordsTable({
               </tbody>
             </table>
           </div>
+          {flagged && (
+            <p className="flex items-center gap-1 border-t border-line bg-bad-soft/30 px-3 py-1.5 text-[11px] text-ink-muted">
+              <AlertTriangle className="h-3 w-3 text-bad" /> Red cells are the values this check flagged; the line under each says why. Hover a cell for the full reason.
+            </p>
+          )}
           {query.hasNextPage && (
             <div className="border-t border-line p-2 text-center">
               <Button size="sm" variant="ghost" disabled={query.isFetchingNextPage} onClick={() => query.fetchNextPage()}>
