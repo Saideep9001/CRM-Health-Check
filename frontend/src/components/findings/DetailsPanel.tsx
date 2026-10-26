@@ -341,6 +341,28 @@ export function DetailsPanel({
     : (finding?.affectedRecords ?? (v && /^missing/i.test(v.label) && v.unit === '%' && recordsOf ? Math.round((v.value * recordsOf) / 100) : null));
   const legacy = !!v && !v.how && !v.rule && !(v.criteria ?? []).length;
   const urgency = scored && v!.score! < PROBLEM_BELOW ? URGENCY.find((u) => u.severity === urgencyFor(v!.score!))! : null;
+  // The (i) beside Score: this page's own numbers worked through, then the rule and the urgency bands.
+  const raiseBelow = chartKind === 'missing' ? 90 : PROBLEM_BELOW; // missing key fields raise a problem below 90 (engine)
+  const scoreInfo = v && scored ? (
+    <span className="block space-y-1.5">
+      {keyValues && recordsOf != null && !fromCheck?.length ? (
+        <span className="block">
+          {fmtNumber(recordsOf)} records × {empties!.length} key fields = {fmtNumber(keyValues.slots)} values. {fmtNumber(keyValues.empty)} are empty, so{' '}
+          {fmtNumber(keyValues.filled)} are filled = <b>{Math.round(keyValues.pct)}%</b>. Score = 100 × ({Math.round(keyValues.pct)} − 50) ÷ (95 − 50) ={' '}
+          {Math.round((100 * (keyValues.pct - 50)) / 45)}
+          {keyValues.pct < 50 ? ' → 0 (can’t go below 0)' : keyValues.pct > 95 ? ' → 100' : ''}.
+        </span>
+      ) : (
+        <span className="block">
+          Result <b>{fmtNumber(v.value)}{v.unit === '%' ? '%' : ''}</b> → score <b>{Math.round(v.score!)}</b>.{v.how ? ` ${v.how}` : ''}
+        </span>
+      )}
+      {v.rule && <span className="block">Rule: {v.rule}</span>}
+      <span className="block">
+        Urgency: below 40 Critical (P1) · 40–59 High (P2) · 60–79 Medium (P3) · 80–{raiseBelow - 1} Low (P4) · {raiseBelow} or more: no problem raised.
+      </span>
+    </span>
+  ) : undefined;
   const title = finding?.name ?? v?.label ?? '';
   // A measure can cover several objects (e.g. phone numbers on Accounts, Contacts and Leads) while a problem is about one.
   const measureObjects = v?.recordObjects ?? [];
@@ -441,6 +463,7 @@ export function DetailsPanel({
               <Stat
                 label={finding && wide ? `Score · ${v.label}` : 'Score'}
                 icon={<AlertTriangle className="h-3.5 w-3.5" />}
+                info={scoreInfo}
                 sub={
                   scored ? (
                     <>
