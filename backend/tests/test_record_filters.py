@@ -45,3 +45,23 @@ def test_filters_narrow_a_problems_records_and_bad_filters_are_refused(client, s
     evil = json.dumps([{"field": "Email) FROM User --", "op": "in", "value": ["x"]}])
     assert client.get(f"{url}/records", params={"filters": evil}).status_code == 422
     assert client.get(f"{url}/records", params={"filters": "not json"}).status_code == 422
+
+
+def test_a_column_asked_for_twice_is_selected_once(monkeypatch):
+    from app.salesforce import explorer as ex
+
+    class SF:
+        base = "https://acme.my.salesforce.com"
+        soql: list[str] = []
+
+        def get(self, url, headers=None):
+            from urllib.parse import parse_qs, urlparse
+            self.soql.append(parse_qs(urlparse(url).query)["q"][0])
+            return {"records": [], "totalSize": 0, "done": True}
+
+    fake = SF()
+    monkeypatch.setattr(ex, "_api", lambda s: "/services/data/v61.0")
+    monkeypatch.setattr(ex, "_describe", lambda s, name: {"fields": [{"name": n, "type": "string", "sortable": True, "filterable": True}
+                                                                     for n in ("Id", "Name", "Website")]})
+    ex.records_matching(fake, "Account", None, columns=["Name", "Name", "Website"])  # e.g. the name and a compared field
+    assert fake.soql[-1].startswith("SELECT Name, Website") and fake.soql[-1].count("Name,") == 1

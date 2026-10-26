@@ -399,7 +399,7 @@ def records_matching(sf: SalesforceClient, name: str, where: str | None, cursor:
     fields = _fields(desc)
     descending = bool(order and order.startswith("-"))  # "-Amount" = biggest first
     order_field = (order or "").lstrip("-") or None
-    first = [c for c in (columns or []) if c in fields]
+    first = list(dict.fromkeys(c for c in (columns or []) if c in fields))  # each once: Salesforce refuses a field selected twice
     cols = (first + [c for c in default_columns(desc) if c not in first])[: max(8, len(first) + 2)]
     refs = _ref_paths(fields, cols)
     headers = {"Sforce-Query-Options": f"batchSize={max(200, min(page_size, 2000))}"}
