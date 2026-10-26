@@ -125,8 +125,12 @@ export interface FieldCheckField {
     oddRecords: number;
     valuesWithVariants: number;
     variants: { usual: string; spellings: { value: string; count: number }[]; oddRecords: number }[];
+    /** Why the values are odd (the health check's Data Standardization rules), most common first. */
+    reasons?: { reason: string; count: number }[];
+    /** What counts as odd for this kind of field. */
+    rule?: string;
     columns: { name: string; label: string }[];
-    records: { id: string | null; values: Record<string, unknown> }[];
+    records: { id: string | null; values: Record<string, unknown>; note?: string | null }[];
   } | null;
 }
 

@@ -32,13 +32,16 @@ def test_each_field_gets_empty_duplicates_and_spellings():
     assert out["scanned"] == 5
     assert (f["Phone"]["filled"], f["Phone"]["empty"]) == (3, 2)
     assert out["any_empty"] == 2  # Globex (no phone, industry) and Hooli (no phone, state): each counted once
+    assert (out["any_odd"], out["any_value"]) == (4, 5)  # 001A, 001B, 001D (phones without a country code; 001A also "California"), 001E ("tech")
     # Acme / ACME are the same company; the two phones are the same number written differently
     assert f["Name"]["duplicates"]["total_groups"] == 1 and f["Name"]["duplicates"]["extra_copies"] == 1
     assert f["Phone"]["duplicates"]["total_groups"] == 1
-    # "California" is the odd spelling of CA (3 records use "CA")
-    std = f["BillingState"]["standardization"]
-    assert std["odd_records"] == 1 and std["variants"][0]["usual"] == "CA"
-    assert [r["id"] for r in std["records"]] == ["001A"]
+    # the health check's Data Standardization rules, with why each value is odd
+    phone = f["Phone"]["standardization"]
+    assert phone["odd_records"] == 3 and phone["reasons"][0]["count"] == 3 and phone["reasons"][0]["reason"].startswith("no country code")
+    assert all(r["note"].startswith("no country code") for r in phone["records"])
+    std = f["BillingState"]["standardization"]  # "California" is the odd spelling of CA (3 records use "CA")
+    assert std["odd_records"] == 1 and [(r["id"], r["note"]) for r in std["records"]] == [("001A", "written differently — usually “CA”")]
     # a shared picklist choice isn't a duplicate, but "tech" vs "Tech" is still an odd spelling
     assert f["Industry"]["duplicates"] is None and f["BillingState"]["duplicates"] is None  # shared by design
     assert f["Industry"]["standardization"]["odd_records"] == 1

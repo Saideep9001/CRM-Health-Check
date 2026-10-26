@@ -86,6 +86,8 @@ def check_fields(sf: SalesforceClient, obj: str, fields: list[str]) -> dict:
         return result
 
     out_fields = []
+    odd_any: set[int] = set()  # records with an odd spelling in at least one checked text field
+    valued_any: set[int] = set()  # records with a value in at least one checked text field
     for f in chosen:
         ftype = options[f]["type"]
         cols = shown(f)
@@ -113,33 +115,24 @@ def check_fields(sf: SalesforceClient, obj: str, fields: list[str]) -> dict:
                     "record_url_prefix": f"{sf.base}/",
                 }
 
-        # standardization: the same value written different ways
+        # standardization: the health check's rules (engine/standards.py), with why each value is odd
         std = None
         if ftype in _TEXT:
-            buckets: dict[str, Counter] = defaultdict(Counter)
-            where: dict[tuple[str, str], list[int]] = defaultdict(list)
-            for i, v in enumerate(values):
-                if v in (None, ""):
-                    continue
-                k = _spelling_key(f, ftype, v)
-                if k:
-                    buckets[k][str(v)] += 1
-                    where[(k, str(v))].append(i)
-            variants, odd = [], []
-            for k, spellings in buckets.items():
-                if len(spellings) > 1:
-                    ranked = spellings.most_common()
-                    variants.append({"usual": ranked[0][0], "spellings": [{"value": s, "count": c} for s, c in ranked],
-                                     "odd_records": sum(c for _, c in ranked[1:])})
-                    for s, _ in ranked[1:]:
-                        odd += where[(k, s)]
-            variants.sort(key=lambda x: -x["odd_records"])
+            from ..engine import standards
+            from ..engine.data_quality import _std_kind  # engine imports salesforce, so import here
+            items = [(str(i), v) for i, v in enumerate(values) if v not in (None, "")]
+            why = {int(i): r for i, r in standards.odd_values(_std_kind(f, options[f]), items, set()).items()}
+            odd = sorted(why, key=lambda i: str(values[i]).lower())
+            odd_any.update(odd)
+            valued_any.update(int(i) for i, _ in items)
             std = {
                 "odd_records": len(odd),
-                "values_with_variants": len(variants),
-                "variants": variants[:VARIANTS_SHOWN],
+                "values_with_variants": len({str(values[i]) for i in odd}),
+                "variants": [],
+                "reasons": [{"reason": r, "count": n} for r, n in Counter(why.values()).most_common()],
+                "rule": standards.RULES.get(_std_kind(f, options[f]), ""),
                 "columns": [{"name": c, "label": label(c)} for c in cols],
-                "records": [record(i, cols) for i in sorted(odd, key=lambda i: str(values[i]).lower())[:ODD_SHOWN]],
+                "records": [{**record(i, cols), "note": why[i]} for i in odd[:ODD_SHOWN]],
             }
 
         out_fields.append({
@@ -159,6 +152,8 @@ def check_fields(sf: SalesforceClient, obj: str, fields: list[str]) -> dict:
         "scanned": len(rows),
         "truncated": truncated,
         "any_empty": any_empty,  # records missing at least one chosen field (each counted once)
+        "any_odd": len(odd_any),  # records with an odd spelling in at least one checked text field
+        "any_value": len(valued_any),  # records with a value in at least one checked text field
         "fields": out_fields,
         "combined": combined,
         "record_url_prefix": f"{sf.base}/",

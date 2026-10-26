@@ -1,4 +1,4 @@
-import { ChevronDown, ListChecks, Search } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ListChecks, Search } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { errorMessage } from '@/api/client';
 import { useCheckFields, useEmptyOptions } from '@/api/queries';
@@ -19,15 +19,46 @@ type Pick = { field: string; kind: FinderKind };
 function SpellingResults({ field, prefix }: { field: FieldCheckField; prefix: string }) {
   const std = field.standardization!;
   const [query, setQuery] = useState('');
+  const [reason, setReason] = useState<string | null>(null);
   const term = query.trim().toLowerCase();
-  const rows = std.records.filter((r) => !term || Object.values(r.values).some((v) => show(v).toLowerCase().includes(term)));
-  if (!std.oddRecords) return <p className="rounded-lg bg-good-soft/50 px-4 py-6 text-center text-sm text-good">Every value of {field.label} is written the same way.</p>;
+  const rows = std.records.filter(
+    (r) => (!reason || r.note === reason) && (!term || [...Object.values(r.values), r.note].some((v) => show(v).toLowerCase().includes(term))),
+  );
+  if (!std.oddRecords) return <p className="rounded-lg bg-good-soft/50 px-4 py-6 text-center text-sm text-good">Every value of {field.label} follows the rules.</p>;
+  const reasons = std.reasons ?? [];
   return (
     <div className="space-y-3">
+      {std.rule && (
+        <p className="text-xs text-ink-muted">
+          <span className="font-semibold text-ink">Counts as odd:</span> {std.rule}
+        </p>
+      )}
+      {reasons.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {reasons.map((x) => (
+            <button
+              key={x.reason}
+              type="button"
+              onClick={() => setReason(reason === x.reason ? null : x.reason)}
+              className={cx(
+                'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition',
+                reason === x.reason ? 'border-bad bg-bad-soft text-bad' : 'border-line hover:border-bad/40 hover:bg-bad-soft/40',
+              )}
+              title={reason === x.reason ? 'Show every reason' : 'Show only these records'}
+            >
+              <AlertTriangle className="h-3 w-3 text-bad" />
+              {x.reason}
+              <span className="font-semibold tabular-nums">{fmtNumber(x.count)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {reasons.length === 0 && (
       <p className="text-xs text-ink-muted">
         Values are the same once upper/lower case, punctuation and spaces are ignored (countries and US states also match their codes: “USA” = “United States”,
         “California” = “CA”). The most common spelling is treated as right; every record using another spelling counts.
       </p>
+      )}
       <div className="scrollbar-thin grid max-h-64 gap-2 overflow-y-auto sm:grid-cols-2 lg:grid-cols-3">
         {std.variants.map((v) => (
           <div key={v.usual} className="rounded-lg border border-line px-3 py-2 text-xs">
@@ -45,7 +76,7 @@ function SpellingResults({ field, prefix }: { field: FieldCheckField; prefix: st
           </div>
         ))}
       </div>
-      {std.variants.length < std.valuesWithVariants && <p className="text-[11px] text-ink-subtle">Showing {std.variants.length} of {fmtNumber(std.valuesWithVariants)} values.</p>}
+      {reasons.length === 0 && std.variants.length < std.valuesWithVariants && <p className="text-[11px] text-ink-subtle">Showing {std.variants.length} of {fmtNumber(std.valuesWithVariants)} values.</p>}
 
       <div className="relative">
         <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-subtle" />
@@ -66,11 +97,18 @@ function SpellingResults({ field, prefix }: { field: FieldCheckField; prefix: st
             {rows.map((r, ri) => (
               <tr key={r.id ?? ri} className="hover:bg-muted/60">
                 {std.columns.map((c, ci) => (
-                  <td key={c.name} className="max-w-[16rem] truncate px-3 py-2" title={show(r.values[c.name])}>
+                  <td key={c.name} className={cx('max-w-[16rem] truncate px-3 py-2', c.name === field.name && r.note && 'bg-bad-soft/60')} title={c.name === field.name && r.note ? `${show(r.values[c.name])}
+Why it’s flagged: ${r.note}` : show(r.values[c.name])}>
                     {ci === 0 && r.id ? (
                       <a href={`${prefix}${r.id}`} target="_blank" rel="noopener noreferrer" className="font-medium hover:text-brand hover:underline">{show(r.values[c.name])}</a>
                     ) : (
                       <span className={c.name === field.name ? 'font-medium text-warn' : show(r.values[c.name]) === '—' ? 'text-ink-subtle' : ''}>{show(r.values[c.name])}</span>
+                    )}
+                    {c.name === field.name && r.note && (
+                      <span className="mt-0.5 flex min-w-[11rem] items-start gap-1 whitespace-normal text-[10.5px] font-medium leading-snug text-bad">
+                        <AlertTriangle className="mt-px h-3 w-3 shrink-0" />
+                        {r.note}
+                      </span>
                     )}
                   </td>
                 ))}
@@ -79,6 +117,7 @@ function SpellingResults({ field, prefix }: { field: FieldCheckField; prefix: st
           </tbody>
         </table>
       </div>
+      {reason && <p className="text-[11px] text-ink-subtle">Showing only “{reason}”.</p>}
       {std.records.length < std.oddRecords && <p className="text-[11px] text-ink-subtle">Showing the first {fmtNumber(std.records.length)} of {fmtNumber(std.oddRecords)} records.</p>}
     </div>
   );
@@ -140,6 +179,9 @@ export function FieldCheck({
     setPick(null);
     run.reset();
     onResult?.(null);
+    // The page's own fields are checked straight away, so the numbers show without a click (the page keeps the health check's own
+    // chart until someone runs it themselves).
+    if (named.length && options.data) runWith(named, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [object, fieldsText, options.data]);
 
@@ -147,19 +189,23 @@ export function FieldCheck({
   const label = (name: string) => fields.find((f) => f.name === name)?.label ?? name;
   const what = objectLabel(object).toLowerCase();
 
-  const start = () => {
+  function runWith(fieldNames: string[], tellPage: boolean) {
     setListOpen(false);
     run.mutate(
-      { object, fields: chosen },
+      { object, fields: fieldNames },
       {
         onSuccess: (r: FieldCheckResult) => {
-          onResult?.(r);
+          if (tellPage) onResult?.(r);
           const kind = focus ?? 'empty';
-          setPick({ field: kind === 'duplicates' && r.combined ? ALL : r.fields[0].name, kind });
+          // open the field with the most to look at for this page (e.g. Account Phone's odd values)
+          const count = (f: FieldCheckField) => (kind === 'empty' ? f.empty : kind === 'duplicates' ? (f.duplicates?.extraCopies ?? 0) : (f.standardization?.oddRecords ?? 0));
+          const most = [...r.fields].sort((a, b) => count(b) - count(a))[0];
+          setPick({ field: kind === 'duplicates' && r.combined?.extraCopies ? ALL : (most ?? r.fields[0]).name, kind });
         },
       },
     );
-  };
+  }
+  const start = () => runWith(chosen, true);
 
   const result = run.data;
   const picked = result && pick ? (pick.field === ALL ? null : result.fields.find((f) => f.name === pick.field)) : null;
@@ -360,7 +406,7 @@ export function FieldCheck({
                       ? `${objectLabel(object)} with no ${picked?.label}`
                       : pick.kind === 'duplicates'
                         ? `Duplicates on ${picked?.label}`
-                        : `${picked?.label} written different ways`}
+                        : `${picked?.label}: odd values and why`}
                 </h4>
                 {pick.field === ALL && result.combined ? (
                   <DuplicateResults result={result.combined} fileName={`duplicate-${object.toLowerCase()}s.csv`} />

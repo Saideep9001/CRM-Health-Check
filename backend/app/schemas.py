@@ -752,12 +752,23 @@ class SpellingVariant(ApiModel):
     odd_records: int
 
 
+class OddReason(ApiModel):
+    reason: str  # e.g. "no country code (write it like +1 408 555 0101)"
+    count: int
+
+
+class OddRecord(DuplicateRecord):
+    note: str | None = None  # why its value is odd
+
+
 class FieldStandardization(ApiModel):
-    odd_records: int  # records not using the most common spelling of their value
-    values_with_variants: int
+    odd_records: int  # records with a value the Data Standardization rules call odd
+    values_with_variants: int  # distinct odd values
     variants: list[SpellingVariant]
+    reasons: list[OddReason] = []  # why the values are odd, most common first
+    rule: str = ""  # what counts as odd for this kind of field
     columns: list[DuplicateColumn]
-    records: list[DuplicateRecord]
+    records: list[OddRecord]
 
 
 class FieldCheckField(ApiModel):
@@ -775,6 +786,8 @@ class FieldCheckResult(ApiModel):
     scanned: int
     truncated: bool
     any_empty: int | None = None  # records missing at least one chosen field (each counted once)
+    any_odd: int | None = None  # records with an odd spelling in at least one checked text field
+    any_value: int | None = None  # records with a value in at least one checked text field
     fields: list[FieldCheckField]
     combined: DuplicateResult | None = None  # duplicates on all chosen fields together
     record_url_prefix: str
