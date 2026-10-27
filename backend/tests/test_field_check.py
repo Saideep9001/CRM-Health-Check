@@ -43,7 +43,8 @@ def test_each_field_gets_empty_duplicates_and_spellings():
     std = f["BillingState"]["standardization"]  # "California" is the odd spelling of CA (3 records use "CA")
     assert std["odd_records"] == 1 and [(r["id"], r["note"]) for r in std["records"]] == [("001A", "written differently — usually “CA”")]
     # a shared picklist choice isn't a duplicate, but "tech" vs "Tech" is still an odd spelling
-    assert f["Industry"]["duplicates"] is None and f["BillingState"]["duplicates"] is None  # shared by design
+    assert f["Industry"]["duplicates"] is None  # a picklist choice is shared by design
+    assert f["BillingState"]["duplicates"]["extra_copies"] == 3  # places count as the same place: "California" = "CA" (4 records)
     assert f["Industry"]["standardization"]["odd_records"] == 1
     # several fields: duplicates must match on all of them (the two Acmes differ in state, so they don't)
     assert out["combined"]["total_groups"] == 0

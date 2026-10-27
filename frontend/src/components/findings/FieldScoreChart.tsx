@@ -132,7 +132,7 @@ export function FieldScoreChart({ scores, kind }: { scores: FieldScore[]; kind: 
         </div>
       )}
       {kind === 'duplicates' && (
-        <p className="mt-2 text-[11px] text-ink-subtle">Each field compared on its own, as in Check fields (records sharing their value with another); picklists, dates, numbers and places are shared by design and left out.</p>
+        <p className="mt-2 text-[11px] text-ink-subtle">Each field compared on its own, as in Check fields (records sharing their value with another); picklists, dates and numbers are shared by design and left out.</p>
       )}
     </div>
   );

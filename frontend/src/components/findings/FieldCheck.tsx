@@ -421,7 +421,7 @@ export function FieldCheck({
                           value={f.duplicates ? f.duplicates.extraCopies + f.duplicates.totalGroups : undefined}
                           hint={f.duplicates ? `duplicate records · ${fmtNumber(f.duplicates.totalGroups)} groups` : undefined}
                           tone="text-warn"
-                          none="Picklist choices, dates, numbers and places (city, state, country, ZIP) are shared by design, so they’re only duplicates together with other fields."
+                          none="Picklist choices, dates and numbers are shared by design, so they’re only duplicates together with other fields."
                         />
                       )}
                       {shows('spelling') && (

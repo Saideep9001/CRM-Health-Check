@@ -58,9 +58,11 @@ def _exact_groups(rows: list[dict], field: str, ftype: str) -> list[list[int]]:
 
 def dup_mode(f: str, ftype: str, matchable: dict) -> str | None:
     """How a field is compared for duplicates on its own: "fuzzy" (the duplicate finder's matchers), "exact" (the same value
-    once case and punctuation are ignored; phones: the same number), or None (shared by design: picklists, dates, numbers,
-    places)."""
-    if ftype in _NO_DUPLICATES or _PLACE.search(f) or f not in matchable:
+    once case and punctuation are ignored; phones: the same number; places: the same place, "CA" = "California"), or None
+    (shared by design: picklists, dates, numbers)."""
+    if _PLACE.search(f):  # the card's own fields include places, so they're counted too (same value)
+        return "exact"
+    if ftype in _NO_DUPLICATES or f not in matchable:
         return None
     kind = matchable[f]["kind"]
     return "fuzzy" if kind in _FUZZY and kind != "phone" else "exact"
@@ -147,7 +149,7 @@ def check_fields(sf: SalesforceClient, obj: str, fields: list[str]) -> dict:
                 "record_url_prefix": f"{sf.base}/",
             }
         elif dup_mode(f, ftype, matchable):
-            kind = matchable[f]["kind"]
+            kind = matchable.get(f, {}).get("kind")
             if dup_mode(f, ftype, matchable) == "fuzzy":
                 dup = trim(duplicates.find_duplicates(sf, obj, [f], prefetched=prefetched))
                 method = duplicates.KINDS[kind][0]
