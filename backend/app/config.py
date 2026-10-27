@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     sf_client_id: str = ""
     sf_client_secret: str = ""
     sf_api_version: str = "v61.0"
+    # How record queries are read. bulk: Bulk API 2.0 query jobs (counts, GROUP BY, describe, limits, Tooling and
+    # Reports have no Bulk version and stay on REST; a query Bulk refuses falls back to REST). rest: REST only.
+    sf_query_api: Literal["bulk", "rest"] = "bulk"
+    sf_bulk_timeout_seconds: int = 600  # longest wait for one Bulk query job to finish
     # Scopes requested on the consent screen.
     sf_scopes: str = "api refresh_token offline_access"
 

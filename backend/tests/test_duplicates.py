@@ -40,7 +40,7 @@ class StubSF:
     def __init__(self, rows):
         self.rows, self.soql = rows, []
 
-    def query(self, soql):
+    def query(self, soql, max_rows=None):
         self.soql.append(soql)
         return {"records": self.rows, "done": True}
 

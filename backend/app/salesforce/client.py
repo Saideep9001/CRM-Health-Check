@@ -1,4 +1,4 @@
-"""Authenticated, read-only Salesforce REST client with automatic token refresh."""
+"""Authenticated, read-only Salesforce client (REST, and Bulk API 2.0 for record queries) with automatic token refresh."""
 import logging
 import time
 from collections.abc import Callable
@@ -9,6 +9,7 @@ import httpx
 from .. import crypto
 from ..config import Settings
 from ..models import SalesforceConnectionRow
+from . import bulk
 from .app_config import AppCredentials
 from .errors import SalesforceAuthExpired, SalesforceError
 from .oauth import refresh_access_token
@@ -75,12 +76,14 @@ class SalesforceClient:
             self.conn.instance_url = instance
         self._save()
 
-    def _send(self, path: str, extra: dict[str, str]) -> httpx.Response:
-        """One GET, retrying brief Salesforce/network hiccups (rate limiting, 5xx, timeouts) with growing waits."""
+    def _send(self, path: str, extra: dict[str, str], method: str = "GET", json: dict | None = None,
+              params: dict | None = None) -> httpx.Response:
+        """One request, retrying brief Salesforce/network hiccups (rate limiting, 5xx, timeouts) with growing waits."""
         for attempt in range(RETRIES + 1):
             url = path if path.startswith("http") else f"{self.base}{path}"
             try:
-                resp = self.http.get(url, headers={"Authorization": f"Bearer {self._access}", "Accept": "application/json", **extra})
+                resp = self.http.request(method, url, json=json, params=params,
+                                         headers={"Authorization": f"Bearer {self._access}", "Accept": "application/json", **extra})
             except (httpx.TimeoutException, httpx.NetworkError):
                 if attempt == RETRIES:
                     raise
@@ -104,9 +107,54 @@ class SalesforceClient:
             raise SalesforceError(_sf_message(resp), resp.status_code)
         return resp.json()
 
-    def query(self, soql: str) -> dict:
-        """Run a read-only SOQL query (fixed server-side strings only)."""
-        return self.get(f"/services/data/{self.settings.sf_api_version}/query?q={quote(soql)}")
+    def request(self, method: str, path: str, json: dict | None = None, params: dict | None = None,
+                accept: str = "application/json", ok_errors: bool = False) -> httpx.Response:
+        """Any request (Bulk API jobs need POST, PATCH and DELETE), refreshing the token once on 401.
+        Only Bulk query jobs are created, read and removed: no record is ever changed."""
+        extra = {"Accept": accept}
+        resp = self._send(path, extra, method, json, params)
+        if resp.status_code == 401:
+            self._refresh()
+            resp = self._send(path, extra, method, json, params)
+            if resp.status_code == 401:
+                raise SalesforceAuthExpired("Your Salesforce session has expired. Please reconnect.", 401)
+        if resp.status_code >= 400 and not ok_errors:
+            raise SalesforceError(_sf_message(resp), resp.status_code)
+        return resp
+
+    def _bulk(self, soql: str) -> bool:
+        return self.settings.sf_query_api == "bulk" and bulk.eligible(soql)
+
+    def _rest(self, soql: str, page_size: int | None = None) -> dict:
+        headers = {"Sforce-Query-Options": f"batchSize={page_size}"} if page_size else None
+        return self.get(f"/services/data/{self.settings.sf_api_version}/query?q={quote(soql)}", headers=headers)
+
+    def query(self, soql: str, max_rows: int | None = None) -> dict:
+        """Run a read-only SOQL query (fixed server-side strings only).
+
+        With Bulk API on, a record query runs as a Bulk job and comes back whole (or its first `max_rows`), done=True.
+        Counts and GROUP BY (no Bulk version) and anything Salesforce won't run as a Bulk job use REST, which pages
+        (nextRecordsUrl) as before."""
+        if self._bulk(soql):
+            try:
+                return bulk.query(self, soql, max_rows)
+            except bulk.Unsupported as exc:
+                log.info("Bulk API can't run this query (%s); using REST", exc)
+        return self._rest(soql)
+
+    def query_page(self, soql: str, page_size: int) -> dict:
+        """The first page of a query for a record table; `nextRecordsUrl` is the cursor for `query_more`."""
+        if self._bulk(soql):
+            try:
+                return bulk.first_page(self, soql, page_size)
+            except bulk.Unsupported as exc:
+                log.info("Bulk API can't run this query (%s); using REST", exc)
+        return self._rest(soql, page_size)
+
+    def query_more(self, cursor: str, page_size: int) -> dict:
+        if bulk.CURSOR_RE.match(cursor):
+            return bulk.next_page(self, cursor, page_size)
+        return self.get(cursor, headers={"Sforce-Query-Options": f"batchSize={page_size}"})
 
     def limits(self) -> dict:
         return self.get(f"/services/data/{self.settings.sf_api_version}/limits")

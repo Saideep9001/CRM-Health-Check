@@ -213,7 +213,7 @@ class Ctx:
 
     def rows(self, soql: str, limit: int = 2000) -> list[dict]:
         """Records for a fixed query, following Salesforce's pages up to `limit` rows."""
-        body = self.sf.query(soql)
+        body = self.sf.query(soql, max_rows=limit)
         out = list(body.get("records", []))
         while not body.get("done", True) and body.get("nextRecordsUrl") and len(out) < limit:
             body = self.sf.get(body["nextRecordsUrl"])

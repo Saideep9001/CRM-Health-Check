@@ -124,13 +124,19 @@ def _edits(a: str, b: str) -> int:
     return d[-1][-1]
 
 
+def _most_used(counts: Counter) -> str:
+    """The most common writing; on a tie the one with a clean layout (not ALL CAPS or all lower case), then A→Z,
+    so the answer never depends on the order the records came in."""
+    return min(counts, key=lambda v: (-counts[v], _layout(v) is not None, v))
+
+
 def _written_differently(items: list[tuple[str, str]], key) -> dict[str, str]:
     """Values that mean the same as others but are written differently from the way most records write them."""
     buckets: dict[str, Counter] = defaultdict(Counter)
     for _, v in items:
         if k := key(v):
             buckets[k][v.strip()] += 1
-    usual = {k: c.most_common(1)[0][0] for k, c in buckets.items() if len(c) > 1}
+    usual = {k: _most_used(c) for k, c in buckets.items() if len(c) > 1}
     return {i: f"written differently — usually “{usual[k]}”" for i, v in items if (k := key(v)) in usual and v.strip() != usual[k]}
 
 
@@ -302,7 +308,7 @@ def _usual_shape(items: list[tuple[str, str]], shape, what: str) -> dict[str, st
     counts = Counter(shape(v) for _, v in items)
     if len(counts) < 2:
         return {}
-    usual = counts.most_common(1)[0][0]
+    usual = _most_used(counts)
     return {i: f"{what} — most are written like “{usual}”" for i, v in items if shape(v) != usual}
 
 

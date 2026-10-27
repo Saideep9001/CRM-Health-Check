@@ -350,12 +350,13 @@ def matchable_fields(sf: SalesforceClient, obj: str) -> list[dict]:
 
 def _fetch(sf: SalesforceClient, obj: str, paths: list[str]) -> tuple[list[dict], bool]:
     soql = f"SELECT Id, {', '.join(dict.fromkeys(paths))} FROM {obj}"
-    body = sf.query(soql)
+    body = sf.query(soql, max_rows=MAX_SCAN + 1)  # one more than we read, to know when there are more (Bulk API)
     rows = list(body.get("records", []))
     while not body.get("done", True) and body.get("nextRecordsUrl") and len(rows) < MAX_SCAN:
         body = sf.get(body["nextRecordsUrl"])
         rows += body.get("records", [])
-    return rows[:MAX_SCAN], bool(body.get("nextRecordsUrl")) and not body.get("done", True)
+    more = len(rows) > MAX_SCAN or (bool(body.get("nextRecordsUrl")) and not body.get("done", True))
+    return rows[:MAX_SCAN], more
 
 
 # ---------------------------------------------------------------- matching

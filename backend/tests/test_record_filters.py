@@ -59,6 +59,10 @@ def test_a_column_asked_for_twice_is_selected_once(monkeypatch):
             self.soql.append(parse_qs(urlparse(url).query)["q"][0])
             return {"records": [], "totalSize": 0, "done": True}
 
+        def query_page(self, soql, page_size):
+            self.soql.append(soql)
+            return {"records": [], "totalSize": 0, "done": True}
+
     fake = SF()
     monkeypatch.setattr(ex, "_api", lambda s: "/services/data/v61.0")
     monkeypatch.setattr(ex, "_describe", lambda s, name: {"fields": [{"name": n, "type": "string", "sortable": True, "filterable": True}

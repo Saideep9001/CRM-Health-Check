@@ -15,6 +15,7 @@ os.environ.update(
     SF_CLIENT_ID="test-client-id",
     SF_CLIENT_SECRET="test-client-secret",
     FRONTEND_ORIGIN="http://localhost:5173",
+    SF_QUERY_API="rest",  # the fake org speaks REST; Bulk API jobs have their own tests (test_bulk.py)
 )
 
 import httpx  # noqa: E402

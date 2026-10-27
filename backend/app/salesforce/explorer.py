@@ -37,7 +37,19 @@ _PREFERRED = ["StageName", "Status", "Email", "Phone", "Company", "Title", "Indu
               "CloseDate", "LeadSource", "AccountId", "OwnerId", "IsActive", "CreatedDate", "LastModifiedDate"]
 
 _ID_RE = re.compile(r"^[A-Za-z0-9]{15}([A-Za-z0-9]{3})?$")
-_CURSOR_RE = re.compile(r"^/services/data/v\d+\.\d+/query/[A-Za-z0-9]+-\d+$")
+_REST_CURSOR_RE = re.compile(r"^/services/data/v\d+\.\d+/query/[A-Za-z0-9]+-\d+$")
+
+
+class _Cursor:
+    """A REST query's nextRecordsUrl, or a Bulk job's results locator (see bulk.CURSOR_RE)."""
+
+    @staticmethod
+    def match(c: str) -> bool:
+        from .bulk import CURSOR_RE
+        return bool(_REST_CURSOR_RE.match(c) or CURSOR_RE.match(c))
+
+
+_CURSOR_RE = _Cursor
 
 _cache: dict[tuple, tuple[float, Any]] = {}
 
@@ -312,7 +324,7 @@ def list_records(
     if cursor:
         if not _CURSOR_RE.match(cursor):
             raise ValueError("Invalid page cursor.")
-        body = sf.get(cursor, headers={"Sforce-Query-Options": f"batchSize={PAGE_SIZE}"})
+        body = sf.query_more(cursor, PAGE_SIZE)
     else:
         select = ", ".join(cols + list(refs.values()))
         soql = f"SELECT {select} FROM {name}"
@@ -325,7 +337,7 @@ def list_records(
             direction = "desc"
         if order:
             soql += f" ORDER BY {order} {'ASC' if direction == 'asc' else 'DESC'} NULLS LAST"
-        body = sf.get(f"{_api(sf)}/query?q={quote(soql)}", headers={"Sforce-Query-Options": f"batchSize={PAGE_SIZE}"})
+        body = sf.query_page(soql, PAGE_SIZE)
 
     next_url = body.get("nextRecordsUrl")
     return {
@@ -402,11 +414,11 @@ def records_matching(sf: SalesforceClient, name: str, where: str | None, cursor:
     first = list(dict.fromkeys(c for c in (columns or []) if c in fields))  # each once: Salesforce refuses a field selected twice
     cols = (first + [c for c in default_columns(desc) if c not in first])[: max(8, len(first) + 2)]
     refs = _ref_paths(fields, cols)
-    headers = {"Sforce-Query-Options": f"batchSize={max(200, min(page_size, 2000))}"}
+    size = max(200, min(page_size, 2000))
     if cursor:
         if not _CURSOR_RE.match(cursor):
             raise ValueError("Invalid page cursor.")
-        body = sf.get(cursor, headers=headers)
+        body = sf.query_more(cursor, size)
     else:
         if order_field in fields and fields[order_field].get("sortable"):
             sort = f" ORDER BY {order_field} {'DESC' if descending else 'ASC'} NULLS LAST"
@@ -416,7 +428,7 @@ def records_matching(sf: SalesforceClient, name: str, where: str | None, cursor:
         extra = _record_conditions(sf, name, desc, None, filters)
         conds = ([f"({where})" if extra else where] if where else []) + extra  # brackets only when combining
         soql = f"SELECT {', '.join(cols + list(refs.values()))} FROM {name}" + (f" WHERE {' AND '.join(conds)}" if conds else "") + sort
-        body = sf.get(f"{_api(sf)}/query?q={quote(soql)}", headers=headers)
+        body = sf.query_page(soql, size)
     next_url = body.get("nextRecordsUrl")
     return {
         "object": name,
@@ -442,7 +454,7 @@ def get_record(sf: SalesforceClient, name: str, record_id: str) -> dict:
         # One small query for the related names (Owner, Account, …).
         soql = f"SELECT {', '.join(refs.values())} FROM {name} WHERE Id = '{record_id}'"  # id checked by _ID_RE
         try:
-            res = sf.get(f"{_api(sf)}/query?q={quote(soql)}")
+            res = sf.query(soql)
             rec = (res.get("records") or [{}])[0]
             names = _row(rec, [], refs)["ref_names"]
         except SalesforceError:
