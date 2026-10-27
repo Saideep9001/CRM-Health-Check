@@ -37,7 +37,7 @@ import { FixPlanPanel } from './FixPlanPanel';
 import { RecordsTable } from './RecordsTable';
 import { DuplicateResults } from './DuplicateFinder';
 import { ALL } from './FieldCheck';
-import { FlowSteps, flowFor } from './MeasureFlow';
+import { FlowSteps, flowFor, type FlowStep } from './MeasureFlow';
 import { FieldListTable } from './FieldListTable';
 import { FieldScoreChart, chartKindFor } from './FieldScoreChart';
 
@@ -191,6 +191,7 @@ function Records({
   fieldChoices = [],
   shownFields,
   checkData,
+  flow,
 }: {
   area: DiagnosticArea;
   indicator: IndicatorValue | null;
@@ -206,6 +207,8 @@ function Records({
   shownFields?: string[] | null;
   /** The latest Check fields result: on a duplicates page, the ticked fields' groups replace the records table. */
   checkData?: FieldCheckResult | null;
+  /** The steps from what was checked to the number, shown above the table (duplicates, missing key fields, invalid data). */
+  flow?: FlowStep[] | null;
 }) {
   const objects = indicator?.recordObjects ?? [];
   const preferred =
@@ -250,6 +253,11 @@ function Records({
           </div>
         )}
         <div id="records-table" className="scroll-mt-20">
+        {flow && !dupResult && !(dupPicked && !dupResult) && (
+          <div className="mb-3">
+            <FlowSteps steps={flow} />
+          </div>
+        )}
         {dupPicked && !dupResult ? (
           <p className="rounded-xl border border-dashed border-line px-4 py-8 text-center text-sm text-ink-muted">
             No fields ticked. Tick a field in Check fields above, or <span className="font-medium">Select all</span>, to see its duplicates.
@@ -445,9 +453,11 @@ export function DetailsPanel({
     </span>
   ) : undefined;
   const title = finding?.name ?? v?.label ?? '';
-  // The steps from what was checked to the number, for Area 1 cards (duplicates, missing key fields and data
-  // standardization already show theirs further down the page)
-  const flow = v && !/^(duplicate|missing|data standardi)/i.test(v.label) ? flowFor(v, finding) : null;
+  // The steps from what was checked to the number, for Area 1 cards: in its own section, or for duplicates, missing key
+  // fields and data standardization right above their records table (which it explains)
+  const allFlow = v ? flowFor(v, finding) : null;
+  const flowAtRecords = !!v && /^(duplicate|missing|data standardi)/i.test(v.label);
+  const flow = flowAtRecords ? null : allFlow;
   // A measure can cover several objects (e.g. phone numbers on Accounts, Contacts and Leads) while a problem is about one.
   const measureObjects = v?.recordObjects ?? [];
   const wide = !!finding?.objectName && measureObjects.length > 1;
@@ -675,7 +685,7 @@ export function DetailsPanel({
               <Records area={area} indicator={v} finding={finding} measureAssessmentId={measureAssessmentId} legacy={legacy} initialObject={initialObject}
                 keyFields={empties?.map((f) => f.field)}
                 fieldChoices={(chartKind === 'missing' ? shownScores : chartKind === 'standardization' ? v?.fieldScores : null)?.map((f) => ({ field: f.field, label: f.label, count: f.count })) ?? []}
-                shownFields={shownFields} checkData={checkData} />
+                shownFields={shownFields} checkData={checkData} flow={flowAtRecords ? allFlow : null} />
             </Section>
           )}
 
