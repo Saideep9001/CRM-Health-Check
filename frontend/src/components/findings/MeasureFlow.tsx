@@ -2,7 +2,7 @@ import { ChevronRight } from 'lucide-react';
 import { objectLabel } from '@/components/category/DiagnosticAreaCard';
 import { AnimatedNumber } from '@/components/ui/Visuals';
 import { cx, fmtNumber } from '@/lib/format';
-import type { Finding, IndicatorValue } from '@/types';
+import type { FieldCheckResult, Finding, IndicatorValue } from '@/types';
 
 type Tone = 'plain' | 'warn' | 'bad' | 'good';
 export type FlowStep = { label: string; value: number; hint: string; tone?: Tone; suffix?: string };
@@ -114,5 +114,44 @@ export function flowFor(v: IndicatorValue, finding?: Finding | null): FlowStep[]
     { label: `${Cap} checked`, value: total, hint: 'Every record read from Salesforce' },
     { label: fine, value: total - n, hint: `${pctOf(total - n, total)} of all ${what}`, tone: 'good' },
     { label: bad, value: n, hint: `${pctOf(n, total)} of all ${what}`, tone: 'bad' },
+  ];
+}
+
+/** The same steps from the latest Check fields run, for the fields ticked there (null = all of them). The last step is the
+ *  records table's own count, so it also follows the column filters. Null when there's nothing to work from. */
+export function liveFlowFor(
+  kind: 'missing' | 'standardization',
+  check: FieldCheckResult,
+  ticked: string[] | null,
+  tableTotal: number | null,
+  filtered: boolean,
+): FlowStep[] | null {
+  const what = objectLabel(check.object).toLowerCase();
+  const Cap = what.charAt(0).toUpperCase() + what.slice(1);
+  const picked = check.fields.filter((f) => (ticked == null || ticked.includes(f.name)) && (kind === 'missing' || f.standardization));
+  if (!picked.length) return null;
+  const records = check.scanned;
+  const last = filtered ? ' (matching your column filters)' : '';
+  if (kind === 'missing') {
+    const values = records * picked.length;
+    const empty = picked.reduce((n, f) => n + f.empty, 0);
+    const missing = tableTotal ?? (ticked == null ? (check.anyEmpty ?? 0) : Math.max(...picked.map((f) => f.empty)));
+    return [
+      { label: `${Cap} checked`, value: records, hint: check.truncated ? 'The first 20,000 read from Salesforce' : 'Every record read from Salesforce' },
+      { label: 'Fields checked', value: picked.length, hint: picked.map((f) => f.label).join(', ') },
+      { label: 'Values checked', value: values, hint: `${fmtNumber(records)} records × ${picked.length} field${picked.length > 1 ? 's' : ''}` },
+      { label: 'Empty values', value: empty, hint: `${pctOf(empty, values)} of the values · ${fmtNumber(values - empty)} filled in`, tone: 'warn' },
+      { label: 'Records missing a field', value: missing, hint: `${pctOf(missing, records)} of all ${what} miss at least one (each counted once)${last}`, tone: 'bad' },
+    ];
+  }
+  const values = picked.reduce((n, f) => n + f.filled, 0);
+  const odd = picked.reduce((n, f) => n + (f.standardization?.oddRecords ?? 0), 0);
+  const worst = [...picked].sort((a, b) => (b.standardization?.oddRecords ?? 0) - (a.standardization?.oddRecords ?? 0)).filter((f) => f.standardization?.oddRecords).slice(0, 2);
+  const bad = tableTotal ?? (ticked == null ? (check.anyOdd ?? odd) : odd);
+  return [
+    { label: `${Cap} checked`, value: records, hint: check.truncated ? 'The first 20,000 read from Salesforce' : 'Every record read from Salesforce' },
+    { label: 'Values checked', value: values, hint: `Filled-in values of ${picked.length} field${picked.length > 1 ? 's' : ''} (${picked.map((f) => f.label).join(', ')})` },
+    { label: 'Invalid values found', value: odd, hint: worst.length ? `Most in ${worst.map((f) => `${f.label} (${fmtNumber(f.standardization!.oddRecords)})`).join(', ')}` : 'Every value follows the rules', tone: 'warn' },
+    { label: 'Records with invalid data', value: bad, hint: `${pctOf(bad, records)} of all ${what}; a record with several counts once${last}`, tone: 'bad' },
   ];
 }

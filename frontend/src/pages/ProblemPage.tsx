@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAssessmentResults, useFinding, useFindings } from '@/api/queries';
 import { measureFor } from '@/components/findings/DetailsPanel';
@@ -16,6 +16,12 @@ export default function ProblemPage() {
   const [checked, setChecked] = useState<FieldCheckResult | null>(null); // the latest Check fields run
   const [live, setLive] = useState<FieldCheckResult | null>(null); // the latest Check fields result, for duplicate groups
   const [shown, setShown] = useState<string[] | null>(null); // fields ticked in Check fields for the records table (null = all)
+  // Another card (or problem) starts fresh: its own fields, all ticked, no earlier Check fields result.
+  useEffect(() => {
+    setShown(null);
+    setLive(null);
+    setChecked(null);
+  }, [findingId]);
   const f = finding.data ?? null;
   const results = useAssessmentResults(f?.assessmentId ?? null, !!f);
   const all = useFindings(f?.assessmentId ?? null, !!f);

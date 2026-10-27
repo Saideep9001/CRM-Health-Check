@@ -37,7 +37,7 @@ import { FixPlanPanel } from './FixPlanPanel';
 import { RecordsTable } from './RecordsTable';
 import { DuplicateResults } from './DuplicateFinder';
 import { ALL } from './FieldCheck';
-import { FlowSteps, flowFor, type FlowStep } from './MeasureFlow';
+import { FlowSteps, flowFor, liveFlowFor, type FlowStep } from './MeasureFlow';
 import { FieldListTable } from './FieldListTable';
 import { FieldScoreChart, chartKindFor } from './FieldScoreChart';
 
@@ -232,6 +232,13 @@ function Records({
   const dupResult = dupPicked?.length ? mergeDuplicates(checkData!, dupPicked) : null;
   const measureRecords = useIndicatorRecords(useMeasure ? measureAssessmentId : null, area.id, indicator?.label ?? '', object, filters, only);
   const missing = /^missing/i.test(indicator?.label ?? '');
+  // The flow follows what the person picked: the fields ticked in Check fields, and the table's column filters (its count).
+  const standardization = /^data standardi/i.test(indicator?.label ?? '');
+  const tableTotal = measureRecords.data?.pages[0]?.totalSize ?? null;
+  const liveFlow =
+    checkData && checkData.object === object && (missing || standardization)
+      ? liveFlowFor(missing ? 'missing' : 'standardization', checkData, shownFields ?? null, tableTotal, filters.length > 0)
+      : null;
   const findingRecords = useFindingRecords(finding?.id ?? null, !useMeasure && !!finding?.recordsAvailable, filters);
   const duplicates = /duplicate/i.test(indicator?.label ?? finding?.name ?? '');
 
@@ -255,7 +262,7 @@ function Records({
         <div id="records-table" className="scroll-mt-20">
         {flow && !dupResult && !(dupPicked && !dupResult) && (
           <div className="mb-3">
-            <FlowSteps steps={flow} />
+            <FlowSteps steps={liveFlow ?? flow} />
           </div>
         )}
         {dupPicked && !dupResult ? (

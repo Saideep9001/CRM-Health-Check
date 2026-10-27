@@ -140,6 +140,8 @@ export interface FieldCheckResult {
   truncated: boolean;
   /** Records missing at least one chosen field (each counted once). */
   anyEmpty?: number | null;
+  /** Records with invalid data in at least one checked field (each counted once). */
+  anyOdd?: number | null;
   fields: FieldCheckField[];
   /** Duplicates on all chosen fields together (when more than one was chosen). */
   combined: DuplicateResult | null;
