@@ -57,19 +57,21 @@ export function RecordsTable({
     const rest = filters.filter((x) => x !== columnFilter(filters, col));
     onFiltersChange?.(f ? [...rest, f] : rest);
   };
-  // Duplicate groups: rows with the same cleaned value of the matched field, kept together.
-  const groupCol = grouped ? first?.sortedBy ?? null : null;
+  // Rows kept together: duplicate groups (the same cleaned value of the matched field), or records grouped by their
+  // Account (the server sorts them by Account name), with the Account named first in each block.
+  const byAccount = first?.sortedBy === 'AccountId';
+  const groupCol = byAccount ? 'AccountId' : grouped ? first?.sortedBy ?? null : null;
   const [filter, setFilter] = useState('');
   const term = filter.trim().toLowerCase();
   // Filter the loaded records by any value (name, email, city, owner…).
   const loaded = pages
     .flatMap((p) => p.records)
     .filter((r) => !term || [...Object.values(r.values), ...Object.values(r.refNames)].some((v) => v != null && String(v).toLowerCase().includes(term)));
-  const rows = groupCol
+  const rows = groupCol && !byAccount // by Account: already sorted by the Account's name on the server
     ? [...loaded].sort((a, b) => matchKey(a.values[groupCol], groupCol).localeCompare(matchKey(b.values[groupCol], groupCol)))
     : loaded;
   // The server lists the columns that explain the result first (e.g. Name, Website for duplicates).
-  const cols = first ? first.columns.filter((c) => c.type !== 'id').slice(0, 8) : [];
+  const cols = first ? first.columns.filter((c) => c.type !== 'id' && !(byAccount && c.name === 'AccountId')).slice(0, 8) : []; // the Account heads its block
   const asField = (c: { name: string; label: string; type: string }) => c as unknown as DataField;
   // Why each flagged value was flagged, from the check (record id → field → reason), across the loaded pages.
   const notes: Record<string, Record<string, string>> = Object.assign({}, ...pages.map((p) => p.cellNotes ?? {}));
@@ -89,7 +91,7 @@ export function RecordsTable({
     let g = 0;
     let prev = '\u0000';
     rows.forEach((r) => {
-      const k = matchKey(r.values[groupCol], groupCol);
+      const k = byAccount ? String(r.values.AccountId ?? '') : matchKey(r.values[groupCol], groupCol);
       if (k !== prev) {
         g += 1;
         prev = k;
@@ -100,7 +102,7 @@ export function RecordsTable({
   }
   // In each duplicate group, the values the records share (compared the engine's way) are marked, with how many share them.
   const dupNote: Record<string, string>[] = [];
-  if (groupCol) {
+  if (groupCol && grouped) {
     // Picklists (Stage, Type, Industry…) are shared by design, so they're never what makes a duplicate.
     const compared = cols.filter((c) => !['reference', 'date', 'datetime', 'boolean', 'id', 'int', 'double', 'currency', 'percent', 'picklist', 'multipicklist'].includes(c.type));
     const members = new Map<number, number[]>();
@@ -168,7 +170,7 @@ export function RecordsTable({
             <table className="w-full min-w-[640px] text-left text-xs">
               <thead className="sticky top-0 z-10 bg-surface shadow-[0_1px_0_rgb(var(--line))]">
                 <tr>
-                  {groupCol && <th className="whitespace-nowrap px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">Group</th>}
+                  {groupCol && <th className="whitespace-nowrap px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">{byAccount ? 'Account' : 'Group'}</th>}
                   {cols.map((c) => {
                     const meta = fieldOf(c.name);
                     const filtered = !!columnFilter(filters, c.name);
@@ -201,12 +203,20 @@ export function RecordsTable({
                       className={cx('group hover:bg-muted/60', groupCol && groupOf[i] % 2 === 0 && 'bg-brand-soft/30', groupCol && i > 0 && groupOf[i] !== groupOf[i - 1] && 'border-t-2 border-t-brand/20')}
                     >
                       {groupCol && (
-                        <td className="whitespace-nowrap px-3 py-2">
-                          {(i === 0 || groupOf[i] !== groupOf[i - 1]) && (
-                            <span className="rounded-full bg-surface px-2 py-0.5 text-[11px] font-semibold text-brand-ink ring-1 ring-brand/20">
-                              #{groupOf[i]} · {groupSize.get(groupOf[i])}
-                            </span>
-                          )}
+                        <td className={cx('px-3 py-2', byAccount ? 'max-w-[14rem] align-top' : 'whitespace-nowrap')}>
+                          {(i === 0 || groupOf[i] !== groupOf[i - 1]) &&
+                            (byAccount ? (
+                              <span className="block">
+                                <span className="block truncate font-semibold text-ink" title={r.refNames.AccountId ?? undefined}>
+                                  {r.refNames.AccountId ?? (r.values.AccountId ? String(r.values.AccountId) : 'No Account')}
+                                </span>
+                                <span className="text-[11px] text-ink-muted">{fmtNumber(groupSize.get(groupOf[i]) ?? 0)} record{groupSize.get(groupOf[i]) === 1 ? '' : 's'}</span>
+                              </span>
+                            ) : (
+                              <span className="rounded-full bg-surface px-2 py-0.5 text-[11px] font-semibold text-brand-ink ring-1 ring-brand/20">
+                                #{groupOf[i]} · {groupSize.get(groupOf[i])}
+                              </span>
+                            ))}
                         </td>
                       )}
                       {cols.map((c, ci) => {

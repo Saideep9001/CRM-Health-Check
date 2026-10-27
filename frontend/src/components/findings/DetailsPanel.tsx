@@ -281,7 +281,11 @@ function Records({
         )}
         </div>
         <p className="mt-2 text-[11px] text-ink-subtle">
-          {duplicates ? 'Each shaded block is one duplicate group (#group · records in it). ' : ''}
+          {object === 'Opportunity' && ['Duplicate', 'Missing', 'Data Standardi'].some((p) => indicator?.label.startsWith(p))
+            ? 'Records are grouped by their Account (each shaded block is one Account). '
+            : duplicates
+              ? 'Each shaded block is one duplicate group (#group · records in it). '
+              : ''}
           Read live from Salesforce with the connected user’s access. Click a name to open the record.
         </p>
       </>

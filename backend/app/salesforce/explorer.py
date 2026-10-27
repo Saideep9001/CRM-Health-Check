@@ -411,6 +411,7 @@ def records_matching(sf: SalesforceClient, name: str, where: str | None, cursor:
     fields = _fields(desc)
     descending = bool(order and order.startswith("-"))  # "-Amount" = biggest first
     order_field = (order or "").lstrip("-") or None
+    by_account = order_field == "Account.Name" and "AccountId" in fields  # rows grouped by their Account (sorted_by AccountId)
     first = list(dict.fromkeys(c for c in (columns or []) if c in fields))  # each once: Salesforce refuses a field selected twice
     cols = (first + [c for c in default_columns(desc) if c not in first])[: max(8, len(first) + 2)]
     refs = _ref_paths(fields, cols)
@@ -420,7 +421,9 @@ def records_matching(sf: SalesforceClient, name: str, where: str | None, cursor:
             raise ValueError("Invalid page cursor.")
         body = sf.query_more(cursor, size)
     else:
-        if order_field in fields and fields[order_field].get("sortable"):
+        if by_account:  # grouped by Account: A→Z by its name, then the records' own names
+            sort = " ORDER BY Account.Name ASC NULLS LAST" + (", Name ASC" if "Name" in fields else "")
+        elif order_field in fields and fields[order_field].get("sortable"):
             sort = f" ORDER BY {order_field} {'DESC' if descending else 'ASC'} NULLS LAST"
         else:
             latest = next((f for f in ("LastModifiedDate", "CreatedDate") if f in fields and fields[f].get("sortable")), None)
@@ -437,7 +440,7 @@ def records_matching(sf: SalesforceClient, name: str, where: str | None, cursor:
         "total_size": body.get("totalSize"),
         "next_cursor": next_url if next_url and _CURSOR_RE.match(next_url) else None,
         "record_url_prefix": f"{sf.base}/",
-        "sorted_by": order_field if order_field in fields and fields[order_field].get("sortable") else None,
+        "sorted_by": "AccountId" if by_account else order_field if order_field in fields and fields[order_field].get("sortable") else None,
     }
 
 
