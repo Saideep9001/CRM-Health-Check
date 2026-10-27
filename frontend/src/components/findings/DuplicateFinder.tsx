@@ -1,4 +1,4 @@
-import { ChevronRight, Download, ExternalLink, Search } from 'lucide-react';
+import { AlertTriangle, ChevronRight, Download, ExternalLink, Search } from 'lucide-react';
 import { useState } from 'react';
 import { objectLabel } from '@/components/category/DiagnosticAreaCard';
 import { cx, fmtDate, fmtNumber } from '@/lib/format';
@@ -84,6 +84,17 @@ function DuplicateFlow({ result }: { result: DuplicateResult }) {
   );
 }
 
+/** Values the group's records share are flagged (owner and dates of record keeping aren't: sharing them isn't a duplicate). */
+const NOT_COMPARED = /^(OwnerId|Owner\.Name|CreatedDate|LastModifiedDate|LastActivityDate|SystemModstamp)$/;
+function sameIn(records: { values: Record<string, unknown> }[], at: number, field: string): string | null {
+  if (NOT_COMPARED.test(field)) return null;
+  const key = (v: unknown) => String(v ?? '').toLowerCase().replace(/^(https?:\/\/)?(www\d?\.)?/, '').replace(/[^a-z0-9]+/g, '');
+  const mine = key(records[at].values[field]);
+  if (!mine) return null;
+  const others = records.filter((r, i) => i !== at && key(r.values[field]) === mine).length;
+  return others ? `Same as ${others} other record${others > 1 ? 's' : ''} in this group` : null;
+}
+
 /** Duplicate groups: the numbered flow, a filter, group size, CSV and the grouped table. */
 export function DuplicateResults({ result, fileName }: { result: DuplicateResult; fileName: string }) {
   const [query, setQuery] = useState('');
@@ -156,8 +167,15 @@ export function DuplicateResults({ result, fileName }: { result: DuplicateResult
                         </span>
                       )}
                     </td>
-                    {result.columns.map((c, ci) => (
-                      <td key={c.name} className="max-w-[16rem] truncate px-3 py-2" title={show(rec.values[c.name])}>
+                    {result.columns.map((c, ci) => {
+                      const same = sameIn(g.records, ri, c.name);
+                      return (
+                      <td
+                        key={c.name}
+                        className={cx('max-w-[16rem] truncate px-3 py-2', same && 'bg-bad-soft/60')}
+                        title={same ? `${show(rec.values[c.name])}
+Why it’s flagged: ${same}` : show(rec.values[c.name])}
+                      >
                         {ci === 0 && rec.id ? (
                           <a href={`${result.recordUrlPrefix}${rec.id}`} target="_blank" rel="noopener noreferrer" className="font-medium hover:text-brand hover:underline">
                             {show(rec.values[c.name])}
@@ -165,8 +183,15 @@ export function DuplicateResults({ result, fileName }: { result: DuplicateResult
                         ) : (
                           <span className={show(rec.values[c.name]) === '—' ? 'text-ink-subtle' : ''}>{show(rec.values[c.name])}</span>
                         )}
+                        {same && (
+                          <span className="mt-0.5 flex min-w-[11rem] items-start gap-1 whitespace-normal text-[10.5px] font-medium leading-snug text-bad">
+                            <AlertTriangle className="mt-px h-3 w-3 shrink-0" />
+                            {same}
+                          </span>
+                        )}
                       </td>
-                    ))}
+                      );
+                    })}
                     <td className="px-2">
                       {rec.id && (
                         <a href={`${result.recordUrlPrefix}${rec.id}`} target="_blank" rel="noopener noreferrer" aria-label="Open in Salesforce" className="text-ink-subtle opacity-0 transition hover:text-brand group-hover:opacity-100">

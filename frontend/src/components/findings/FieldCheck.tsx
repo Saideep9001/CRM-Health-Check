@@ -418,8 +418,8 @@ export function FieldCheck({
                           on={isOn(f.name, 'duplicates')}
                           onClick={() => choose(f.name, 'duplicates')}
                           tick={inRecords(f.name, 'duplicates')}
-                          value={f.duplicates?.extraCopies}
-                          hint={f.duplicates ? `extra copies · ${fmtNumber(f.duplicates.totalGroups)} groups` : undefined}
+                          value={f.duplicates ? f.duplicates.extraCopies + f.duplicates.totalGroups : undefined}
+                          hint={f.duplicates ? `duplicate records · ${fmtNumber(f.duplicates.totalGroups)} groups` : undefined}
                           tone="text-warn"
                           none="Picklist choices, dates, numbers and places (city, state, country, ZIP) are shared by design, so they’re only duplicates together with other fields."
                         />
@@ -449,8 +449,8 @@ export function FieldCheck({
                         on={isOn(ALL, 'duplicates')}
                         onClick={() => choose(ALL, 'duplicates')}
                         tick={inRecords(ALL, 'duplicates')}
-                        value={result.combined.extraCopies}
-                        hint={`extra copies · ${fmtNumber(result.combined.totalGroups)} groups`}
+                        value={result.combined.extraCopies + result.combined.totalGroups}
+                        hint={`duplicate records · ${fmtNumber(result.combined.totalGroups)} groups`}
                         tone="text-warn"
                       />
                       {shows('spelling') && <td className="px-3 py-2 text-ink-subtle">—</td>}

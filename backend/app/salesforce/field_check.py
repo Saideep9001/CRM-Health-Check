@@ -23,6 +23,7 @@ ODD_SHOWN = 500  # records with an odd spelling returned per field
 VARIANTS_SHOWN = 100
 
 _FUZZY = {"company", "last", "email", "phone", "website", "street"}  # compared with the duplicate finder's matchers
+_SAME_ACCOUNT = {"CloseDate", "Amount", "StageName"}  # Opportunity fields compared within one Account
 _CHECKED_VALUES = {"currency", "date"}  # amounts (zero or negative) and dates (past close date on an open deal…) are checked too
 _TEXT = {"string", "email", "phone", "url", "textarea", "picklist", "combobox"}
 _PLACE = re.compile(r"(City|State|Country|PostalCode|StateCode|CountryCode)$")
@@ -69,7 +70,8 @@ def check_fields(sf: SalesforceClient, obj: str, fields: list[str]) -> dict:
     has = lambda f: f in described or (f == "Owner.Name" and "OwnerId" in described) or (f == "Account.Name" and "AccountId" in described)  # noqa: E731
     context = [f for f in duplicates.CONTEXT.get(obj, duplicates.DEFAULT_CONTEXT) if has(f)]
     open_flag = ["IsClosed"] if "CloseDate" in chosen and "IsClosed" in described else []  # "an open deal whose close date has passed"
-    paths = list(dict.fromkeys(([name_field] if name_field else []) + chosen + context + open_flag))
+    same_account = [f for f in chosen if obj == "Opportunity" and f in _SAME_ACCOUNT] if "AccountId" in described else []
+    paths = list(dict.fromkeys(([name_field] if name_field else []) + chosen + context + open_flag + (["AccountId"] if same_account else [])))
     rows, truncated = duplicates._fetch(sf, obj, paths)
     prefetched = (rows, truncated)
     matchable = {f["name"]: f for f in duplicates.matchable_fields(sf, obj)}
@@ -98,14 +100,32 @@ def check_fields(sf: SalesforceClient, obj: str, fields: list[str]) -> dict:
 
         # duplicates on this field alone
         dup = None
-        if ftype not in _NO_DUPLICATES and not _PLACE.search(f) and f in matchable:
+        if f in same_account:  # Opportunities: the same Close Date, Amount or Stage on the same Account (as the health check's chart)
+            buckets: dict[tuple, list[int]] = defaultdict(list)
+            for i, r in enumerate(rows):
+                v = duplicates._value(r, f)
+                if r.get("AccountId") and v not in (None, ""):
+                    buckets[(r["AccountId"], str(v))].append(i)
+            found = sorted((b for b in buckets.values() if len(b) > 1), key=len, reverse=True)
+            acc_cols = list(dict.fromkeys([*cols[:1], "AccountId", f, *cols[1:]]))
+            dup = {
+                "object": obj, "standard": False, "rule_name": None, "rules": [[label("AccountId"), label(f)]],
+                "methods": [{"field": label(f), "method": "Same value on the same Account"}],
+                "columns": [{"name": c, "label": label(c)} for c in acc_cols],
+                "scanned": len(rows), "truncated": truncated,
+                "total_groups": len(found), "extra_copies": sum(len(g) - 1 for g in found),
+                "groups": [{"size": len(g), "matched_on": f"{label(f)} on the same Account", "records": [record(i, acc_cols) for i in g[:RECORDS_PER_GROUP]]}
+                           for g in found[:GROUPS_SHOWN]],
+                "record_url_prefix": f"{sf.base}/",
+            }
+        elif ftype not in _NO_DUPLICATES and not _PLACE.search(f) and f in matchable:
             kind = matchable[f]["kind"]
-            if kind in _FUZZY:
+            if kind in _FUZZY and kind != "phone":
                 dup = trim(duplicates.find_duplicates(sf, obj, [f], prefetched=prefetched))
                 method = duplicates.KINDS[kind][0]
-            else:
+            else:  # phones: the same number (a close number is a different phone), as the health check's chart counts them
                 found = _exact_groups(rows, f, ftype)
-                method = "Same value (ignores case and punctuation)"
+                method = "Same number (ignores spaces, brackets and dashes)" if ftype == "phone" or kind == "phone" else "Same value (ignores case and punctuation)"
                 dup = {
                     "object": obj, "standard": False, "rule_name": None, "rules": [[label(f)]],
                     "methods": [{"field": label(f), "method": method}],
