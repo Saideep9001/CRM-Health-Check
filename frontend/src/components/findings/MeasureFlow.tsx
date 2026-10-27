@@ -108,7 +108,11 @@ export function flowFor(v: IndicatorValue, finding?: Finding | null): FlowStep[]
             ? ['With line items', 'Without line items']
             : /Without Contact Roles/i.test(v.label)
               ? ['With a Contact Role', 'Without a Contact Role']
-              : [null, null];
+              : /Without a Campaign/i.test(v.label)
+                ? ['In a Campaign', 'Not in any Campaign']
+                : /^Stale Leads/i.test(v.label)
+                  ? ['Moving forward', 'Stuck in the same status']
+                  : [null, null];
   if (!fine || !bad) return null;
   return [
     { label: `${Cap} checked`, value: total, hint: 'Every record read from Salesforce' },
