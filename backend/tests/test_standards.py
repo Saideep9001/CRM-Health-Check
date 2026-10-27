@@ -56,3 +56,11 @@ def test_company_names_flag_only_invalid_values():
 
 def test_every_kind_has_a_rule_to_show():
     assert set(st.RULES) >= {"phone", "email", "country", "state", "city", "company", "text", "website", "postal", "amount", "date"}
+
+
+def test_opportunity_names_allow_deal_separators():
+    ok = ("Acme - 500 Widgets", "Acme / Renewal (2026)", "#1 Acme deal", "Acme, Inc. - Q3", "Testarossa Motors - Q1")
+    assert st.deal_name(items(*ok)) == {}
+    odd = st.deal_name(items("  Acme Renewal", "Test Opp", "Acme*Renewal", "Acme Renewal -", "ACME BIG DEAL", "acme renewal"))
+    assert odd == {"id0": "unwanted spaces (at the start, at the end or doubled)", "id1": "not a real name (a test or placeholder value)",
+                   "id2": "unwanted symbol *", "id3": "stray punctuation", "id4": "all capitals", "id5": "all lower case"}

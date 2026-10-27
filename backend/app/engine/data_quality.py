@@ -349,8 +349,10 @@ def missing_key_fields(ctx: Ctx, obj: str) -> None:
 
 # ---------------- data standardization
 
-def _std_kind(f: str, field: dict) -> str:
+def _std_kind(f: str, field: dict, obj: str | None = None) -> str:
     t = field.get("type")
+    if (obj, f) == ("Opportunity", "Name"):
+        return "dealname"
     if f == "Amount" or t == "currency":
         return "amount"
     if f == "CloseDate" or t == "date":

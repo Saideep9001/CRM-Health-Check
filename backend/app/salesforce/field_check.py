@@ -23,6 +23,7 @@ ODD_SHOWN = 500  # records with an odd spelling returned per field
 VARIANTS_SHOWN = 100
 
 _FUZZY = {"company", "last", "email", "phone", "website", "street"}  # compared with the duplicate finder's matchers
+_CHECKED_VALUES = {"currency", "date"}  # amounts (zero or negative) and dates (past close date on an open deal…) are checked too
 _TEXT = {"string", "email", "phone", "url", "textarea", "picklist", "combobox"}
 _PLACE = re.compile(r"(City|State|Country|PostalCode|StateCode|CountryCode)$")
 _NO_DUPLICATES = {"picklist", "multipicklist", "combobox", "boolean", "date", "datetime", "time", "double", "currency", "percent", "int", "long"}
@@ -67,7 +68,8 @@ def check_fields(sf: SalesforceClient, obj: str, fields: list[str]) -> dict:
     name_field = next((f["name"] for f in desc.get("fields", []) if f.get("nameField")), None)
     has = lambda f: f in described or (f == "Owner.Name" and "OwnerId" in described) or (f == "Account.Name" and "AccountId" in described)  # noqa: E731
     context = [f for f in duplicates.CONTEXT.get(obj, duplicates.DEFAULT_CONTEXT) if has(f)]
-    paths = list(dict.fromkeys(([name_field] if name_field else []) + chosen + context))
+    open_flag = ["IsClosed"] if "CloseDate" in chosen and "IsClosed" in described else []  # "an open deal whose close date has passed"
+    paths = list(dict.fromkeys(([name_field] if name_field else []) + chosen + context + open_flag))
     rows, truncated = duplicates._fetch(sf, obj, paths)
     prefetched = (rows, truncated)
     matchable = {f["name"]: f for f in duplicates.matchable_fields(sf, obj)}
@@ -117,11 +119,12 @@ def check_fields(sf: SalesforceClient, obj: str, fields: list[str]) -> dict:
 
         # standardization: the health check's rules (engine/standards.py), with why each value is odd
         std = None
-        if ftype in _TEXT:
+        if ftype in _TEXT or ftype in _CHECKED_VALUES:
             from ..engine import standards
             from ..engine.data_quality import _std_kind  # engine imports salesforce, so import here
             items = [(str(i), v) for i, v in enumerate(values) if v not in (None, "")]
-            why = {int(i): r for i, r in standards.odd_values(_std_kind(f, options[f]), items, set()).items()}
+            open_ids = {str(i) for i, r in enumerate(rows) if open_flag and r.get("IsClosed") is False}
+            why = {int(i): r for i, r in standards.odd_values(_std_kind(f, options[f], obj), items, open_ids).items()}
             odd = sorted(why, key=lambda i: str(values[i]).lower())
             odd_any.update(odd)
             valued_any.update(int(i) for i, _ in items)
@@ -130,7 +133,7 @@ def check_fields(sf: SalesforceClient, obj: str, fields: list[str]) -> dict:
                 "values_with_variants": len({str(values[i]) for i in odd}),
                 "variants": [],
                 "reasons": [{"reason": r, "count": n} for r, n in Counter(why.values()).most_common()],
-                "rule": standards.RULES.get(_std_kind(f, options[f]), ""),
+                "rule": standards.RULES.get(_std_kind(f, options[f], obj), ""),
                 "columns": [{"name": c, "label": label(c)} for c in cols],
                 "records": [{**record(i, cols), "note": why[i]} for i in odd[:ODD_SHOWN]],
             }

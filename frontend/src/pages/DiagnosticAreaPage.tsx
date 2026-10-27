@@ -55,7 +55,7 @@ function objectOf(label: string): { group: string; title: string } | null {
   if (m) return { group: m[2], title: m[1] };
   m = label.match(/^Duplicate (.+)$/);
   if (m) return { group: m[1], title: 'Duplicates' };
-  m = label.match(/^(Accounts) (Without .+)$/);
+  m = label.match(/^(Accounts|Opportunities) (Without .+)$/);
   if (m) return { group: m[1], title: label };
   return null;
 }

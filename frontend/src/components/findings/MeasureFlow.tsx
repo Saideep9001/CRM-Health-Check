@@ -102,7 +102,13 @@ export function flowFor(v: IndicatorValue, finding?: Finding | null): FlowStep[]
       ? ['With at least one Contact', 'Without Contacts']
       : /Without Open Opportunities/i.test(v.label)
         ? ['With an open Opportunity', 'Without an open Opportunity']
-        : [null, null];
+        : /^Closed Lost Without a Reason/i.test(v.label)
+          ? ['Lost with a reason', 'Lost with no reason']
+          : /Without Line Items/i.test(v.label)
+            ? ['With line items', 'Without line items']
+            : /Without Contact Roles/i.test(v.label)
+              ? ['With a Contact Role', 'Without a Contact Role']
+              : [null, null];
   if (!fine || !bad) return null;
   return [
     { label: `${Cap} checked`, value: total, hint: 'Every record read from Salesforce' },

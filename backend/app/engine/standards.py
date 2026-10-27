@@ -298,6 +298,28 @@ def company(items: list[tuple[str, str]]) -> dict[str, str]:
     return out
 
 
+_DEAL_SYMBOLS = re.compile(r"[@*_~^|<>={}\[\]\`$%?;]")  # deal names often use - / & ( ) # + , . : but never these
+
+
+def deal_name(items: list[tuple[str, str]]) -> dict[str, str]:
+    """Opportunity names: unwanted spaces or symbols, stray punctuation, test values, ALL CAPITALS or all lower case.
+    The usual separators in deal names ("Acme - 500 Widgets", "Acme / Renewal (2026)") are fine."""
+    out: dict[str, str] = {}
+    for i, v in items:
+        p = _plain(v)
+        if v != " ".join(v.split()):
+            out[i] = "unwanted spaces (at the start, at the end or doubled)"
+        elif not re.search(r"[A-Za-z]", v) or p in _JUNK or re.fullmatch(r"(test|dummy|sample|temp)\b.*|.*\btest\d*", p):
+            out[i] = "not a real name (a test or placeholder value)"
+        elif sym := sorted(set(_DEAL_SYMBOLS.findall(v))):
+            out[i] = f"unwanted symbol {' '.join(sym)}"
+        elif re.search(r"[,:/&+-]$", v) or re.search(r"[,:!&/+]{2,}|-{3,}|\.{2}(?!\.)", v) or re.match(r"[^\w(#]", v):
+            out[i] = "stray punctuation"
+        elif r := _layout(v):
+            out[i] = r
+    return out
+
+
 def text(items: list[tuple[str, str]]) -> dict[str, str]:
     out = {i: r for i, v in items if (r := _layout(v))}
     rest = [(i, v) for i, v in items if i not in out]
@@ -352,7 +374,7 @@ def odd_values(kind: str, items: list[tuple[str, object]], open_ids: set[str]) -
         return {i: r for i, v in text_items if (r := phone(v))}
     if kind == "email":
         return {i: r for i, v in text_items if (r := email(v))}
-    rules = {"country": country, "state": state, "city": city, "company": company, "website": website, "postal": postal}
+    rules = {"country": country, "state": state, "city": city, "company": company, "dealname": deal_name, "website": website, "postal": postal}
     return rules.get(kind, text)(text_items)
 
 
@@ -365,6 +387,8 @@ RULES = {  # shown in "How it's flagged"
              "are odd; the way most records write it counts as right",
     "city": "older or short names (Bangalore → Bengaluru, Bombay → Mumbai, NYC → New York), numbers, stray punctuation, extra spaces, "
             "ALL CAPITALS or all lower case, or the same city written differently",
+    "dealname": "unwanted spaces (at the start, at the end or doubled), unwanted symbols (@ * _ $ % ? …), stray punctuation, "
+                "test or placeholder names (Test, N/A, XXX), ALL CAPITALS or all lower case; separators like - / & ( ) are fine",
     "company": "only invalid names: unwanted spaces (at the start, at the end or doubled), unwanted symbols (& ! ( ) / + # @ * _ …), stray punctuation, "
                "test or placeholder values (Test, N/A, Unknown, XXX), ALL CAPITALS or all lower case, and misspelled words (Technolgy, "
                "Solutons); short forms like LLC, Inc, Ltd and Corp are fine",
