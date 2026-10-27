@@ -12,8 +12,15 @@ import { InfoTip } from '../ui/HelpTip';
 import { ScoreRing } from '../ui/Visuals';
 import type { IndicatorValue } from '@/types';
 
+/** A card's colour from its score, in the urgency bands: green 80 or more (no problem, or Low), orange 40–79 (Medium or
+ *  High), red below 40 (Critical). */
+export function cardTone(score: number): 'good' | 'warn' | 'bad' {
+  return score >= 80 ? 'good' : score >= 40 ? 'warn' : 'bad';
+}
+
 /** Rough health of one number, for the coloured dot only (the area score is the real measure). */
 function indicatorTone(i: IndicatorValue): 'good' | 'warn' | 'bad' {
+  if (i.score != null) return cardTone(i.score);
   if (i.unit === '%') {
     const good = i.direction === 'higher-better' ? i.value : 100 - i.value;
     return good >= 90 ? 'good' : good >= 70 ? 'warn' : 'bad';

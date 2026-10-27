@@ -39,6 +39,7 @@ import { Tabs } from '@/components/ui/Tabs';
 import { AnimatedNumber, ProgressBar, ScoreRing } from '@/components/ui/Visuals';
 import { CATEGORY_COLORS, DIAGNOSTIC_AREAS, getArea, getAreaRelease, getCategory } from '@/config/categories';
 import { useAssessment } from '@/api/queries';
+import { cardTone } from '@/components/category/DiagnosticAreaCard';
 import { DEFAULT_DQ_OBJECTS } from '@/components/assessment/RunCheckPanel';
 import { useLatestAssessment } from '@/hooks/useLatestAssessment';
 import { cx, fmtDate, fmtNumber } from '@/lib/format';
@@ -70,7 +71,7 @@ const TONES = {
 
 function toneOf(v: IndicatorValue): keyof typeof TONES {
   if (v.score == null) return 'info';
-  return v.score >= 95 ? 'good' : v.score >= 80 ? 'warn' : 'bad';
+  return cardTone(v.score);
 }
 
 function iconFor(title: string): LucideIcon {
