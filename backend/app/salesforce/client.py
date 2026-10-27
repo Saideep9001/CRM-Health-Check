@@ -123,7 +123,15 @@ class SalesforceClient:
         return resp
 
     def _bulk(self, soql: str) -> bool:
-        return self.settings.sf_query_api == "bulk" and bulk.eligible(soql)
+        mode = self.settings.sf_query_api
+        if mode == "rest" or not bulk.eligible(soql):
+            return False
+        if mode == "bulk":
+            return True
+        # auto: Bulk only for big objects, by Salesforce's own record counts (one cached call per org)
+        from . import explorer  # explorer imports this module
+        obj = bulk.object_of(soql)
+        return explorer._record_counts(self).get(obj, 0) >= self.settings.sf_bulk_min_records
 
     def _rest(self, soql: str, page_size: int | None = None) -> dict:
         headers = {"Sforce-Query-Options": f"batchSize={page_size}"} if page_size else None

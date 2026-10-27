@@ -125,6 +125,9 @@ def _object(soql: str) -> str:
     return m.group(1) if m else ""
 
 
+object_of = _object  # the object a query reads (FROM …)
+
+
 def _describe(sf: "SalesforceClient", obj: str) -> dict:
     from . import explorer  # explorer imports the client, which imports this module
     try:

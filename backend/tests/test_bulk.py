@@ -103,3 +103,16 @@ def test_record_tables_page_through_a_bulk_job(monkeypatch):
     rest = sf.query_more(cursor, 2)
     assert [r["Id"] for r in rest["records"]] == ["001000000000003AAA"] and rest["nextRecordsUrl"] is None
     assert not explorer._CURSOR_RE.match("bulk:750000000000001AAA:Account~LOC2&x=1")  # nothing else gets through
+
+
+def test_auto_uses_bulk_only_for_big_objects(monkeypatch):
+    fake = FakeBulk()
+    sf = _client(fake, monkeypatch)
+    sf.settings = sf.settings.model_copy(update={"sf_query_api": "auto", "sf_bulk_min_records": 20_000})
+    monkeypatch.setattr(explorer, "_record_counts", lambda s: {"Account": 350_000, "Contact": 900})
+    sf.query("SELECT Id, Name FROM Contact")  # small: REST
+    assert fake.rest_queries == ["SELECT Id, Name FROM Contact"] and not any("jobs" in c for c in fake.calls)
+    sf.query("SELECT Id, Name FROM Account")  # big: a Bulk job
+    assert any(c.startswith("POST") and c.endswith("/jobs/query") for c in fake.calls) and len(fake.rest_queries) == 1
+    sf.query("SELECT COUNT() FROM Account")  # a count never runs as a job
+    assert len(fake.rest_queries) == 2
