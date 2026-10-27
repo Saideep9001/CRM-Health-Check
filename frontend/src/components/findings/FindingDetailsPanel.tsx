@@ -16,6 +16,7 @@ export function FindingDetailsPanel({
   fieldCheck,
   onClearFieldCheck,
   shownFields,
+  checkData,
 }: {
   finding: Finding | null;
   onClose: () => void;
@@ -27,6 +28,7 @@ export function FindingDetailsPanel({
   fieldCheck?: FieldCheckResult | null;
   onClearFieldCheck?: () => void;
   shownFields?: string[] | null;
+  checkData?: FieldCheckResult | null;
 }) {
   const results = useAssessmentResults(finding?.assessmentId ?? null, !!finding);
   const areaRes = finding ? results.data?.areas.find((a) => a.areaId === finding.areaId) : undefined;
@@ -48,6 +50,7 @@ export function FindingDetailsPanel({
       fieldCheck={fieldCheck}
       onClearFieldCheck={onClearFieldCheck}
       shownFields={shownFields}
+      checkData={checkData}
     />
   );
 }

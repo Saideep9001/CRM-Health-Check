@@ -9,6 +9,7 @@ import {
   Info,
   Lightbulb,
   ListChecks,
+  ListOrdered,
   Save,
   Search,
   Target,
@@ -24,7 +25,7 @@ import { SEVERITY_COLORS } from '@/components/charts/Charts';
 import { objectLabel } from '@/components/category/DiagnosticAreaCard';
 import { useToast } from '@/context/ToastContext';
 import { cx, fmtDate, fmtDateTime, fmtNumber } from '@/lib/format';
-import type { DataFilter, DiagnosticArea, FieldCheckResult, FieldScore, Finding, FindingStatus, IndicatorValue, Severity } from '@/types';
+import type { DataFilter, DiagnosticArea, DuplicateResult, FieldCheckResult, FieldScore, Finding, FindingStatus, IndicatorValue, Severity } from '@/types';
 import { InfoTip } from '@/components/ui/HelpTip';
 import { FINDING_STATUS_LABEL, FindingStatusBadge, SeverityBadge } from '../ui/Badges';
 import { Button } from '../ui/Button';
@@ -34,11 +35,34 @@ import { InlineError } from '../ui/States';
 import { ChangeBadge } from './AffectedRecords';
 import { FixPlanPanel } from './FixPlanPanel';
 import { RecordsTable } from './RecordsTable';
+import { DuplicateResults } from './DuplicateFinder';
+import { ALL } from './FieldCheck';
+import { FlowSteps, flowFor } from './MeasureFlow';
 import { FieldListTable } from './FieldListTable';
 import { FieldScoreChart, chartKindFor } from './FieldScoreChart';
 
 /** Same thresholds the engine uses (backend/app/engine/core.py → severity_for, finding min_score). */
 const PROBLEM_BELOW = 95;
+
+/** Several fields' duplicate groups from Check fields as one result (largest groups first). */
+function mergeDuplicates(check: FieldCheckResult, picked: string[]): DuplicateResult | null {
+  const parts = [
+    ...check.fields.filter((f) => picked.includes(f.name) && f.duplicates).map((f) => f.duplicates!),
+    ...(picked.includes(ALL) && check.combined ? [check.combined] : []),
+  ];
+  if (!parts.length) return null;
+  const columns = parts.flatMap((p) => p.columns).filter((c, i, all) => all.findIndex((x) => x.name === c.name) === i);
+  return {
+    ...parts[0],
+    rules: parts.flatMap((p) => p.rules),
+    methods: parts.flatMap((p) => p.methods),
+    columns,
+    truncated: parts.some((p) => p.truncated),
+    totalGroups: parts.reduce((n, p) => n + p.totalGroups, 0),
+    extraCopies: parts.reduce((n, p) => n + p.extraCopies, 0),
+    groups: parts.flatMap((p) => p.groups).sort((a, b) => b.size - a.size),
+  };
+}
 const URGENCY: { severity: Severity; label: string; range: string }[] = [
   { severity: 'critical', label: 'Critical', range: 'below 40' },
   { severity: 'high', label: 'High', range: '40–59' },
@@ -166,6 +190,7 @@ function Records({
   keyFields,
   fieldChoices = [],
   shownFields,
+  checkData,
 }: {
   area: DiagnosticArea;
   indicator: IndicatorValue | null;
@@ -179,6 +204,8 @@ function Records({
   fieldChoices?: { field: string; label: string; count: number }[];
   /** The fields ticked in Check fields on the page: only records with a problem in one of them. */
   shownFields?: string[] | null;
+  /** The latest Check fields result: on a duplicates page, the ticked fields' groups replace the records table. */
+  checkData?: FieldCheckResult | null;
 }) {
   const objects = indicator?.recordObjects ?? [];
   const preferred =
@@ -196,6 +223,10 @@ function Records({
   const ticked = shownFields == null ? every : shownFields.filter((f) => every.includes(f));
   const only = ticked.length === every.length ? [] : ticked;
   const noneTicked = every.length > 0 && ticked.length === 0;
+  // Duplicates: everything ticked (the default) shows the health check's groups; a pick shows those fields' groups
+  // from Check fields, in this one table.
+  const dupPicked = /duplicate/i.test(indicator?.label ?? finding?.name ?? '') && shownFields != null && checkData ? shownFields : null;
+  const dupResult = dupPicked?.length ? mergeDuplicates(checkData!, dupPicked) : null;
   const measureRecords = useIndicatorRecords(useMeasure ? measureAssessmentId : null, area.id, indicator?.label ?? '', object, filters, only);
   const missing = /^missing/i.test(indicator?.label ?? '');
   const findingRecords = useFindingRecords(finding?.id ?? null, !useMeasure && !!finding?.recordsAvailable, filters);
@@ -219,7 +250,16 @@ function Records({
           </div>
         )}
         <div id="records-table" className="scroll-mt-20">
-        {noneTicked ? (
+        {dupPicked && !dupResult ? (
+          <p className="rounded-xl border border-dashed border-line px-4 py-8 text-center text-sm text-ink-muted">
+            No fields ticked. Tick a field in Check fields above, or <span className="font-medium">Select all</span>, to see its duplicates.
+          </p>
+        ) : dupResult ? (
+          <div className="rounded-xl border border-line p-4">
+            <h4 className="mb-3 text-sm font-semibold">Duplicates on {dupResult.rules.map((r) => r.join(' + ')).join(' · ')}</h4>
+            <DuplicateResults result={dupResult} fileName={`duplicate-${object!.toLowerCase()}s.csv`} />
+          </div>
+        ) : noneTicked ? (
           <p className="rounded-xl border border-dashed border-line px-4 py-8 text-center text-sm text-ink-muted">
             No fields ticked. Tick a field in Check fields above, or <span className="font-medium">Select all</span>, to see its records.
           </p>
@@ -299,6 +339,7 @@ export function DetailsPanel({
   fieldCheck,
   onClearFieldCheck,
   shownFields,
+  checkData,
 }: {
   open: boolean;
   area: DiagnosticArea | undefined;
@@ -323,6 +364,8 @@ export function DetailsPanel({
   onClearFieldCheck?: () => void;
   /** Fields ticked in Check fields on the page: the records show only those with a problem in one of them. */
   shownFields?: string[] | null;
+  /** The latest Check fields result: on a duplicates page, the ticked fields' groups replace the records table. */
+  checkData?: FieldCheckResult | null;
 }) {
   const navigate = useNavigate();
   const { canEdit } = useRole();
@@ -398,6 +441,7 @@ export function DetailsPanel({
     </span>
   ) : undefined;
   const title = finding?.name ?? v?.label ?? '';
+  const flow = v ? flowFor(v, finding) : null; // the steps from what was checked to the number, for Area 1 cards
   // A measure can cover several objects (e.g. phone numbers on Accounts, Contacts and Leads) while a problem is about one.
   const measureObjects = v?.recordObjects ?? [];
   const wide = !!finding?.objectName && measureObjects.length > 1;
@@ -602,6 +646,11 @@ export function DetailsPanel({
               <p>{v.how ?? area.description}</p>
             </Section>
           )}
+          {v && flow && (
+            <Section icon={<ListOrdered className="h-3.5 w-3.5" />} title="How the number is reached">
+              <FlowSteps steps={flow} />
+            </Section>
+          )}
 
           {v && (
             <Section icon={<ListChecks className="h-3.5 w-3.5" />} title="How it’s flagged — the exact rules">
@@ -620,7 +669,7 @@ export function DetailsPanel({
               <Records area={area} indicator={v} finding={finding} measureAssessmentId={measureAssessmentId} legacy={legacy} initialObject={initialObject}
                 keyFields={empties?.map((f) => f.field)}
                 fieldChoices={(chartKind === 'missing' ? shownScores : chartKind === 'standardization' ? v?.fieldScores : null)?.map((f) => ({ field: f.field, label: f.label, count: f.count })) ?? []}
-                shownFields={shownFields} />
+                shownFields={shownFields} checkData={checkData} />
             </Section>
           )}
 

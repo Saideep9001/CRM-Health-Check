@@ -14,6 +14,7 @@ export default function ProblemPage() {
   const navigate = useNavigate();
   const finding = useFinding(findingId);
   const [checked, setChecked] = useState<FieldCheckResult | null>(null); // the latest Check fields run
+  const [live, setLive] = useState<FieldCheckResult | null>(null); // the latest Check fields result, for duplicate groups
   const [shown, setShown] = useState<string[] | null>(null); // fields ticked in Check fields for the records table (null = all)
   const f = finding.data ?? null;
   const results = useAssessmentResults(f?.assessmentId ?? null, !!f);
@@ -35,11 +36,12 @@ export default function ProblemPage() {
       onOpenFinding={(o) => navigate(`/problems/${encodeURIComponent(o.id)}`)}
       extra={objects.length > 0 && finder && (
         <FieldCheck objects={objects} initialObject={f.objectName ?? objects[0]} focus={finder.kind} fieldsText={finder.fieldsText} onResult={setChecked}
-          shownFields={shown} onPickFields={setShown} recordFields={(indicator?.fieldScores ?? []).map((s) => s.field)} />
+          shownFields={shown} onPickFields={setShown} onLiveResult={setLive} recordFields={(indicator?.fieldScores ?? []).map((s) => s.field)} />
       )}
       fieldCheck={checked}
       onClearFieldCheck={() => setChecked(null)}
       shownFields={shown}
+      checkData={live}
     />
   );
 }

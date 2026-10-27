@@ -11,7 +11,7 @@ import { DuplicateResults, show, type FinderKind } from './DuplicateFinder';
 import { EmptyRecords, fieldsNamed } from './EmptyFieldsFinder';
 
 const MAX_FIELDS = 10;
-const ALL = '__all__'; // the "all chosen fields together" row
+export const ALL = '__all__'; // the "all chosen fields together" row
 
 type Pick = { field: string; kind: FinderKind };
 
@@ -167,6 +167,7 @@ export function FieldCheck({
   shownFields,
   onPickFields,
   recordFields = [],
+  onLiveResult,
 }: {
   objects: string[];
   initialObject?: string | null;
@@ -180,6 +181,8 @@ export function FieldCheck({
   onPickFields?: (fields: string[] | null) => void;
   /** Fields the page's records table can narrow to for invalid data (empty values work for any field). */
   recordFields?: string[];
+  /** Every run's result (also the one that runs on its own), for the page's records table (duplicate groups). */
+  onLiveResult?: (result: FieldCheckResult | null) => void;
 }) {
   // On a duplicates / missing / spelling page, only that page's column is shown.
   const shows = (k: FinderKind) => !focus || focus === k;
@@ -205,6 +208,7 @@ export function FieldCheck({
     setPick(null);
     run.reset();
     onResult?.(null);
+    onLiveResult?.(null);
     // The page's own fields are checked straight away, so the numbers show without a click (the page keeps the health check's own
     // chart until someone runs it themselves).
     if (named.length && options.data) runWith(named, false);
@@ -225,6 +229,7 @@ export function FieldCheck({
       {
         onSuccess: (r: FieldCheckResult) => {
           if (tellPage) onResult?.(r);
+          onLiveResult?.(r);
           const kind = focus ?? 'empty';
           // open the field with the most to look at for this page (e.g. Account Phone's odd values)
           const count = (f: FieldCheckField) => (kind === 'empty' ? f.empty : kind === 'duplicates' ? (f.duplicates?.extraCopies ?? 0) : (f.standardization?.oddRecords ?? 0));
@@ -239,8 +244,13 @@ export function FieldCheck({
   const result = run.data;
   const picked = result && pick ? (pick.field === ALL ? null : result.fields.find((f) => f.name === pick.field)) : null;
   // Empty values and invalid data are shown in the page's records table (one table), not in a second one here.
-  const inRecords = (field: string, kind: FinderKind) => !!onPickFields && (kind === 'empty' || (kind === 'spelling' && recordFields.includes(field)));
-  const tickable = (run.data?.fields ?? []).filter((f) => inRecords(f.name, focus ?? 'empty')).map((f) => f.name);
+  // Duplicates too: the ticked fields' groups replace the records table's (one table on the page).
+  const inRecords = (field: string, kind: FinderKind) =>
+    !!onPickFields &&
+    (kind === 'empty' ||
+      (kind === 'spelling' && recordFields.includes(field)) ||
+      (kind === 'duplicates' && (field === ALL ? !!run.data?.combined : !!run.data?.fields.find((f) => f.name === field)?.duplicates)));
+  const tickable = [...(run.data?.fields ?? []).map((f) => f.name), ALL].filter((f) => inRecords(f, focus ?? 'empty'));
   const isOn = (field: string, kind: FinderKind) =>
     inRecords(field, kind) ? shownFields == null || shownFields.includes(field) : pick?.field === field && pick.kind === kind;
   const choose = (field: string, kind: FinderKind) => {
@@ -366,7 +376,7 @@ export function FieldCheck({
           <div className="space-y-4">
             <p className="text-sm">
               <span className="font-semibold tabular-nums">{fmtNumber(result.scanned)}</span> {what} checked
-              {result.truncated && <span className="text-ink-muted"> (the first 20,000)</span>}. {onPickFields && focus !== 'duplicates' ? 'Tick a field to show its records in the table below.' : 'Click a number to see its records.'}
+              {result.truncated && <span className="text-ink-muted"> (the first 20,000)</span>}. {onPickFields ? 'Tick a field to show its records in the table below.' : 'Click a number to see its records.'}
               {tickable.length > 1 && (
                 <span className="ml-2 whitespace-nowrap text-xs">
                   <button type="button" className="font-semibold text-brand hover:underline disabled:text-ink-subtle disabled:no-underline" disabled={shownFields == null || tickable.every((f) => shownFields.includes(f))} onClick={() => onPickFields!(null)}>
@@ -406,7 +416,8 @@ export function FieldCheck({
                       {shows('duplicates') && (
                         <Cell
                           on={isOn(f.name, 'duplicates')}
-                          onClick={() => setPick({ field: f.name, kind: 'duplicates' })}
+                          onClick={() => choose(f.name, 'duplicates')}
+                          tick={inRecords(f.name, 'duplicates')}
                           value={f.duplicates?.extraCopies}
                           hint={f.duplicates ? `extra copies · ${fmtNumber(f.duplicates.totalGroups)} groups` : undefined}
                           tone="text-warn"
@@ -436,7 +447,8 @@ export function FieldCheck({
                       {shows('empty') && <td className="px-3 py-2 text-ink-subtle">—</td>}
                       <Cell
                         on={isOn(ALL, 'duplicates')}
-                        onClick={() => setPick({ field: ALL, kind: 'duplicates' })}
+                        onClick={() => choose(ALL, 'duplicates')}
+                        tick={inRecords(ALL, 'duplicates')}
                         value={result.combined.extraCopies}
                         hint={`extra copies · ${fmtNumber(result.combined.totalGroups)} groups`}
                         tone="text-warn"
@@ -448,7 +460,7 @@ export function FieldCheck({
               </table>
             </div>
 
-            {pick && !(pick.field !== ALL && inRecords(pick.field, pick.kind)) && (
+            {pick && !inRecords(pick.field, pick.kind) && (
               <div className="rounded-xl border border-line p-4">
                 <h4 className="mb-3 text-sm font-semibold">
                   {pick.field === ALL
