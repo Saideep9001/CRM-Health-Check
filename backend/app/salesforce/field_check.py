@@ -56,6 +56,28 @@ def _exact_groups(rows: list[dict], field: str, ftype: str) -> list[list[int]]:
     return sorted((b for b in buckets.values() if len(b) > 1), key=len, reverse=True)
 
 
+def dup_mode(f: str, ftype: str, matchable: dict) -> str | None:
+    """How a field is compared for duplicates on its own: "fuzzy" (the duplicate finder's matchers), "exact" (the same value
+    once case and punctuation are ignored; phones: the same number), or None (shared by design: picklists, dates, numbers,
+    places)."""
+    if ftype in _NO_DUPLICATES or _PLACE.search(f) or f not in matchable:
+        return None
+    kind = matchable[f]["kind"]
+    return "fuzzy" if kind in _FUZZY and kind != "phone" else "exact"
+
+
+def duplicate_records(sf: SalesforceClient, obj: str, f: str, ftype: str, rows: list[dict], matchable: dict) -> int | None:
+    """Records that share their value of `f` with another record (as Check fields counts them), or None when the field
+    isn't compared on its own. The health check's "Duplicates by field" chart uses this, so both show the same numbers."""
+    mode = dup_mode(f, ftype, matchable)
+    if mode == "fuzzy":
+        res = duplicates.find_duplicates(sf, obj, [f], prefetched=(rows, False))
+        return res["extra_copies"] + res["total_groups"]
+    if mode == "exact":
+        return sum(len(g) for g in _exact_groups(rows, f, ftype))
+    return None
+
+
 def check_fields(sf: SalesforceClient, obj: str, fields: list[str]) -> dict:
     options = {f["name"]: f for f in empty_fields.empty_options(sf, obj)}
     chosen = [f for f in dict.fromkeys(fields) if f in options]
@@ -74,7 +96,9 @@ def check_fields(sf: SalesforceClient, obj: str, fields: list[str]) -> dict:
     same_account = [f for f in chosen if obj == "Opportunity" and f in (*_SAME_ACCOUNT, "Account.Name")] if "AccountId" in described else []
     paths = list(dict.fromkeys(([name_field] if name_field else []) + chosen + context + open_flag
                                + (["AccountId", "Account.Name"] if same_account else [])))
-    rows, truncated = duplicates._fetch(sf, obj, paths)
+    from ..engine.data_quality import BASE_CONDS  # engine imports salesforce, so import here
+    # The same records the health check's cards look at (e.g. open Leads only), so the numbers match theirs.
+    rows, truncated = duplicates._fetch(sf, obj, paths, " AND ".join(BASE_CONDS.get(obj, ())) or None)
     prefetched = (rows, truncated)
     matchable = {f["name"]: f for f in duplicates.matchable_fields(sf, obj)}
 
@@ -122,9 +146,9 @@ def check_fields(sf: SalesforceClient, obj: str, fields: list[str]) -> dict:
                            for g in found[:GROUPS_SHOWN]],
                 "record_url_prefix": f"{sf.base}/",
             }
-        elif ftype not in _NO_DUPLICATES and not _PLACE.search(f) and f in matchable:
+        elif dup_mode(f, ftype, matchable):
             kind = matchable[f]["kind"]
-            if kind in _FUZZY and kind != "phone":
+            if dup_mode(f, ftype, matchable) == "fuzzy":
                 dup = trim(duplicates.find_duplicates(sf, obj, [f], prefetched=prefetched))
                 method = duplicates.KINDS[kind][0]
             else:  # phones: the same number (a close number is a different phone), as the health check's chart counts them

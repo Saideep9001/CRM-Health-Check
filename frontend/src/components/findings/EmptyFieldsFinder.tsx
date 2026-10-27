@@ -14,7 +14,11 @@ export function fieldsNamed(text: string, object: string, fields: { name: string
   const own = text.split(';').find((part) => part.toLowerCase().trim().startsWith(`${objectLabel(object).toLowerCase()}:`));
   const hay = ` ${(own ?? text).toLowerCase().replace(/[^a-z0-9_]+/g, ' ')} `;
   const has = (s: string) => hay.includes(` ${s.toLowerCase().replace(/[^a-z0-9_]+/g, ' ').trim()} `);
-  return fields.filter((f) => has(f.label) || has(f.name)).map((f) => f.name).slice(0, max);
+  // By label; by API name only when that name isn't just a word of a matched label ("Name" inside "Last Name").
+  const byLabel = fields.filter((f) => has(f.label));
+  const inLabels = ` ${byLabel.map((f) => f.label.toLowerCase().replace(/[^a-z0-9_]+/g, ' ')).join(' ')} `;
+  const byName = (f: { name: string }) => has(f.name) && !inLabels.includes(` ${f.name.toLowerCase()} `);
+  return fields.filter((f) => has(f.label) || byName(f)).map((f) => f.name).slice(0, max);
 }
 
 /** Records where the given field(s) are empty, 200 at a time, with a value filter and CSV. */
