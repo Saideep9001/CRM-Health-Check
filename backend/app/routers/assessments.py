@@ -388,7 +388,7 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
         raise HTTPException(404, "This measure isn’t about specific records.")
     if only:
         fields = [f.strip() for f in only.split(",") if f.strip()][:20]
-        if any(not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", f) for f in fields):
+        if any(not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*(\.Name)?", f) for f in fields):  # a field, or a parent's name (Account.Name)
             raise HTTPException(422, "Unknown field.")
         notes = rec.get("notes")
         if notes is not None:  # flagged values (Data Standardization): the records with a reason on one of these fields

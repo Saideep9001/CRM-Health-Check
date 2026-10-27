@@ -353,6 +353,8 @@ def _std_kind(f: str, field: dict, obj: str | None = None) -> str:
     t = field.get("type")
     if (obj, f) == ("Opportunity", "Name"):
         return "dealname"
+    if f == "Account.Name":  # the related Account's name: the Account Name rules
+        return "company"
     if f == "Amount" or t == "currency":
         return "amount"
     if f == "CloseDate" or t == "date":

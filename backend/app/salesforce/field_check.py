@@ -70,8 +70,10 @@ def check_fields(sf: SalesforceClient, obj: str, fields: list[str]) -> dict:
     has = lambda f: f in described or (f == "Owner.Name" and "OwnerId" in described) or (f == "Account.Name" and "AccountId" in described)  # noqa: E731
     context = [f for f in duplicates.CONTEXT.get(obj, duplicates.DEFAULT_CONTEXT) if has(f)]
     open_flag = ["IsClosed"] if "CloseDate" in chosen and "IsClosed" in described else []  # "an open deal whose close date has passed"
-    same_account = [f for f in chosen if obj == "Opportunity" and f in _SAME_ACCOUNT] if "AccountId" in described else []
-    paths = list(dict.fromkeys(([name_field] if name_field else []) + chosen + context + open_flag + (["AccountId"] if same_account else [])))
+    # Opportunities: Account Name is the linked Account (its id), and Close Date, Amount and Stage compare within one Account
+    same_account = [f for f in chosen if obj == "Opportunity" and f in (*_SAME_ACCOUNT, "Account.Name")] if "AccountId" in described else []
+    paths = list(dict.fromkeys(([name_field] if name_field else []) + chosen + context + open_flag
+                               + (["AccountId", "Account.Name"] if same_account else [])))
     rows, truncated = duplicates._fetch(sf, obj, paths)
     prefetched = (rows, truncated)
     matchable = {f["name"]: f for f in duplicates.matchable_fields(sf, obj)}
@@ -100,21 +102,23 @@ def check_fields(sf: SalesforceClient, obj: str, fields: list[str]) -> dict:
 
         # duplicates on this field alone
         dup = None
-        if f in same_account:  # Opportunities: the same Close Date, Amount or Stage on the same Account (as the health check's chart)
+        if f in same_account:  # Opportunities: the same Account (by its id), or the same Close Date, Amount or Stage on it (as the chart)
+            whole = f == "Account.Name"
             buckets: dict[tuple, list[int]] = defaultdict(list)
             for i, r in enumerate(rows):
                 v = duplicates._value(r, f)
-                if r.get("AccountId") and v not in (None, ""):
-                    buckets[(r["AccountId"], str(v))].append(i)
+                if r.get("AccountId") and (whole or v not in (None, "")):
+                    buckets[(r["AccountId"],) if whole else (r["AccountId"], str(v))].append(i)
             found = sorted((b for b in buckets.values() if len(b) > 1), key=len, reverse=True)
-            acc_cols = list(dict.fromkeys([*cols[:1], "AccountId", f, *cols[1:]]))
+            acc_cols = list(dict.fromkeys([*cols[:1], "Account.Name", f, *cols[1:]]))
             dup = {
-                "object": obj, "standard": False, "rule_name": None, "rules": [[label("AccountId"), label(f)]],
-                "methods": [{"field": label(f), "method": "Same value on the same Account"}],
+                "object": obj, "standard": False, "rule_name": None, "rules": [[label(f)] if whole else [label("Account.Name"), label(f)]],
+                "methods": [{"field": label(f), "method": "Same Account (its Account ID)" if whole else "Same value on the same Account (its Account ID)"}],
                 "columns": [{"name": c, "label": label(c)} for c in acc_cols],
                 "scanned": len(rows), "truncated": truncated,
                 "total_groups": len(found), "extra_copies": sum(len(g) - 1 for g in found),
-                "groups": [{"size": len(g), "matched_on": f"{label(f)} on the same Account", "records": [record(i, acc_cols) for i in g[:RECORDS_PER_GROUP]]}
+                "groups": [{"size": len(g), "matched_on": "Same Account" if whole else f"{label(f)} on the same Account",
+                            "records": [record(i, acc_cols) for i in g[:RECORDS_PER_GROUP]]}
                            for g in found[:GROUPS_SHOWN]],
                 "record_url_prefix": f"{sf.base}/",
             }
