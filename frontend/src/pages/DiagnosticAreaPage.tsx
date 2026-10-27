@@ -203,10 +203,15 @@ export default function DiagnosticAreaPage() {
     const ofWhat = v.outOfLabel ? ` ${v.outOfLabel}` : '';
     const share = shareOf(v, total);
     const decimals = !Number.isInteger(v.value);
+    // The exact count when the check saved it ("What's counted: 9,926 of 9,978 …"), else worked out from the rounded %.
+    const counted = (v.criteria ?? []).find(([k]) => k === "What's counted")?.[1]?.match(/^([\d,]+) of ([\d,]+)/);
+    const exact = counted && total && Number(counted[2].replace(/,/g, '')) === total ? Number(counted[1].replace(/,/g, '')) : null;
     const sub =
       v.unit === '%'
         ? total
-          ? `≈ ${fmtNumber(Math.round((v.value * total) / 100))} of ${fmtNumber(total)}${ofWhat}`
+          ? exact != null
+            ? `${fmtNumber(exact)} of ${fmtNumber(total)}${ofWhat}`
+            : `≈ ${fmtNumber(Math.round((v.value * total) / 100))} of ${fmtNumber(total)}${ofWhat}`
           : ''
         : total
           ? `${Math.round(share * 10) / 10}% of ${fmtNumber(total)}${ofWhat}`

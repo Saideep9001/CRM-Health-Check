@@ -11,6 +11,7 @@ Read-only: records are only read, never changed.
 import re
 from collections import Counter, defaultdict
 from collections.abc import Callable
+from functools import lru_cache
 
 from . import explorer
 from .client import SalesforceClient
@@ -79,6 +80,7 @@ def similarity(a: str, b: str) -> float:
     return 1 - prev[-1] / len(a)
 
 
+@lru_cache(maxsize=500_000)  # the same names are compared many times
 def jaro_winkler(a: str, b: str) -> float:
     if a == b:
         return 1.0
@@ -106,6 +108,7 @@ def jaro_winkler(a: str, b: str) -> float:
     return jaro + prefix * 0.1 * (1 - jaro)
 
 
+@lru_cache(maxsize=100_000)
 def soundex(word: str) -> str:
     """Sounds-alike code (Smith = Smyth = S530), standing in for Salesforce's Metaphone."""
     w = re.sub(r"[^a-z]", "", word.lower())

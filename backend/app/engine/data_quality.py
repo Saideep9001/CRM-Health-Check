@@ -10,6 +10,7 @@ name, key-field completeness, and unused custom fields.
 import logging
 import re
 from collections import Counter, defaultdict
+from functools import lru_cache
 
 from ..salesforce import duplicates as dupes
 from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
@@ -170,6 +171,7 @@ def _dup_kind(f: str, field: dict, name_field: str | None) -> str:
     return dupes.kind_of(f, field)
 
 
+@lru_cache(maxsize=500_000)  # the same pairs of values are compared many times (records sharing a phone, a surname…)
 def _matches(kind: str, a, b) -> bool:
     if kind in ("name", "amount"):
         return dupes.m_exact(a, b)

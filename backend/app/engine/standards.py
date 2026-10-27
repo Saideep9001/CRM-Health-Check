@@ -7,6 +7,7 @@ way most of your records write it counts as right.
 """
 import re
 from collections import Counter, defaultdict
+from functools import lru_cache
 from datetime import date, timedelta
 
 # ---------------------------------------------------------------- places
@@ -113,6 +114,7 @@ def company_key(v: object) -> str:
 
 # ---------------------------------------------------------------- helpers
 
+@lru_cache(maxsize=200_000)  # the same values come up again and again (a city on thousands of records)
 def _edits(a: str, b: str) -> int:
     """Letters added, removed, changed or swapped with the next one ("Francsico" is one away from "Francisco")."""
     d = [[i + j if i * j == 0 else 0 for j in range(len(b) + 1)] for i in range(len(a) + 1)]
@@ -154,7 +156,11 @@ def _layout(v: str, *, caps: bool = True) -> str | None:
 
 def _close_to(value: str, names: list[str], most: int = 2) -> str | None:
     """The known name `value` is probably a misspelling of (at most `most` letters away), if any."""
-    p = _plain(value)
+    return _closest(_plain(value), tuple(names), most)
+
+
+@lru_cache(maxsize=50_000)  # once per distinct value, not once per record
+def _closest(p: str, names: tuple[str, ...], most: int) -> str | None:
     if len(p) < 5:
         return None
     best = min(names, key=lambda n: _edits(p, _plain(n)))
@@ -198,9 +204,13 @@ def email(v: str) -> str | None:
         return "not a valid email address"
     if _PLACEHOLDER.search(s):
         return "a placeholder, not a real address"
-    domain = s.rsplit("@", 1)[-1].lower()
-    near = next((p for p in _PROVIDERS if 0 < _edits(domain, p) <= 2), None)
+    near = _misspelled_provider(s.rsplit("@", 1)[-1].lower())
     return f"misspelled domain — did you mean {near}?" if near else None
+
+
+@lru_cache(maxsize=50_000)  # once per domain
+def _misspelled_provider(domain: str) -> str | None:
+    return next((p for p in _PROVIDERS if 0 < _edits(domain, p) <= 2), None)
 
 
 def _places(items: list[tuple[str, str]], lookup: dict[str, str], names: list[str], extra=None) -> dict[str, str]:
