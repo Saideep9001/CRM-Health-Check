@@ -336,7 +336,7 @@ def matchable_fields(sf: SalesforceClient, obj: str) -> list[dict]:
     desc = explorer._describe(sf, obj)
     fields = explorer._fields(desc)
     out = []
-    if obj == "Contact" and "AccountId" in fields:
+    if obj != "Account" and "AccountId" in fields:
         out.append({"name": "Account.Name", "label": "Account Name", "kind": "company"})
     for f in desc.get("fields", []):
         street = f.get("type") == "textarea" and f["name"].endswith("Street")  # address streets are long text

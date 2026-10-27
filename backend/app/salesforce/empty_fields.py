@@ -13,11 +13,14 @@ _NEVER_EMPTY = {"boolean", "id", "base64", "address", "location", "complexvalue"
 def empty_options(sf: SalesforceClient, obj: str) -> list[dict]:
     """Fields that can be checked for being empty."""
     desc = explorer._describe(sf, obj)
-    return [
+    own = [
         {"name": f["name"], "label": f.get("label") or f["name"], "type": f.get("type", "")}
         for f in desc.get("fields", [])
         if f.get("filterable") and f.get("type") not in _NEVER_EMPTY
     ]
+    # The related Account's name, for records that belong to an Account (Contacts, Opportunities…): easier to read than its id.
+    linked = obj != "Account" and any(f["name"] == "AccountId" for f in own)
+    return ([{"name": "Account.Name", "label": "Account Name", "type": "string"}] if linked else []) + own
 
 
 def where_empty(sf: SalesforceClient, obj: str, fields: list[str], match: str) -> tuple[str, list[str]]:
