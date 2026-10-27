@@ -88,8 +88,10 @@ function DuplicateFlow({ result }: { result: DuplicateResult }) {
 
 /** Values the group's records share are flagged (owner and dates of record keeping aren't: sharing them isn't a duplicate). */
 const NOT_COMPARED = /^(OwnerId|Owner\.Name|CreatedDate|LastModifiedDate|LastActivityDate|SystemModstamp)$/;
-function sameIn(records: { values: Record<string, unknown> }[], at: number, field: string): string | null {
-  if (NOT_COMPARED.test(field)) return null;
+// Picked from a list and shared by design: flagged only in a group matched on that field (e.g. "Stage on the same Account").
+const SHARED_BY_DESIGN = /^(StageName|Type|Industry|LeadSource|Status|Rating|ForecastCategoryName|Salutation)$/;
+function sameIn(records: { values: Record<string, unknown> }[], at: number, field: string, label: string, matchedOn: string): string | null {
+  if (NOT_COMPARED.test(field) || (SHARED_BY_DESIGN.test(field) && !matchedOn.startsWith(label))) return null;
   const key = (v: unknown) => String(v ?? '').toLowerCase().replace(/^(https?:\/\/)?(www\d?\.)?/, '').replace(/[^a-z0-9]+/g, '');
   const mine = key(records[at].values[field]);
   if (!mine) return null;
@@ -170,7 +172,7 @@ export function DuplicateResults({ result, fileName }: { result: DuplicateResult
                       )}
                     </td>
                     {result.columns.map((c, ci) => {
-                      const same = sameIn(g.records, ri, c.name);
+                      const same = sameIn(g.records, ri, c.name, c.label, g.matchedOn);
                       return (
                       <td
                         key={c.name}

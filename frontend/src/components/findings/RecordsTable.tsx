@@ -101,7 +101,8 @@ export function RecordsTable({
   // In each duplicate group, the values the records share (compared the engine's way) are marked, with how many share them.
   const dupNote: Record<string, string>[] = [];
   if (groupCol) {
-    const compared = cols.filter((c) => !['reference', 'date', 'datetime', 'boolean', 'id', 'int', 'double', 'currency', 'percent'].includes(c.type));
+    // Picklists (Stage, Type, Industry…) are shared by design, so they're never what makes a duplicate.
+    const compared = cols.filter((c) => !['reference', 'date', 'datetime', 'boolean', 'id', 'int', 'double', 'currency', 'percent', 'picklist', 'multipicklist'].includes(c.type));
     const members = new Map<number, number[]>();
     groupOf.forEach((g, i) => members.set(g, [...(members.get(g) ?? []), i]));
     for (const [g, idx] of members) {
