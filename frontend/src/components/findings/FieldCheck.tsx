@@ -175,8 +175,9 @@ export function FieldCheck({
   /** Tells the page about the latest run (null when it's reset), so its chart can follow the chosen fields. */
   onResult?: (result: FieldCheckResult | null) => void;
   /** Fields picked to show in the page's records table (its field selector); a number here picks its field there. */
-  shownFields?: string[];
-  onPickFields?: (fields: string[]) => void;
+  /** null = every field ticked (the default). */
+  shownFields?: string[] | null;
+  onPickFields?: (fields: string[] | null) => void;
   /** Fields the page's records table can narrow to for invalid data (empty values work for any field). */
   recordFields?: string[];
 }) {
@@ -239,10 +240,12 @@ export function FieldCheck({
   const picked = result && pick ? (pick.field === ALL ? null : result.fields.find((f) => f.name === pick.field)) : null;
   // Empty values and invalid data are shown in the page's records table (one table), not in a second one here.
   const inRecords = (field: string, kind: FinderKind) => !!onPickFields && (kind === 'empty' || (kind === 'spelling' && recordFields.includes(field)));
-  const isOn = (field: string, kind: FinderKind) => (inRecords(field, kind) ? !!shownFields?.includes(field) : pick?.field === field && pick.kind === kind);
+  const tickable = (run.data?.fields ?? []).filter((f) => inRecords(f.name, focus ?? 'empty')).map((f) => f.name);
+  const isOn = (field: string, kind: FinderKind) =>
+    inRecords(field, kind) ? shownFields == null || shownFields.includes(field) : pick?.field === field && pick.kind === kind;
   const choose = (field: string, kind: FinderKind) => {
     if (!inRecords(field, kind)) return setPick({ field, kind });
-    const now = shownFields ?? [];
+    const now = shownFields ?? tickable;
     onPickFields!(now.includes(field) ? now.filter((f) => f !== field) : [...now, field]);
     document.getElementById('records-table')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
@@ -364,6 +367,17 @@ export function FieldCheck({
             <p className="text-sm">
               <span className="font-semibold tabular-nums">{fmtNumber(result.scanned)}</span> {what} checked
               {result.truncated && <span className="text-ink-muted"> (the first 20,000)</span>}. {onPickFields && focus !== 'duplicates' ? 'Tick a field to show its records in the table below.' : 'Click a number to see its records.'}
+              {tickable.length > 1 && (
+                <span className="ml-2 whitespace-nowrap text-xs">
+                  <button type="button" className="font-semibold text-brand hover:underline disabled:text-ink-subtle disabled:no-underline" disabled={shownFields == null || tickable.every((f) => shownFields.includes(f))} onClick={() => onPickFields!(null)}>
+                    Select all
+                  </button>
+                  <span className="mx-1.5 text-ink-subtle">·</span>
+                  <button type="button" className="font-semibold text-brand hover:underline disabled:text-ink-subtle disabled:no-underline" disabled={shownFields?.length === 0} onClick={() => onPickFields!([])}>
+                    Deselect all
+                  </button>
+                </span>
+              )}
             </p>
             <div className="overflow-x-auto rounded-xl border border-line">
               <table className={cx('w-full text-left text-sm', !focus && 'min-w-[640px]')}>

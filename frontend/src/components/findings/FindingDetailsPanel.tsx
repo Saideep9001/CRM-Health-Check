@@ -26,7 +26,7 @@ export function FindingDetailsPanel({
   extra?: ReactNode;
   fieldCheck?: FieldCheckResult | null;
   onClearFieldCheck?: () => void;
-  shownFields?: string[];
+  shownFields?: string[] | null;
 }) {
   const results = useAssessmentResults(finding?.assessmentId ?? null, !!finding);
   const areaRes = finding ? results.data?.areas.find((a) => a.areaId === finding.areaId) : undefined;

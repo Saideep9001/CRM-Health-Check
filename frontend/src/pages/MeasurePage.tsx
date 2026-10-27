@@ -18,7 +18,7 @@ export default function MeasurePage() {
   const object = params.get('object');
   const navigate = useNavigate();
   const [checked, setChecked] = useState<FieldCheckResult | null>(null); // the latest Check fields run
-  const [shown, setShown] = useState<string[]>([]); // fields picked to show in the records table (from Check fields or its selector)
+  const [shown, setShown] = useState<string[] | null>(null); // fields ticked in Check fields for the records table (null = all)
   const area = getArea(areaId);
   const { state, error, refetch, latest, results, findings } = useLatestAssessment();
 

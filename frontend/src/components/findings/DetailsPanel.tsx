@@ -178,10 +178,9 @@ function Records({
   /** Fields the records can be narrowed to (empty key fields, or fields with invalid data), with how many records. */
   fieldChoices?: { field: string; label: string; count: number }[];
   /** The fields ticked in Check fields on the page: only records with a problem in one of them. */
-  shownFields?: string[];
+  shownFields?: string[] | null;
 }) {
   const objects = indicator?.recordObjects ?? [];
-  const shown = shownFields ?? [];
   const preferred =
     (initialObject && objects.includes(initialObject) ? initialObject : null) ??
     (finding?.objectName && objects.includes(finding.objectName) ? finding.objectName : objects[0] ?? null);
@@ -192,7 +191,11 @@ function Records({
   useEffect(() => setFilters([]), [object, indicator?.label, finding?.id]);
   const useMeasure = !!object && !!measureAssessmentId && !!indicator;
   const choices = useMeasure ? fieldChoices : [];
-  const only = shown.filter((f) => choices.some((c) => c.field === f));
+  // Fields ticked in Check fields (null = all, the default). All ticked is the measure's own records; none ticked shows none.
+  const every = choices.map((c) => c.field);
+  const ticked = shownFields == null ? every : shownFields.filter((f) => every.includes(f));
+  const only = ticked.length === every.length ? [] : ticked;
+  const noneTicked = every.length > 0 && ticked.length === 0;
   const measureRecords = useIndicatorRecords(useMeasure ? measureAssessmentId : null, area.id, indicator?.label ?? '', object, filters, only);
   const missing = /^missing/i.test(indicator?.label ?? '');
   const findingRecords = useFindingRecords(finding?.id ?? null, !useMeasure && !!finding?.recordsAvailable, filters);
@@ -216,6 +219,11 @@ function Records({
           </div>
         )}
         <div id="records-table" className="scroll-mt-20">
+        {noneTicked ? (
+          <p className="rounded-xl border border-dashed border-line px-4 py-8 text-center text-sm text-ink-muted">
+            No fields ticked. Tick a field in Check fields above, or <span className="font-medium">Select all</span>, to see its records.
+          </p>
+        ) : (
         <RecordsTable
           query={measureRecords}
           title={only.length ? `${objectLabel(object!)} · ${only.map((f) => choices.find((c) => c.field === f)?.label ?? f).join(', ')}` : objectLabel(object!)}
@@ -230,6 +238,7 @@ function Records({
             load: (field, others, signal) => indicatorApi.values(measureAssessmentId!, area.id, indicator!.label, object!, field, others, signal, only),
           }}
         />
+        )}
         </div>
         <p className="mt-2 text-[11px] text-ink-subtle">
           {duplicates ? 'Each shaded block is one duplicate group (#group · records in it). ' : ''}
@@ -313,7 +322,7 @@ export function DetailsPanel({
   fieldCheck?: FieldCheckResult | null;
   onClearFieldCheck?: () => void;
   /** Fields ticked in Check fields on the page: the records show only those with a problem in one of them. */
-  shownFields?: string[];
+  shownFields?: string[] | null;
 }) {
   const navigate = useNavigate();
   const { canEdit } = useRole();

@@ -14,7 +14,7 @@ export default function ProblemPage() {
   const navigate = useNavigate();
   const finding = useFinding(findingId);
   const [checked, setChecked] = useState<FieldCheckResult | null>(null); // the latest Check fields run
-  const [shown, setShown] = useState<string[]>([]); // fields picked to show in the records table (from Check fields or its selector)
+  const [shown, setShown] = useState<string[] | null>(null); // fields ticked in Check fields for the records table (null = all)
   const f = finding.data ?? null;
   const results = useAssessmentResults(f?.assessmentId ?? null, !!f);
   const all = useFindings(f?.assessmentId ?? null, !!f);

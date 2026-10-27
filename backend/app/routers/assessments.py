@@ -398,6 +398,8 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
             where = " OR ".join(f"{f} = null" for f in fields)
         else:
             raise HTTPException(422, "This measure can’t be narrowed to fields.")
+        if rec.get("where"):  # within the measure's own records (its time window, open leads only…)
+            where = f"({rec['where']}) AND ({where})"
         cols = rec.get("columns") or []  # the chosen fields right after the name, so they're always in view
         rec = {**rec, "where": where, "columns": list(dict.fromkeys(cols[:1] + fields + cols[1:]))}
     return rec, row.org_id, f"{label} {rec['object']}"

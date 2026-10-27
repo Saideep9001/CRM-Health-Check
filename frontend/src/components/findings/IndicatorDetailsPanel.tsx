@@ -36,7 +36,7 @@ export function IndicatorDetailsPanel({
   extra?: React.ReactNode;
   fieldCheck?: FieldCheckResult | null;
   onClearFieldCheck?: () => void;
-  shownFields?: string[];
+  shownFields?: string[] | null;
 }) {
   const open = findings.filter((f) => f.status !== 'resolved' && f.status !== 'accepted-risk');
   const bySeverity = (a: Finding, b: Finding) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity] || b.affectedRecords - a.affectedRecords;

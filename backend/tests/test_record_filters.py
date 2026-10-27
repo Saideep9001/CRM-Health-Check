@@ -96,7 +96,7 @@ def test_a_measures_records_narrow_to_chosen_fields(client, sf):
     # missing key fields: records with any chosen field empty
     params = {"label": "Missing Key Fields (Accounts)", "object": "Account", "only": "Phone,Website"}
     assert client.get(f"{base}/indicator-records", params=params).status_code == 200
-    assert "WHERE (Phone = null OR Website = null)" in sf.soql[-1] or "WHERE Phone = null OR Website = null" in sf.soql[-1]
+    assert "AND (Phone = null OR Website = null)" in sf.soql[-1]  # within the measure's own records
     # data standardization: records with a reason on a chosen field
     params = {"label": "Data Standardization Issues (Accounts)", "object": "Account", "only": "Phone"}
     assert client.get(f"{base}/indicator-records", params=params).status_code == 200
