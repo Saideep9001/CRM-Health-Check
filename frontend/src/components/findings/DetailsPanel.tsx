@@ -369,7 +369,10 @@ export function DetailsPanel({
     ? (fieldCheck?.anyEmpty ?? null)
     : (finding?.affectedRecords ?? (v && /^missing/i.test(v.label) && v.unit === '%' && recordsOf ? Math.round((v.value * recordsOf) / 100) : null));
   const legacy = !!v && !v.how && !v.rule && !(v.criteria ?? []).length;
-  const urgency = scored && v!.score! < PROBLEM_BELOW ? URGENCY.find((u) => u.severity === urgencyFor(v!.score!))! : null;
+  // Some checks raise a problem whenever any record is affected (their rule says so), whatever the score.
+  const raisesOnAny = /problem is raised whenever any/i.test(v?.rule ?? '');
+  const urgency = scored && (raisesOnAny ? v!.value > 0 : v!.score! < PROBLEM_BELOW) ? URGENCY.find((u) => u.severity === urgencyFor(v!.score!))! : null;
+  const rangeOf = (u: (typeof URGENCY)[number]) => (raisesOnAny && u.severity === 'low' ? '80 or more' : u.range);
   // The (i) beside Score: this page's own numbers worked through, then the rule and the urgency bands.
   const raiseBelow = chartKind === 'missing' ? 90 : PROBLEM_BELOW; // missing key fields raise a problem below 90 (engine)
   const scoreInfo = v && scored ? (
@@ -388,7 +391,9 @@ export function DetailsPanel({
       )}
       {v.rule && <span className="block">Rule: {v.rule}</span>}
       <span className="block">
-        Urgency: below 40 Critical (P1) · 40–59 High (P2) · 60–79 Medium (P3) · 80–{raiseBelow - 1} Low (P4) · {raiseBelow} or more: no problem raised.
+        {raisesOnAny
+          ? 'Urgency: below 40 Critical (P1) · 40–59 High (P2) · 60–79 Medium (P3) · 80 or more Low (P4). A problem is raised whenever any record is affected.'
+          : `Urgency: below 40 Critical (P1) · 40–59 High (P2) · 60–79 Medium (P3) · 80–${raiseBelow - 1} Low (P4) · ${raiseBelow} or more: no problem raised.`}
       </span>
     </span>
   ) : undefined;
@@ -405,10 +410,10 @@ export function DetailsPanel({
           name: 'Problem raised when',
           detail: (
             <>
-              The score is below <strong>{PROBLEM_BELOW}</strong>. Urgency:{' '}
+              {raisesOnAny ? <>Any record is affected (the score sets the urgency).</> : <>The score is below <strong>{PROBLEM_BELOW}</strong>.</>} Urgency:{' '}
               {URGENCY.map((u, i) => (
                 <span key={u.severity} className="whitespace-nowrap">
-                  <span className="font-medium" style={{ color: SEVERITY_COLORS[u.severity] }}>{u.label}</span> {u.range}
+                  <span className="font-medium" style={{ color: SEVERITY_COLORS[u.severity] }}>{u.label}</span> {rangeOf(u)}
                   {i < URGENCY.length - 1 ? ' · ' : ''}
                 </span>
               ))}
@@ -497,7 +502,7 @@ export function DetailsPanel({
                   scored ? (
                     <>
                       <span className="font-semibold" style={{ color: urgency ? SEVERITY_COLORS[urgency.severity] : 'rgb(var(--good))' }}>
-                        {urgency ? `${urgency.label} (score ${urgency.range})` : `No problem raised (${PROBLEM_BELOW} or more)`}
+                        {urgency ? `${urgency.label} (score ${rangeOf(urgency)})` : raisesOnAny ? 'No problem raised (no records affected)' : `No problem raised (${PROBLEM_BELOW} or more)`}
                       </span>
                       {finding && wide && (
                         <span className="mt-1 block">
