@@ -441,7 +441,8 @@ export function DetailsPanel({
     </span>
   ) : undefined;
   const title = finding?.name ?? v?.label ?? '';
-  const flow = v ? flowFor(v, finding) : null; // the steps from what was checked to the number, for Area 1 cards
+  // The steps from what was checked to the number, for Area 1 cards (duplicates show theirs with their groups instead)
+  const flow = v && !/^duplicate/i.test(v.label) ? flowFor(v, finding) : null;
   // A measure can cover several objects (e.g. phone numbers on Accounts, Contacts and Leads) while a problem is about one.
   const measureObjects = v?.recordObjects ?? [];
   const wide = !!finding?.objectName && measureObjects.length > 1;

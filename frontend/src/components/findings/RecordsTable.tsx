@@ -74,15 +74,15 @@ export function RecordsTable({
   // Why each flagged value was flagged, from the check (record id → field → reason), across the loaded pages.
   const notes: Record<string, Record<string, string>> = Object.assign({}, ...pages.map((p) => p.cellNotes ?? {}));
   const key = new Set(keyFields ?? []);
-  const why = (r: { id?: string | null; values: Record<string, unknown> }, field: string): string | null => {
+  const why = (r: { id?: string | null; values: Record<string, unknown> }, field: string, row?: number): string | null => {
     if (markOnly?.length && !markOnly.includes(field)) return null;
+    const same = row != null ? dupNote[row]?.[field] : undefined; // duplicate groups: a value another record in the group shares
+    if (same) return same;
     const n = r.id ? notes[r.id]?.[field] : undefined;
     if (n) return n;
     const val = r.values[field];
     return key.has(field) && (val == null || String(val).trim() === '') ? 'Empty — key field' : null;
   };
-  const flagged = rows.some((r) => cols.some((c) => why(r, c.name)));
-
   const groupOf: number[] = [];
   const groupSize = new Map<number, number>();
   if (groupCol) {
@@ -98,6 +98,24 @@ export function RecordsTable({
       groupSize.set(g, (groupSize.get(g) ?? 0) + 1);
     });
   }
+  // In each duplicate group, the values the records share (compared the engine's way) are marked, with how many share them.
+  const dupNote: Record<string, string>[] = [];
+  if (groupCol) {
+    const compared = cols.filter((c) => !['reference', 'date', 'datetime', 'boolean', 'id', 'int', 'double', 'currency', 'percent'].includes(c.type));
+    const members = new Map<number, number[]>();
+    groupOf.forEach((g, i) => members.set(g, [...(members.get(g) ?? []), i]));
+    for (const [g, idx] of members) {
+      if (idx.length < 2) continue;
+      for (const c of compared) {
+        const keys = idx.map((i) => matchKey(rows[i].values[c.name], c.name));
+        idx.forEach((i, n) => {
+          const others = keys[n] ? keys.filter((k, m) => m !== n && k === keys[n]).length : 0;
+          if (others) (dupNote[i] ??= {})[c.name] = `Same as ${others} other record${others > 1 ? 's' : ''} in group #${g}`;
+        });
+      }
+    }
+  }
+  const flagged = rows.some((r, i) => cols.some((c) => why(r, c.name, i)));
 
   return (
     <section className="overflow-hidden rounded-xl border border-line">
@@ -192,7 +210,7 @@ export function RecordsTable({
                       )}
                       {cols.map((c, ci) => {
                         const v = formatValue(asField(c), r.values[c.name], r.refNames[c.name]);
-                        const reason = why(r, c.name);
+                        const reason = why(r, c.name, i);
                         return (
                           <td
                             key={c.name}
