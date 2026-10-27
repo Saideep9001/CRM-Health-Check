@@ -58,6 +58,7 @@ function objectOf(label: string): { group: string; title: string } | null {
   if (m) return { group: m[1], title: 'Duplicates' };
   m = label.match(/^(Accounts|Opportunities|Leads) (Without .+)$/) ?? label.match(/^Stale (Leads)$/);
   if (m) return { group: m[1], title: label };
+  if (/^Data Quality Scorecard$/.test(label)) return { group: 'Organization', title: label };
   return null;
 }
 
@@ -175,6 +176,52 @@ export default function DiagnosticAreaPage() {
         )}
         <span className="mt-auto inline-flex items-center gap-1 pt-4 text-xs font-semibold">
           Browse records <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-1" />
+        </span>
+      </motion.button>
+    );
+  };
+
+  // The Data Quality Scorecard: a grade per object and one overall, A–F (the rule explains how they're worked out).
+  const scorecardOf = (label: string | undefined) => {
+    const v = label ? result?.indicators.find((x) => x.label === label) : null;
+    const grades = (v?.criteria ?? []).filter(([k]) => / grade$/.test(k)) as [string, string][];
+    if (!v || !grades.length) return null;
+    const tone = (g: string) => (g === 'A' || g === 'B' ? 'text-good bg-good-soft ring-good/30' : g === 'F' ? 'text-bad bg-bad-soft ring-bad/30' : 'text-warn bg-warn-soft ring-warn/30');
+    return (
+      <motion.button
+        type="button"
+        onClick={() => navigate(`/measures/${area.id}?label=${encodeURIComponent(v.label)}`)}
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="group w-full rounded-2xl border border-line bg-surface p-5 text-left shadow-sm transition hover:border-brand/40"
+      >
+        <span className="flex items-center gap-2.5">
+          <span className="grid h-9 w-9 place-items-center rounded-xl bg-brand-soft text-brand">
+            <Award className="h-4 w-4" />
+          </span>
+          <span className="text-sm font-semibold">Data Quality Scorecard</span>
+        </span>
+        <span className="mt-4 grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          {grades.map(([k, text]) => {
+            const g = text.trim().charAt(0);
+            const score = text.match(/\((\d+)\)/)?.[1];
+            const parts = text.split('—')[1]?.trim();
+            const overall = /^Overall/.test(k);
+            return (
+              <span key={k} className={cx('flex flex-col rounded-xl border p-3', overall ? 'border-brand/30 bg-brand-soft/40' : 'border-line bg-muted/30')}>
+                <span className="text-xs font-medium text-ink-muted">{overall ? 'Overall Data Quality' : k.replace(/ grade$/, '')}</span>
+                <span className="mt-2 flex items-baseline gap-2">
+                  <span className={cx('grid h-11 w-11 place-items-center rounded-xl text-2xl font-bold ring-1', tone(g))}>{g}</span>
+                  {score && <span className="text-sm tabular-nums text-ink-muted">{score}/100</span>}
+                </span>
+                {parts && <span className="mt-2 text-[11px] leading-snug text-ink-subtle">{parts}</span>}
+              </span>
+            );
+          })}
+        </span>
+        <span className="mt-4 block text-xs text-ink-muted">{v.rule}</span>
+        <span className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-brand">
+          How it’s worked out <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-1" />
         </span>
       </motion.button>
     );
@@ -364,7 +411,15 @@ export default function DiagnosticAreaPage() {
               {tab === 'indicators' && (
                 <div className="space-y-5">
                   {sections.map((sec, si) =>
-                    sec.name ? (
+                    sec.name === 'Organization' && scorecardOf(sec.items[0]?.label) ? (
+                      <section key={sec.name} className="rounded-xl border border-line bg-muted/30 p-4">
+                        <h3 className="mb-4 flex items-center gap-2 text-base font-semibold">
+                          <span className="h-2.5 w-2.5 rounded-full bg-brand" />
+                          Organization
+                        </h3>
+                        {scorecardOf(sec.items[0].label)}
+                      </section>
+                    ) : sec.name ? (
                       <section key={sec.name} className="rounded-xl border border-line bg-muted/30 p-4">
                         <h3 className="mb-4 flex items-center gap-2 text-base font-semibold">
                           <span className="h-2.5 w-2.5 rounded-full bg-brand" />
