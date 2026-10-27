@@ -11,7 +11,9 @@ export type FinderKind = 'duplicates' | 'empty' | 'spelling';
 /** Which result a measure is about (duplicates, empty values or odd spellings) and the fields it looked at; null when
  *  it isn't about the values of fields. */
 export function finderFor(name: string, criteria: [string, string][] = []): { kind: FinderKind; fieldsText: string } | null {
-  const fieldsText = criteria.find(([k]) => k === 'Fields checked' || k === 'Compared on')?.[1] ?? '';
+  // A card can name Check fields' starting fields itself; otherwise they're the fields it compared or checked.
+  const fieldsText =
+    criteria.find(([k]) => k === 'Check fields starts with')?.[1] ?? criteria.find(([k]) => k === 'Fields checked' || k === 'Compared on')?.[1] ?? '';
   if (/duplicate/i.test(name)) return { kind: 'duplicates', fieldsText };
   if (/standardi[sz]|consistent|spell/i.test(name)) return { kind: 'spelling', fieldsText };
   if (criteria.some(([k]) => k === 'Counts as missing' || k === 'Incomplete lead') || /missing|incomplete|completeness|empty|blank/i.test(name))
