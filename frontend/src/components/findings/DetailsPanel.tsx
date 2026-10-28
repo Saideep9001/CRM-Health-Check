@@ -37,7 +37,7 @@ import { FixPlanPanel } from './FixPlanPanel';
 import { RecordsTable } from './RecordsTable';
 import { DuplicateResults } from './DuplicateFinder';
 import { ALL } from './FieldCheck';
-import { FlowSteps, flowFor, liveFlowFor, type FlowStep } from './MeasureFlow';
+import { FlowSteps, fieldFlowFor, flowFor, liveFlowFor, type FlowStep } from './MeasureFlow';
 import { FieldListTable } from './FieldListTable';
 import { FieldScoreChart, chartKindFor } from './FieldScoreChart';
 
@@ -433,10 +433,11 @@ export function DetailsPanel({
   const legacy = !!v && !v.how && !v.rule && !(v.criteria ?? []).length;
   // Some checks raise a problem whenever any record is affected (their rule says so), whatever the score.
   const raisesOnAny = /problem is raised whenever any/i.test(v?.rule ?? '');
-  const urgency = scored && (raisesOnAny ? v!.value > 0 : v!.score! < PROBLEM_BELOW) ? URGENCY.find((u) => u.severity === urgencyFor(v!.score!))! : null;
-  const rangeOf = (u: (typeof URGENCY)[number]) => (raisesOnAny && u.severity === 'low' ? '80 or more' : u.range);
+  // The score below which a problem is raised: what the card's rule says (e.g. "below 90"), else 95.
+  const raiseBelow = Number(v?.rule?.match(/problem is raised when the score is below (\d+)/i)?.[1]) || (chartKind === 'missing' ? 90 : PROBLEM_BELOW);
+  const urgency = scored && (raisesOnAny ? v!.value > 0 : v!.score! < raiseBelow) ? URGENCY.find((u) => u.severity === urgencyFor(v!.score!))! : null;
+  const rangeOf = (u: (typeof URGENCY)[number]) => (u.severity !== 'low' ? u.range : raisesOnAny ? '80 or more' : `80–${raiseBelow - 1}`);
   // The (i) beside Score: this page's own numbers worked through, then the rule and the urgency bands.
-  const raiseBelow = chartKind === 'missing' ? 90 : PROBLEM_BELOW; // missing key fields raise a problem below 90 (engine)
   const scoreInfo = v && scored ? (
     <span className="block space-y-1.5">
       {keyValues && recordsOf != null && !fromCheck?.length ? (
@@ -463,6 +464,7 @@ export function DetailsPanel({
   // The steps from what was checked to the number, for Area 1 cards: in its own section, or for duplicates, missing key
   // fields and data standardization right above their records table (which it explains)
   const allFlow = v ? flowFor(v, finding) : null;
+  const fieldFlow = v?.fieldList ? fieldFlowFor(v) : null; // area 2: from the fields looked at to the ones listed, above the list
   const flowAtRecords = !!v && /^(duplicate|missing|data standardi)/i.test(v.label);
   const flow = flowAtRecords ? null : allFlow;
   // A measure can cover several objects (e.g. phone numbers on Accounts, Contacts and Leads) while a problem is about one.
@@ -477,7 +479,7 @@ export function DetailsPanel({
           name: 'Problem raised when',
           detail: (
             <>
-              {raisesOnAny ? <>Any record is affected (the score sets the urgency).</> : <>The score is below <strong>{PROBLEM_BELOW}</strong>.</>} Urgency:{' '}
+              {raisesOnAny ? <>Any record is affected (the score sets the urgency).</> : <>The score is below <strong>{raiseBelow}</strong>.</>} Urgency:{' '}
               {URGENCY.map((u, i) => (
                 <span key={u.severity} className="whitespace-nowrap">
                   <span className="font-medium" style={{ color: SEVERITY_COLORS[u.severity] }}>{u.label}</span> {rangeOf(u)}
@@ -569,7 +571,7 @@ export function DetailsPanel({
                   scored ? (
                     <>
                       <span className="font-semibold" style={{ color: urgency ? SEVERITY_COLORS[urgency.severity] : 'rgb(var(--good))' }}>
-                        {urgency ? `${urgency.label} (score ${rangeOf(urgency)})` : raisesOnAny ? 'No problem raised (no records affected)' : `No problem raised (${PROBLEM_BELOW} or more)`}
+                        {urgency ? `${urgency.label} (score ${rangeOf(urgency)})` : raisesOnAny ? 'No problem raised (no records affected)' : `No problem raised (${raiseBelow} or more)`}
                       </span>
                       {finding && wide && (
                         <span className="mt-1 block">
@@ -685,7 +687,12 @@ export function DetailsPanel({
 
           {v?.fieldList ? (
             <Section icon={<Database className="h-3.5 w-3.5" />} title="The fields behind this number">
-              <FieldListTable items={v.fieldList} />
+              {fieldFlow && (
+                <div className="mb-3">
+                  <FlowSteps steps={fieldFlow} />
+                </div>
+              )}
+              <FieldListTable items={v.fieldList} id={v.label} />
             </Section>
           ) : (
             <Section icon={<Database className="h-3.5 w-3.5" />} title={finding ? 'The records' : 'The records behind this number'}>

@@ -159,3 +159,61 @@ export function liveFlowFor(
     { label: 'Records with invalid data', value: bad, hint: `${pctOf(bad, records)} of all ${what}; a record with several counts once${last}`, tone: 'bad' },
   ];
 }
+
+/** Area 2 (fields) cards: the steps from the fields looked at to the ones listed, from the card's own numbers. */
+export function fieldFlowFor(v: IndicatorValue): FlowStep[] | null {
+  const crit = (name: string) => (v.criteria ?? []).find(([k]) => k === name)?.[1] as string | undefined;
+  const items = v.fieldList ?? [];
+  const never = items.filter((f) => f.filled === 0).length;
+  const n = v.value;
+  const of = v.outOf ?? null;
+  if (/^All Fields/.test(v.label)) {
+    const m = crit('Fields')?.match(/([\d,]+) in all — ([\d,]+) standard, ([\d,]+) custom/);
+    if (!m) return null;
+    return [
+      { label: 'Fields on the object', value: num(m[1]), hint: 'Every field Salesforce lists for it' },
+      { label: 'From Salesforce', value: num(m[2]), hint: 'Standard fields' },
+      { label: 'Added in your org', value: num(m[3]), hint: 'Custom fields (including installed packages)' },
+      { label: 'Formula fields', value: num(crit('Formula fields')), hint: 'Worked out by Salesforce, never typed in' },
+      { label: 'Required', value: num(crit('Required')), hint: 'Must be filled in to save a record' },
+    ];
+  }
+  if (of == null) return null;
+  if (/^Unused Fields/.test(v.label))
+    return [
+      { label: 'Custom fields checked', value: of, hint: 'Built in your org, that people fill in' },
+      { label: 'In use', value: of - n, hint: `Filled on 1% of records or more · ${pctOf(of - n, of)}`, tone: 'good' },
+      { label: 'Hardly ever filled', value: n - never, hint: 'On fewer than 1% of records', tone: 'warn' },
+      { label: 'Never filled in', value: never, hint: 'Empty on every record', tone: 'bad' },
+      { label: 'Unused fields', value: n, hint: `${pctOf(n, of)} of the custom fields`, tone: 'bad' },
+    ];
+  if (/^Outdated Fields/.test(v.label))
+    return [
+      { label: 'Custom fields checked', value: of, hint: 'Built in your org' },
+      { label: 'Look current', value: of - n, hint: pctOf(of - n, of), tone: 'good' },
+      { label: 'Look outdated', value: n, hint: `Named old, backup, legacy, copy, test… · ${pctOf(n, of)}`, tone: 'bad' },
+    ];
+  if (/^Look-alike Fields/.test(v.label)) {
+    const m = crit('Fields compared')?.match(/([\d,]+) fields, ([\d,]+) of them/);
+    return [
+      ...(m ? [{ label: 'Fields compared', value: num(m[1]), hint: 'Parts of addresses and map locations left out' }] : []),
+      { label: 'Built in your org', value: of, hint: 'Each pair has at least one of these' },
+      { label: 'Look-alike pairs', value: n, hint: 'Fields that seem to hold the same thing', tone: 'bad' },
+      { label: 'Fields in a pair', value: items.length, hint: 'Listed below with the field they look like', tone: 'warn' },
+    ];
+  }
+  if (/^Low-Completion Fields/.test(v.label))
+    return [
+      { label: 'Fields checked', value: of, hint: 'Fields people fill in, standard and custom' },
+      { label: 'Filled on 20%+', value: of - n, hint: pctOf(of - n, of), tone: 'good' },
+      { label: 'Filled on under 20%', value: n, hint: `Low completion · ${pctOf(n, of)}`, tone: 'warn' },
+      { label: 'Never filled in', value: never, hint: 'Empty on every record', tone: 'bad' },
+    ];
+  if (/^Empty Fields Others Depend On/.test(v.label))
+    return [
+      { label: 'Nearly empty custom fields', value: of, hint: 'Filled on fewer than 20% of records' },
+      { label: 'Nothing relies on them', value: of - n, hint: 'Safe to tidy up', tone: 'good' },
+      { label: 'Relied on', value: n, hint: 'Used by a formula, validation rule, flow, report…', tone: 'bad' },
+    ];
+  return null;
+}
