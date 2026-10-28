@@ -6,8 +6,10 @@ checks (validation rules, Path, flows…) read the Tooling API and are skipped w
 a note when the connected user can't view setup.
 """
 import re
+from collections.abc import Callable
 from datetime import datetime, timezone
 
+from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
 from .core import Ctx, FindingDraft, Unavailable, pct, rate_score
 
 OPEN_LEADS = "IsConverted = false"
@@ -111,22 +113,41 @@ def unassigned_leads(ctx: Ctx) -> None:
         )
 
 
+def _stuck(ctx: Ctx) -> tuple[Callable[[int], tuple[str, ...]], str, str]:
+    """How "stuck for N days" is told: the Status hasn't changed (Lead History, when Status changes are tracked), or else
+    the Lead hasn't been edited and has no logged activity."""
+    try:
+        ctx.count("Lead", "Id IN (SELECT LeadId FROM LeadHistory WHERE Field = 'Status')", recent=False)
+        return ((lambda n: (f"Id NOT IN (SELECT LeadId FROM LeadHistory WHERE Field = 'Status' AND CreatedDate = LAST_N_DAYS:{n})",)),
+                "Lead History (Status changes)", "the Status hasn’t changed")
+    except SalesforceAuthExpired:
+        raise
+    except SalesforceError:
+        return ((lambda n: (f"LastModifiedDate < LAST_N_DAYS:{n}", f"(LastActivityDate = null OR LastActivityDate < LAST_N_DAYS:{n})")),
+                "Last Modified Date and Last Activity Date (Status changes aren’t tracked in Lead History)",
+                "nobody has edited them and no activity is logged")
+
+
 def stale_leads(ctx: Ctx) -> None:
+    """Open Leads stuck in the same status for the check's stale-lead days (30 by default), created before then."""
     days = int(ctx.scope.stale_lead_days)
     total = ctx.count("Lead", OPEN_LEADS)
-    conds = (OPEN_LEADS, f"LastModifiedDate < LAST_N_DAYS:{days}", f"(LastActivityDate = null OR LastActivityDate < LAST_N_DAYS:{days})")
+    stuck, source, means = _stuck(ctx)
+    conds = (OPEN_LEADS, f"CreatedDate < LAST_N_DAYS:{days}", *stuck(days))
     n = ctx.count("Lead", *conds) if total else 0
+    by_age = [(d, ctx.count("Lead", OPEN_LEADS, f"CreatedDate < LAST_N_DAYS:{d}", *stuck(d))) for d in (30, 60, 90)] if total else []
     score = rate_score(n / total, 0.5) if total else 100
     ctx.metric(
         "Stale Leads", n, "count", "lower-better", score,
-        how=f"Open Leads that nobody has edited and that have no logged activity in the last {days} days.",
+        how=f"Open Leads stuck in the same status for {days}+ days ({means}), out of {total:,} open Leads.",
         rule="100 when no open Leads are stale, falling evenly to 0 when 50% of open Leads are.",
-        columns=["Name", "Company", "LastModifiedDate", "LastActivityDate", "Status", "OwnerId"],
+        columns=["Name", "Company", "Status", "LastModifiedDate", "LastActivityDate", "OwnerId", "CreatedDate"],
         order="LastModifiedDate",
         criteria=[
             ("Records checked", f"{total:,} open Leads (not converted)"),
-            ("Fields checked", "Last Modified Date and Last Activity Date"),
-            ("Stale", f"Not edited in the last {days} days AND no activity logged in the last {days} days (or never)"),
+            ("Told from", source),
+            ("Stale", f"In the same status for {days} days or more ({means}), on Leads created before then"),
+            ("By how long", "; ".join(f"{d}+ days: {c:,}" for d, c in by_age) or "—"),
             ("What's counted", f"{n:,} of {total:,} open Leads ({pct(n, total):.0f}%) are stale"),
             ("Records listed", "Every stale open Lead, least recently edited first"),
         ],
@@ -138,7 +159,7 @@ def stale_leads(ctx: Ctx) -> None:
         records=("Lead", *conds),
         score=score,
         affected=n,
-        description=f"{n:,} of {total:,} open Leads ({pct(n, total):.0f}%) haven’t been touched in {days}+ days."
+        description=f"{n:,} of {total:,} open Leads ({pct(n, total):.0f}%) have been stuck in the same status for {days}+ days."
         + (f" Most belong to: {_owners(owners)}." if owners else ""),
         why="Old, untouched leads hide the ones worth working and make the pipeline look bigger than it is.",
         impact="Missed follow-ups and misleading lead reports.",

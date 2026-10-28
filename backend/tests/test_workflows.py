@@ -34,7 +34,8 @@ COUNTS = [
     (("FROM Lead", "Owner.Type = 'Queue'"), 12),
     (("FROM Lead", "LeadSource IN", "LAST_N_DAYS:90"), 25),
     (("FROM Lead", "LeadSource IN", "LAST_N_DAYS:14"), 0),
-    (("FROM Lead", "LastModifiedDate < LAST_N_DAYS"), 20),
+    (("FROM Lead", "LeadHistory WHERE Field = 'Status' AND"), 20),  # stale: no Status change (Lead History)
+    (("FROM Lead", "LastModifiedDate < LAST_N_DAYS"), 20),  # stale, where Status changes aren't tracked
     (("CloseDate < TODAY",), 8),
     (("NOT IN (SELECT OpportunityId",), 15),
     (("LastStageChangeDate",), 10),
@@ -162,7 +163,7 @@ def test_all_workflow_areas(client, sf):
     assert "Unclear validation error messages" in names and "No active Lead Assignment Rule" in names
     assert names["Open deals with no contact roles"]["objectName"] == "Opportunity"
     assert all(q.lstrip().upper().startswith("SELECT") for q in sf.soql)
-    assert any("LAST_N_DAYS:14" in q and "FROM Lead" in q and "LastModifiedDate <" in q for q in sf.soql)  # stale-lead setting used
+    assert any("LAST_N_DAYS:14" in q and "FROM Lead" in q and "LeadHistory WHERE Field = 'Status'" in q for q in sf.soql)  # stale-lead setting used
     assert any("LAST_N_DAYS:45" in q and "LastStageChangeDate" in q for q in sf.soql)  # stuck-deal setting used
 
 
