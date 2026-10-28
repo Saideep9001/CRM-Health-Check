@@ -19,7 +19,8 @@ import {
 } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { findingApi, indicatorApi } from '@/api/endpoints';
+import { dataApi, findingApi, indicatorApi } from '@/api/endpoints';
+import { useQuery } from '@tanstack/react-query';
 import { useFindingRecords, useIndicatorRecords, useRole, useUpdateFinding } from '@/api/queries';
 import { SEVERITY_COLORS } from '@/components/charts/Charts';
 import { objectLabel } from '@/components/category/DiagnosticAreaCard';
@@ -37,12 +38,70 @@ import { FixPlanPanel } from './FixPlanPanel';
 import { RecordsTable } from './RecordsTable';
 import { DuplicateResults } from './DuplicateFinder';
 import { ALL } from './FieldCheck';
-import { FlowSteps, fieldFlowFor, flowFor, liveFlowFor, type FlowStep } from './MeasureFlow';
+import { FlowSteps, fieldFlowFor, fieldFlowForRecordType, flowFor, liveFlowFor, type FlowStep } from './MeasureFlow';
 import { FieldListTable } from './FieldListTable';
 import { FieldScoreChart, chartKindFor } from './FieldScoreChart';
 
 /** Same thresholds the engine uses (backend/app/engine/core.py → severity_for, finding min_score). */
 const PROBLEM_BELOW = 95;
+
+const FIELD_CARD_OBJECTS: Record<string, string> = { Accounts: 'Account', Contacts: 'Contact', Leads: 'Lead', Opportunities: 'Opportunity' };
+/** "Unused Fields (Accounts)" → Account. */
+const objectOfFieldCard = (label: string) => FIELD_CARD_OBJECTS[label.match(/\(([^)]+)\)$/)?.[1] ?? ''] ?? null;
+const OTHER = '__other__';
+
+/** Area 2: the fields behind a card, with a Record type picker above the flow — a record type's fields are the ones on its
+ *  page layout; fields on no record type's layout are under "Other". The flow and the list follow the pick. */
+function FieldsBehind({ indicator: v, object, flow }: { indicator: IndicatorValue; object: string | null; flow: FlowStep[] | null }) {
+  const [picked, setPicked] = useState<string | null>(null); // a record type id, OTHER, or null for all
+  useEffect(() => setPicked(null), [v.label]);
+  const rts = useQuery({
+    queryKey: ['record-types', object],
+    queryFn: ({ signal }) => dataApi.recordTypes(object!, signal),
+    enabled: !!object,
+    staleTime: 5 * 60_000,
+  });
+  const items = v.fieldList ?? [];
+  const data = rts.data;
+  const choices = data?.recordTypes.length
+    ? [...data.recordTypes.map((r) => ({ id: r.id, name: r.name, fields: new Set(r.fields) })), { id: OTHER, name: 'Other', fields: new Set(data.other) }]
+    : [];
+  const chosen = choices.find((c) => c.id === picked) ?? null;
+  const shown = chosen ? items.filter((f) => chosen.fields.has(f.name)) : items;
+  const steps = chosen && data
+    ? fieldFlowForRecordType(v, { name: chosen.id === OTHER ? 'no record type’s layout' : `the ${chosen.name} layout`, fields: chosen.fields, fillable: new Set(data.fillable), ownCustom: new Set(data.ownCustom) })
+    : flow;
+  return (
+    <>
+      {choices.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-1.5">
+          <span className="mr-1 text-xs font-medium text-ink-muted">Record type</span>
+          {[{ id: null as string | null, name: 'All', count: items.length }, ...choices.map((c) => ({ id: c.id as string | null, name: c.name, count: items.filter((f) => c.fields.has(f.name)).length }))].map((c) => (
+            <button
+              key={c.id ?? 'all'}
+              type="button"
+              onClick={() => setPicked(c.id)}
+              title={c.id === OTHER ? 'Fields that are on no record type’s page layout' : c.id ? `Fields on the ${c.name} page layout` : 'Every field'}
+              className={cx(
+                'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition',
+                picked === c.id ? 'border-brand bg-brand text-white' : 'border-line bg-surface hover:border-brand/40',
+              )}
+            >
+              {c.name}
+              <span className={cx('tabular-nums', picked === c.id ? 'text-white/80' : 'text-ink-subtle')}>{fmtNumber(c.count)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {steps && (
+        <div className="mb-3">
+          <FlowSteps steps={steps} />
+        </div>
+      )}
+      <FieldListTable items={shown} id={`${v.label}|${picked ?? 'all'}`} />
+    </>
+  );
+}
 
 /** Several fields' duplicate groups from Check fields as one result (largest groups first). */
 function mergeDuplicates(check: FieldCheckResult, picked: string[]): DuplicateResult | null {
@@ -687,12 +746,7 @@ export function DetailsPanel({
 
           {v?.fieldList ? (
             <Section icon={<Database className="h-3.5 w-3.5" />} title="The fields behind this number">
-              {fieldFlow && (
-                <div className="mb-3">
-                  <FlowSteps steps={fieldFlow} />
-                </div>
-              )}
-              <FieldListTable items={v.fieldList} id={v.label} />
+              <FieldsBehind indicator={v} object={initialObject ?? objectOfFieldCard(v.label)} flow={fieldFlow} />
             </Section>
           ) : (
             <Section icon={<Database className="h-3.5 w-3.5" />} title={finding ? 'The records' : 'The records behind this number'}>

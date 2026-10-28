@@ -53,6 +53,25 @@ def object_detail(name: str, db: Session = Depends(get_db), http: httpx.Client =
     return _run(db, http, settings, lambda sf: explorer.describe_object(sf, name))
 
 
+class RecordTypeFields(ApiModel):
+    name: str
+    id: str
+    fields: list[str]  # on this record type's page layout
+
+
+class RecordTypesResult(ApiModel):
+    record_types: list[RecordTypeFields]  # empty when the object has no record types
+    other: list[str]  # fields on no record type's layout
+    fillable: list[str]  # fields people fill in (what the field cards count)
+    own_custom: list[str]  # custom fields built in the org (not from packages)
+
+
+@router.get("/objects/{name}/record-types", response_model=RecordTypesResult)
+def record_types(name: str, db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep), settings: Settings = Depends(settings_dep)):
+    """Each record type's fields (from its page layout), for the field cards' record type filter."""
+    return _run(db, http, settings, lambda sf: explorer.record_type_fields(sf, name))
+
+
 @router.get("/objects/{name}/records", response_model=DataRecordPage)
 def records(
     name: str,

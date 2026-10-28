@@ -217,3 +217,57 @@ export function fieldFlowFor(v: IndicatorValue): FlowStep[] | null {
     ];
   return null;
 }
+
+/** The same steps for one record type: only the fields on its page layout (`fields`), counted the way the card counts
+ *  (`fillable` = fields people fill in, `ownCustom` = custom fields built in the org). */
+export function fieldFlowForRecordType(
+  v: IndicatorValue,
+  scope: { name: string; fields: Set<string>; fillable: Set<string>; ownCustom: Set<string> },
+): FlowStep[] | null {
+  const items = (v.fieldList ?? []).filter((f) => scope.fields.has(f.name));
+  const n = items.length;
+  const never = items.filter((f) => f.filled === 0).length;
+  const inScope = (set: Set<string>) => [...scope.fields].filter((f) => set.has(f)).length;
+  const on = `on ${scope.name}`;
+  if (/^All Fields/.test(v.label)) {
+    const custom = items.filter((f) => f.custom).length;
+    return [
+      { label: `Fields ${on}`, value: n, hint: 'On its page layout' },
+      { label: 'From Salesforce', value: n - custom, hint: 'Standard fields' },
+      { label: 'Added in your org', value: custom, hint: 'Custom fields' },
+    ];
+  }
+  if (/^Unused Fields|^Low-Completion Fields/.test(v.label)) {
+    const checked = inScope(scope.fillable);
+    const unused = /^Unused/.test(v.label);
+    return [
+      { label: 'Fields checked', value: checked, hint: `Fields people fill in, ${on}` },
+      { label: unused ? 'In use' : 'Filled on 20%+', value: Math.max(checked - n, 0), hint: pctOf(Math.max(checked - n, 0), checked), tone: 'good' },
+      ...(unused ? [{ label: 'Hardly ever filled', value: n - never, hint: 'On fewer than 1% of records', tone: 'warn' as const }] : [
+        { label: 'Filled on under 20%', value: n, hint: `Low completion · ${pctOf(n, checked)}`, tone: 'warn' as const },
+      ]),
+      { label: 'Never filled in', value: never, hint: 'Empty on every record', tone: 'bad' },
+      ...(unused ? [{ label: 'Unused fields', value: n, hint: `${pctOf(n, checked)} of the fields`, tone: 'bad' as const }] : []),
+    ];
+  }
+  if (/^Outdated Fields/.test(v.label)) {
+    const checked = inScope(scope.ownCustom);
+    return [
+      { label: 'Custom fields checked', value: checked, hint: `Built in your org, ${on}` },
+      { label: 'Look current', value: Math.max(checked - n, 0), hint: pctOf(Math.max(checked - n, 0), checked), tone: 'good' },
+      { label: 'Look outdated', value: n, hint: 'Named old, backup, legacy, copy, test…', tone: 'bad' },
+    ];
+  }
+  if (/^Look-alike Fields/.test(v.label))
+    return [
+      { label: `Fields ${on}`, value: scope.fields.size, hint: 'On its page layout' },
+      { label: 'Built in your org', value: inScope(scope.ownCustom), hint: 'Each pair has at least one of these' },
+      { label: 'Fields in a look-alike pair', value: n, hint: 'Listed below with the field they look like', tone: 'bad' },
+    ];
+  if (/^Empty Fields Others Depend On/.test(v.label))
+    return [
+      { label: 'Custom fields checked', value: inScope(scope.ownCustom), hint: `Built in your org, ${on}` },
+      { label: 'Nearly empty and relied on', value: n, hint: 'Used by a formula, validation rule, flow, report…', tone: 'bad' },
+    ];
+  return null;
+}

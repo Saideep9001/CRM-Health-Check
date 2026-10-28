@@ -468,3 +468,48 @@ def get_record(sf: SalesforceClient, name: str, record_id: str) -> dict:
         "ref_names": names,
         "salesforce_url": f"{sf.base}/{record_id}",
     }
+
+
+def record_type_fields(sf: SalesforceClient, name: str) -> dict:
+    """Each active record type of `name` and the fields on its page layout; fields on no record type's layout are "other".
+
+    Salesforce ties fields to record types through page layouts (Setup → Record Type → Page Layout Assignment); the layout
+    describe gives the one the connected user sees for each record type."""
+    from ..engine.data_quality import _fillable, _own  # engine imports salesforce, so import here
+
+    def layout_fields(rt_id: str) -> list[str]:
+        body = sf.get(f"{_api(sf)}/sobjects/{quote(name)}/describe/layouts/{rt_id}")
+        out: list[str] = []
+
+        def walk(components: list[dict]) -> None:
+            for c in components or []:
+                if c.get("type") == "Field" and c.get("value"):
+                    out.append(c["value"])
+                walk(c.get("components") or [])  # parts of a compound field (an address's street, city…)
+
+        for section in (body.get("detailLayoutSections") or []) + (body.get("editLayoutSections") or []):
+            for row in section.get("layoutRows") or []:
+                for item in row.get("layoutItems") or []:
+                    walk(item.get("layoutComponents") or [])
+        return list(dict.fromkeys(out))
+
+    def load():
+        desc = _describe(sf, name)
+        fields = _fields(desc)
+        types = [rt for rt in desc.get("recordTypeInfos") or [] if rt.get("active", True) and not rt.get("master")]
+        record_types = []
+        for rt in types:
+            try:
+                on = [f for f in layout_fields(rt["recordTypeId"]) if f in fields]
+            except SalesforceError:
+                continue  # a record type the connected user can't see
+            record_types.append({"name": rt.get("name") or rt.get("developerName"), "id": rt["recordTypeId"], "fields": on})
+        placed = {f for rt in record_types for f in rt["fields"]}
+        return {
+            "record_types": record_types,
+            "other": [f for f in fields if f not in placed] if record_types else [],
+            "fillable": _fillable(fields),
+            "own_custom": [f for f, meta in fields.items() if _own(meta)],
+        }
+
+    return _cached(("record-types", _org(sf), name), load)

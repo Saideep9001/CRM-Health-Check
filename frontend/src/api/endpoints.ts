@@ -114,6 +114,13 @@ export const assessmentApi = {
 
 /** Read-only browsing of the connected Salesforce org. */
 export const dataApi = {
+  /** Each record type's fields (from its page layout), fields on none ("other"), and which fields the field cards count. */
+  recordTypes: (object: string, signal?: AbortSignal) =>
+    http.get<{ recordTypes: { name: string; id: string; fields: string[] }[]; other: string[]; fillable: string[]; ownCustom: string[] }>(
+      `/data/objects/${encodeURIComponent(object)}/record-types`,
+      undefined,
+      signal,
+    ),
   /** Fields that can be checked for being empty. */
   emptyOptions: (object: string, signal?: AbortSignal) => http.get<{ name: string; label: string; type: string }[]>('/data/empty/options', { object }, signal),
   /** Records whose chosen fields are empty (any or all), 200 per page. */
