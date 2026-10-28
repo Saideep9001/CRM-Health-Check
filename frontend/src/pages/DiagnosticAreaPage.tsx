@@ -417,7 +417,22 @@ export default function DiagnosticAreaPage() {
                           <span className="h-2.5 w-2.5 rounded-full bg-brand" />
                           Organization
                         </h3>
-                        {scorecardOf(sec.items[0].label)}
+                        <button
+                          type="button"
+                          onClick={() => navigate('/scorecard')}
+                          className="group flex w-full items-center gap-3 rounded-2xl border border-line bg-surface p-5 text-left shadow-sm transition hover:border-brand/40"
+                        >
+                          <span className="grid h-10 w-10 place-items-center rounded-xl bg-brand-soft text-brand">
+                            <Award className="h-5 w-5" />
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-sm font-semibold">Data Quality Scorecard</span>
+                            <span className="block text-xs text-ink-muted">A–F grades for Accounts, Leads, Contacts, Opportunities and overall, with charts, analysis and downloads.</span>
+                          </span>
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-brand">
+                            Open the scorecard <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-1" />
+                          </span>
+                        </button>
                       </section>
                     ) : sec.name ? (
                       <section key={sec.name} className="rounded-xl border border-line bg-muted/30 p-4">

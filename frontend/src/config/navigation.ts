@@ -1,4 +1,5 @@
 import {
+  Award,
   Briefcase,
   ClipboardCheck,
   Cloud,
@@ -29,6 +30,7 @@ export const NAV_ITEMS: NavItem[] = [
   { to: '/data',       label: 'Your Data',           icon: Database },
   { to: '/assessment', label: 'What We Check',       icon: ClipboardCheck },
   { to: '/results',    label: 'My Results',          icon: ListChecks },
+  { to: '/scorecard',  label: 'Data Quality Scorecard', icon: Award },
   { to: '/reports',    label: 'Reports',             icon: FileBarChart },
   { to: '/history',    label: 'Check History',       icon: History },
   { to: '/admin',     label: 'Admin Panel',         icon: ShieldCheck, adminOnly: true },

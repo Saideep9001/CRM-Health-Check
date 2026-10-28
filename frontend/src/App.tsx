@@ -26,6 +26,7 @@ import HomePage from './pages/HomePage';
 import LoginPage from './pages/LoginPage';
 import NotFoundPage from './pages/NotFoundPage';
 import ReportsPage from './pages/ReportsPage';
+import ScorecardPage from './pages/ScorecardPage';
 import ResultsPage from './pages/ResultsPage';
 import SettingsPage from './pages/SettingsPage';
 
@@ -69,6 +70,7 @@ export default function App() {
                   <Route path="problems/:findingId" element={<ProblemPage />} />
                   <Route path="measures/:areaId" element={<MeasurePage />} />
                   <Route path="reports" element={<ReportsPage />} />
+                  <Route path="scorecard" element={<ScorecardPage />} />
                   <Route path="history" element={<HistoryPage />} />
                   <Route path="admin" element={<AdminPage />} />
                   <Route path="settings" element={<SettingsPage />} />
