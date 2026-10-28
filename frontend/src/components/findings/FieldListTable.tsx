@@ -1,4 +1,4 @@
-import { Search, X } from 'lucide-react';
+import { CheckCircle2, ExternalLink, Search, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { ColumnFilter, columnFilter, type ValuesSource } from '@/components/data/ColumnFilter';
 import { cx, fmtNumber } from '@/lib/format';
@@ -29,7 +29,81 @@ function keeps(f: FieldListItem, filter: DataFilter): boolean {
 
 /** The fields behind a card about fields (unused, outdated, look-alike…): fill rate and why each is listed, with
  *  Excel-style filters on Custom/standard, Type, Filled in and Why it's listed. */
-export function FieldListTable({ items, id = '' }: { items: FieldListItem[]; id?: string }) {
+/** Which of a look-alike pair to keep: the one filled on more records; if even, the standard Salesforce field; then the one
+ *  on more record type layouts. */
+function keepOf(a: FieldListItem, b: FieldListItem, rtsOf: (f: string) => string[]): { keep: FieldListItem; why: string } {
+  const pct = (f: FieldListItem) => (f.pct == null ? null : `${f.pct % 1 ? f.pct.toFixed(1) : f.pct}%`);
+  if (a.filled != null && b.filled != null && a.filled !== b.filled) {
+    const [hi, lo] = a.filled > b.filled ? [a, b] : [b, a];
+    const recs = (n: number) => `${fmtNumber(n)} record${n === 1 ? '' : 's'}`;
+    return { keep: hi, why: `filled on ${recs(hi.filled!)} (${pct(hi)}), the other on ${recs(lo.filled!)} (${pct(lo)})` };
+  }
+  if (a.custom !== b.custom) return { keep: a.custom ? b : a, why: 'it’s Salesforce’s standard field (used by reports, apps and integrations)' };
+  const [ra, rb] = [rtsOf(a.name).length, rtsOf(b.name).length];
+  if (ra !== rb) return ra > rb ? { keep: a, why: `it’s on ${ra} record type layouts, the other on ${rb}` } : { keep: b, why: `it’s on ${rb} record type layouts, the other on ${ra}` };
+  // Even on every count: either works, so both rows name the same one (the simpler API name).
+  const [first] = [a, b].sort((x, y) => x.name.length - y.name.length || x.name.localeCompare(y.name));
+  return { keep: first, why: 'both are used the same way, so either works; this one has the simpler API name — move the other’s values into it' };
+}
+
+export function FieldListTable({
+  items,
+  id = '',
+  all,
+  recordTypesOf,
+  linkOf,
+}: {
+  items: FieldListItem[];
+  id?: string;
+  /** Every field of the card (look-alike partners may be outside the record type picked). */
+  all?: FieldListItem[];
+  /** The record types whose page layout has the field (empty: none). */
+  recordTypesOf?: (field: string) => string[];
+  /** The field's page in Salesforce Setup. */
+  linkOf?: (field: string) => string | undefined;
+}) {
+  const rtsOf = recordTypesOf ?? (() => []);
+  const onText = (f: string) => {
+    if (!recordTypesOf) return null;
+    const r = rtsOf(f);
+    return r.length ? `On ${r.slice(0, 3).join(', ')}${r.length > 3 ? ` +${r.length - 3}` : ''}` : 'On no record type’s layout';
+  };
+  const open = (f: string, text = 'Open in Salesforce') => {
+    const url = linkOf?.(f);
+    return url ? (
+      <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[11px] font-medium text-brand hover:underline">
+        {text} <ExternalLink className="h-3 w-3" />
+      </a>
+    ) : null;
+  };
+  const byName = new Map((all ?? items).map((f) => [f.name, f]));
+  const fillText = (f: FieldListItem) => (f.pct == null ? 'can’t be counted' : `filled on ${f.pct % 1 ? f.pct.toFixed(1) : f.pct}%`);
+  // "Looks like Label (ApiName)": the pair, which one to keep and why, with links to both.
+  const lookalike = (f: FieldListItem) => {
+    const other = byName.get(f.note.match(/\(([^()]+)\)$/)?.[1] ?? '');
+    if (!other) return <span className="text-ink-muted">{f.note}</span>;
+    const { keep, why } = keepOf(f, other, rtsOf);
+    const keepThis = keep.name === f.name;
+    return (
+      <span className="block space-y-1">
+        <span className="block text-ink">
+          Looks like <span className="font-semibold">{other.label}</span> <span className="font-mono text-[11px] text-ink-subtle">{other.name}</span>
+          {other.custom ? '' : ' (standard)'}
+        </span>
+        <span className="block text-[11px] text-ink-muted">
+          That one is {fillText(other)}
+          {recordTypesOf ? ` · ${onText(other.name)}` : ''}
+        </span>
+        <span className={cx('flex items-start gap-1 text-[11px] font-medium', keepThis ? 'text-good' : 'text-warn')}>
+          <CheckCircle2 className="mt-px h-3 w-3 shrink-0" />
+          <span>
+            {keepThis ? 'Keep this one' : `Keep ${other.label} (${other.name}) instead`} — {why}.
+          </span>
+        </span>
+        <span className="flex flex-wrap gap-3">{open(other.name, `Open ${other.label}`)}</span>
+      </span>
+    );
+  };
   const [query, setQuery] = useState('');
   const [filters, setFilters] = useState<DataFilter[]>([]);
   const term = query.trim().toLowerCase();
@@ -126,6 +200,8 @@ export function FieldListTable({ items, id = '' }: { items: FieldListItem[]; id?
                     {f.custom && <span className="rounded bg-brand-soft px-1.5 py-px text-[10px] font-semibold text-brand-ink">Custom</span>}
                   </span>
                   <span className="font-mono text-[11px] text-ink-subtle">{f.name}</span>
+                  {recordTypesOf && <span className="block text-[11px] text-ink-subtle">{onText(f.name)}</span>}
+                  {open(f.name)}
                 </td>
                 <td className="px-3 py-2 text-ink-muted">{f.type}</td>
                 <td className="px-3 py-2">
@@ -146,7 +222,7 @@ export function FieldListTable({ items, id = '' }: { items: FieldListItem[]; id?
                     </span>
                   )}
                 </td>
-                {notes && <td className="px-3 py-2 text-ink-muted">{f.note}</td>}
+                {notes && <td className="px-3 py-2 align-top text-ink-muted">{/^Looks like /.test(f.note) ? lookalike(f) : f.note}</td>}
               </tr>
             ))}
           </tbody>

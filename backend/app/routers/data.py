@@ -64,6 +64,7 @@ class RecordTypesResult(ApiModel):
     other: list[str]  # fields on no record type's layout
     fillable: list[str]  # fields people fill in (what the field cards count)
     own_custom: list[str]  # custom fields built in the org (not from packages)
+    setup_links: dict[str, str] = {}  # field -> its page in Setup (Object Manager)
 
 
 @router.get("/objects/{name}/record-types", response_model=RecordTypesResult)

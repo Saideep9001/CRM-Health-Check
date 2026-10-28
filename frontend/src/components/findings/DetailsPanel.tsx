@@ -98,7 +98,13 @@ function FieldsBehind({ indicator: v, object, flow }: { indicator: IndicatorValu
           <FlowSteps steps={steps} />
         </div>
       )}
-      <FieldListTable items={shown} id={`${v.label}|${picked ?? 'all'}`} />
+      <FieldListTable
+        items={shown}
+        all={items}
+        id={`${v.label}|${picked ?? 'all'}`}
+        recordTypesOf={data?.recordTypes.length ? (f) => data.recordTypes.filter((r) => r.fields.includes(f)).map((r) => r.name) : undefined}
+        linkOf={data ? (f) => data.setupLinks?.[f] : undefined}
+      />
     </>
   );
 }

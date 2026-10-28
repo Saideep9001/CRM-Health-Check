@@ -505,7 +505,20 @@ def record_type_fields(sf: SalesforceClient, name: str) -> dict:
                 continue  # a record type the connected user can't see
             record_types.append({"name": rt.get("name") or rt.get("developerName"), "id": rt["recordTypeId"], "fields": on})
         placed = {f for rt in record_types for f in rt["fields"]}
+        # Each field's page in Setup: standard fields by name, custom ones by their id (Tooling API).
+        setup = f"{sf.base}/lightning/setup/ObjectManager/{quote(name)}/FieldsAndRelationships"
+        ids: dict[str, str] = {}
+        try:
+            soql = f"SELECT Id, DeveloperName, NamespacePrefix FROM CustomField WHERE TableEnumOrId = '{name}'"  # name: a described object
+            for r in sf.get(f"{_api(sf)}/tooling/query?q={quote(soql)}").get("records", []):
+                ns = f"{r['NamespacePrefix']}__" if r.get("NamespacePrefix") else ""
+                ids[f"{ns}{r.get('DeveloperName')}__c"] = r.get("Id")
+        except SalesforceError:
+            ids = {}  # no Setup access: custom fields link to the field list instead
+        links = {f: f"{setup}/{ids[f] if f in ids else f}/view" if (f in ids or not meta.get("custom")) else f"{setup}/view"
+                 for f, meta in fields.items()}
         return {
+            "setup_links": links,
             "record_types": record_types,
             "other": [f for f in fields if f not in placed] if record_types else [],
             "fillable": _fillable(fields),

@@ -116,7 +116,7 @@ export const assessmentApi = {
 export const dataApi = {
   /** Each record type's fields (from its page layout), fields on none ("other"), and which fields the field cards count. */
   recordTypes: (object: string, signal?: AbortSignal) =>
-    http.get<{ recordTypes: { name: string; id: string; fields: string[] }[]; other: string[]; fillable: string[]; ownCustom: string[] }>(
+    http.get<{ recordTypes: { name: string; id: string; fields: string[] }[]; other: string[]; fillable: string[]; ownCustom: string[]; setupLinks?: Record<string, string> }>(
       `/data/objects/${encodeURIComponent(object)}/record-types`,
       undefined,
       signal,
