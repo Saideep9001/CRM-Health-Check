@@ -181,11 +181,11 @@ export function fieldFlowFor(v: IndicatorValue): FlowStep[] | null {
   if (of == null) return null;
   if (/^Unused Fields/.test(v.label))
     return [
-      { label: 'Custom fields checked', value: of, hint: 'Built in your org, that people fill in' },
+      { label: 'Fields checked', value: of, hint: 'Standard and custom fields people fill in' },
       { label: 'In use', value: of - n, hint: `Filled on 1% of records or more · ${pctOf(of - n, of)}`, tone: 'good' },
       { label: 'Hardly ever filled', value: n - never, hint: 'On fewer than 1% of records', tone: 'warn' },
       { label: 'Never filled in', value: never, hint: 'Empty on every record', tone: 'bad' },
-      { label: 'Unused fields', value: n, hint: `${pctOf(n, of)} of the custom fields`, tone: 'bad' },
+      { label: 'Unused fields', value: n, hint: `${pctOf(n, of)} of the fields`, tone: 'bad' },
     ];
   if (/^Outdated Fields/.test(v.label))
     return [
