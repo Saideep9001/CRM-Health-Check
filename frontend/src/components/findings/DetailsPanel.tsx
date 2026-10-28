@@ -102,7 +102,15 @@ function FieldsBehind({ indicator: v, object, flow }: { indicator: IndicatorValu
         items={shown}
         all={items}
         id={`${v.label}|${picked ?? 'all'}`}
-        recordTypesOf={data?.recordTypes.length ? (f) => data.recordTypes.filter((r) => r.fields.includes(f)).map((r) => r.name) : undefined}
+        recordTypesOf={
+          data?.recordTypes.length
+            ? (f) => {
+                // a record type's page in Setup, next to the object's field pages
+                const base = Object.values(data.setupLinks ?? {})[0]?.replace(/\/FieldsAndRelationships\/.*$/, '');
+                return data.recordTypes.filter((r) => r.fields.includes(f)).map((r) => ({ name: r.name, link: base ? `${base}/RecordTypes/${r.id}/view` : undefined }));
+              }
+            : undefined
+        }
         linkOf={data ? (f) => data.setupLinks?.[f] : undefined}
       />
     </>

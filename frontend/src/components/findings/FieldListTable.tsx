@@ -31,7 +31,7 @@ function keeps(f: FieldListItem, filter: DataFilter): boolean {
  *  Excel-style filters on Custom/standard, Type, Filled in and Why it's listed. */
 /** Which of a look-alike pair to keep: the one filled on more records; if even, the standard Salesforce field; then the one
  *  on more record type layouts. */
-function keepOf(a: FieldListItem, b: FieldListItem, rtsOf: (f: string) => string[]): { keep: FieldListItem; why: string } {
+function keepOf(a: FieldListItem, b: FieldListItem, rtsOf: (f: string) => RecordTypeLink[]): { keep: FieldListItem; why: string } {
   const pct = (f: FieldListItem) => (f.pct == null ? null : `${f.pct % 1 ? f.pct.toFixed(1) : f.pct}%`);
   if (a.filled != null && b.filled != null && a.filled !== b.filled) {
     const [hi, lo] = a.filled > b.filled ? [a, b] : [b, a];
@@ -46,6 +46,8 @@ function keepOf(a: FieldListItem, b: FieldListItem, rtsOf: (f: string) => string
   return { keep: first, why: 'both are used the same way, so either works; this one has the simpler API name — move the other’s values into it' };
 }
 
+export type RecordTypeLink = { name: string; link?: string };
+
 export function FieldListTable({
   items,
   id = '',
@@ -57,24 +59,41 @@ export function FieldListTable({
   id?: string;
   /** Every field of the card (look-alike partners may be outside the record type picked). */
   all?: FieldListItem[];
-  /** The record types whose page layout has the field (empty: none). */
-  recordTypesOf?: (field: string) => string[];
+  /** The record types whose page layout has the field (empty: on none, shown as "Other"), each with its page in Setup. */
+  recordTypesOf?: (field: string) => RecordTypeLink[];
   /** The field's page in Salesforce Setup. */
   linkOf?: (field: string) => string | undefined;
 }) {
   const rtsOf = recordTypesOf ?? (() => []);
-  const onText = (f: string) => {
+  // The record types a field is on: the first two by name (each opens that record type in Setup), then "+N" with the rest
+  // on hover; "Other" when it's on no record type's page layout.
+  const recordTypes = (f: string) => {
     if (!recordTypesOf) return null;
     const r = rtsOf(f);
-    return r.length ? `On ${r.slice(0, 3).join(', ')}${r.length > 3 ? ` +${r.length - 3}` : ''}` : 'On no record type’s layout';
+    if (!r.length) return <span className="rounded bg-muted px-1.5 py-px text-[10px] font-medium text-ink-muted" title="On no record type’s page layout">Other</span>;
+    return (
+      <span className="inline-flex flex-wrap items-center gap-1">
+        {r.slice(0, 2).map((t) => (
+          <a key={t.name} href={t.link} target="_blank" rel="noopener noreferrer" title={`Open the ${t.name} record type in Salesforce`}
+            className="rounded bg-brand-soft/60 px-1.5 py-px text-[10px] font-medium text-brand-ink hover:underline">
+            {t.name}
+          </a>
+        ))}
+        {r.length > 2 && <span className="text-[10px] text-ink-subtle" title={r.slice(2).map((t) => t.name).join(', ')}>+{r.length - 2} more</span>}
+      </span>
+    );
   };
-  const open = (f: string, text = 'Open in Salesforce') => {
-    const url = linkOf?.(f);
+  // A field's name opens that field in Salesforce Setup.
+  const named = (f: FieldListItem, className: string) => {
+    const url = linkOf?.(f.name);
     return url ? (
-      <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[11px] font-medium text-brand hover:underline">
-        {text} <ExternalLink className="h-3 w-3" />
+      <a href={url} target="_blank" rel="noopener noreferrer" title={`Open ${f.label} (${f.name}) in Salesforce`} className={cx(className, 'inline-flex items-center gap-1 hover:text-brand hover:underline')}>
+        {f.label}
+        <ExternalLink className="h-3 w-3 text-ink-subtle" />
       </a>
-    ) : null;
+    ) : (
+      <span className={className}>{f.label}</span>
+    );
   };
   const byName = new Map((all ?? items).map((f) => [f.name, f]));
   const fillText = (f: FieldListItem) => (f.pct == null ? 'can’t be counted' : `filled on ${f.pct % 1 ? f.pct.toFixed(1) : f.pct}%`);
@@ -87,12 +106,12 @@ export function FieldListTable({
     return (
       <span className="block space-y-1">
         <span className="block text-ink">
-          Looks like <span className="font-semibold">{other.label}</span> <span className="font-mono text-[11px] text-ink-subtle">{other.name}</span>
+          Looks like {named(other, 'font-semibold')} <span className="font-mono text-[11px] text-ink-subtle">{other.name}</span>
           {other.custom ? '' : ' (standard)'}
         </span>
-        <span className="block text-[11px] text-ink-muted">
+        <span className="flex flex-wrap items-center gap-1.5 text-[11px] text-ink-muted">
           That one is {fillText(other)}
-          {recordTypesOf ? ` · ${onText(other.name)}` : ''}
+          {recordTypesOf && <>· {recordTypes(other.name)}</>}
         </span>
         <span className={cx('flex items-start gap-1 text-[11px] font-medium', keepThis ? 'text-good' : 'text-warn')}>
           <CheckCircle2 className="mt-px h-3 w-3 shrink-0" />
@@ -100,7 +119,6 @@ export function FieldListTable({
             {keepThis ? 'Keep this one' : `Keep ${other.label} (${other.name}) instead`} — {why}.
           </span>
         </span>
-        <span className="flex flex-wrap gap-3">{open(other.name, `Open ${other.label}`)}</span>
       </span>
     );
   };
@@ -147,6 +165,107 @@ export function FieldListTable({
   );
 
   if (!items.length) return <p className="rounded-lg bg-good-soft/50 px-4 py-6 text-center text-sm text-good">No fields to list — nothing was found here.</p>;
+
+  // Look-alike fields: one row per pair — the field to keep on the left, the one it looks like on the right.
+  if (items.every((f) => /^Looks like /.test(f.note))) {
+    const partnerOf = (f: FieldListItem) => byName.get(f.note.match(/\(([^()]+)\)$/)?.[1] ?? '');
+    const seen = new Set<string>();
+    const pairs: { keep: FieldListItem; other: FieldListItem; why: string }[] = [];
+    for (const f of items) {
+      const o = partnerOf(f);
+      const key = o ? [f.name, o.name].sort().join('|') : f.name;
+      if (!o || seen.has(key)) continue;
+      seen.add(key);
+      const { keep, why } = keepOf(f, o, rtsOf);
+      pairs.push({ keep, other: keep.name === f.name ? o : f, why });
+    }
+    const shownPairs = pairs.filter((p) => !term || [p.keep, p.other].some((f) => `${f.label} ${f.name} ${f.type}`.toLowerCase().includes(term)));
+    const fieldCell = (f: FieldListItem, keep?: string, className = '') => (
+      <td className={cx('px-3 py-2 align-top', className)}>
+        <span className="flex flex-wrap items-center gap-1.5 font-medium text-ink">
+          {named(f, '')}
+          {f.custom ? (
+            <span className="rounded bg-brand-soft px-1.5 py-px text-[10px] font-semibold text-brand-ink">Custom</span>
+          ) : (
+            <span className="rounded bg-muted px-1.5 py-px text-[10px] font-semibold text-ink-muted">Standard</span>
+          )}
+          {keep && (
+            <span className="inline-flex items-center gap-0.5 rounded bg-good-soft px-1.5 py-px text-[10px] font-semibold text-good" title={`Keep this one — ${keep}.`}>
+              <CheckCircle2 className="h-3 w-3" /> Keep
+            </span>
+          )}
+        </span>
+        <span className="block font-mono text-[11px] text-ink-subtle">{f.name}</span>
+        {recordTypesOf && <span className="mt-0.5 block">{recordTypes(f.name)}</span>}
+      </td>
+    );
+    const fillCell = (f: FieldListItem) => (
+      <td className="px-3 py-2 align-top">
+        {f.pct == null ? (
+          <span className="text-ink-subtle">Can’t be counted</span>
+        ) : (
+          <span className="block">
+            <span className="flex items-center gap-2">
+              <span className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
+                <span className={cx('block h-full rounded-full', f.pct < 1 ? 'bg-bad' : f.pct < 20 ? 'bg-warn' : 'bg-good')} style={{ width: `${Math.max(f.pct, f.filled ? 2 : 0)}%` }} />
+              </span>
+              <span className="tabular-nums text-ink">{f.pct % 1 ? f.pct.toFixed(1) : f.pct}%</span>
+            </span>
+            <span className="tabular-nums text-[11px] text-ink-subtle">
+              {fmtNumber(f.filled ?? 0)} of {fmtNumber(f.of ?? 0)}
+            </span>
+          </span>
+        )}
+      </td>
+    );
+    return (
+      <div className="overflow-hidden rounded-xl border border-line">
+        <div className="flex flex-wrap items-center gap-2 border-b border-line bg-muted/40 px-3 py-2">
+          <div className="relative min-w-[200px] flex-1 sm:max-w-xs">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-subtle" />
+            <input className="input h-8 pl-8 text-xs" placeholder="Filter fields…" value={query} onChange={(e) => setQuery(e.target.value)} />
+          </div>
+          <span className="text-xs text-ink-muted">
+            {term ? `${fmtNumber(shownPairs.length)} of ${fmtNumber(pairs.length)} pairs` : `${fmtNumber(pairs.length)} pair${pairs.length === 1 ? '' : 's'}`}
+          </span>
+          <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-ink-muted">
+            <CheckCircle2 className="h-3 w-3 text-good" /> Keep = the one to keep (hover for why): filled on more records, else the standard field, else on more record types
+          </span>
+        </div>
+        <div className="scrollbar-thin max-h-[32rem] overflow-auto">
+          <table className="w-full min-w-[900px] text-left text-xs">
+            <thead className="sticky top-0 z-10 bg-surface text-[11px] uppercase tracking-wide text-ink-subtle shadow-[0_1px_0_rgb(var(--line))]">
+              <tr>
+                <th className="px-3 py-2">Field</th>
+                <th className="px-3 py-2">Type</th>
+                <th className="px-3 py-2">Filled in</th>
+                <th className="border-l border-line px-3 py-2">Look-alike field</th>
+                <th className="px-3 py-2">Type</th>
+                <th className="px-3 py-2">Filled in</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line">
+              {shownPairs.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-3 py-6 text-center text-ink-subtle">No pairs match this filter.</td>
+                </tr>
+              )}
+              {shownPairs.map((p) => (
+                <tr key={`${p.keep.name}|${p.other.name}`} className="hover:bg-muted/50">
+                  {fieldCell(p.keep, p.why)}
+                  <td className="px-3 py-2 align-top text-ink-muted">{p.keep.type}</td>
+                  {fillCell(p.keep)}
+                  {fieldCell(p.other, undefined, 'border-l border-line')}
+                  <td className="px-3 py-2 align-top text-ink-muted">{p.other.type}</td>
+                  {fillCell(p.other)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="overflow-hidden rounded-xl border border-line">
       <div className="flex flex-wrap items-center gap-2 border-b border-line bg-muted/40 px-3 py-2">
@@ -196,12 +315,11 @@ export function FieldListTable({
               <tr key={`${f.name}-${i}`} className="hover:bg-muted/50">
                 <td className="px-3 py-2">
                   <span className="flex items-center gap-1.5 font-medium text-ink">
-                    {f.label}
+                    {named(f, '')}
                     {f.custom && <span className="rounded bg-brand-soft px-1.5 py-px text-[10px] font-semibold text-brand-ink">Custom</span>}
                   </span>
                   <span className="font-mono text-[11px] text-ink-subtle">{f.name}</span>
-                  {recordTypesOf && <span className="block text-[11px] text-ink-subtle">{onText(f.name)}</span>}
-                  {open(f.name)}
+                  {recordTypesOf && <span className="mt-0.5 block">{recordTypes(f.name)}</span>}
                 </td>
                 <td className="px-3 py-2 text-ink-muted">{f.type}</td>
                 <td className="px-3 py-2">
