@@ -46,7 +46,7 @@ import { FieldScoreChart, chartKindFor } from './FieldScoreChart';
 const PROBLEM_BELOW = 95;
 
 const FIELD_CARD_OBJECTS: Record<string, string> = { Accounts: 'Account', Contacts: 'Contact', Leads: 'Lead', Opportunities: 'Opportunity' };
-/** "Unused Fields (Accounts)" → Account. */
+/** "Unused & Low-Completion Fields (Accounts)" → Account. */
 const objectOfFieldCard = (label: string) => FIELD_CARD_OBJECTS[label.match(/\(([^)]+)\)$/)?.[1] ?? ''] ?? null;
 const OTHER = '__other__';
 

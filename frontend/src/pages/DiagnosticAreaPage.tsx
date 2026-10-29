@@ -17,7 +17,6 @@ import {
   Link2,
   ListChecks,
   Network,
-  PieChart,
   Gauge,
   Hourglass,
   SpellCheck,
@@ -80,7 +79,6 @@ function iconFor(title: string): LucideIcon {
   if (/^unused/i.test(title)) return Archive;
   if (/^outdated/i.test(title)) return History;
   if (/look-alike/i.test(title)) return GitCompare;
-  if (/low-completion/i.test(title)) return PieChart;
   if (/depend on/i.test(title)) return Link2;
   if (/scorecard/i.test(title)) return Award;
   if (/duplicate/i.test(title)) return Copy;
@@ -181,52 +179,6 @@ export default function DiagnosticAreaPage() {
     );
   };
 
-  // The Data Quality Scorecard: a grade per object and one overall, A–F (the rule explains how they're worked out).
-  const scorecardOf = (label: string | undefined) => {
-    const v = label ? result?.indicators.find((x) => x.label === label) : null;
-    const grades = (v?.criteria ?? []).filter(([k]) => / grade$/.test(k)) as [string, string][];
-    if (!v || !grades.length) return null;
-    const tone = (g: string) => (g === 'A' || g === 'B' ? 'text-good bg-good-soft ring-good/30' : g === 'F' ? 'text-bad bg-bad-soft ring-bad/30' : 'text-warn bg-warn-soft ring-warn/30');
-    return (
-      <motion.button
-        type="button"
-        onClick={() => navigate(`/measures/${area.id}?label=${encodeURIComponent(v.label)}`)}
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="group w-full rounded-2xl border border-line bg-surface p-5 text-left shadow-sm transition hover:border-brand/40"
-      >
-        <span className="flex items-center gap-2.5">
-          <span className="grid h-9 w-9 place-items-center rounded-xl bg-brand-soft text-brand">
-            <Award className="h-4 w-4" />
-          </span>
-          <span className="text-sm font-semibold">Data Quality Scorecard</span>
-        </span>
-        <span className="mt-4 grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
-          {grades.map(([k, text]) => {
-            const g = text.trim().charAt(0);
-            const score = text.match(/\((\d+)\)/)?.[1];
-            const parts = text.split('—')[1]?.trim();
-            const overall = /^Overall/.test(k);
-            return (
-              <span key={k} className={cx('flex flex-col rounded-xl border p-3', overall ? 'border-brand/30 bg-brand-soft/40' : 'border-line bg-muted/30')}>
-                <span className="text-xs font-medium text-ink-muted">{overall ? 'Overall Data Quality' : k.replace(/ grade$/, '')}</span>
-                <span className="mt-2 flex items-baseline gap-2">
-                  <span className={cx('grid h-11 w-11 place-items-center rounded-xl text-2xl font-bold ring-1', tone(g))}>{g}</span>
-                  {score && <span className="text-sm tabular-nums text-ink-muted">{score}/100</span>}
-                </span>
-                {parts && <span className="mt-2 text-[11px] leading-snug text-ink-subtle">{parts}</span>}
-              </span>
-            );
-          })}
-        </span>
-        <span className="mt-4 block text-xs text-ink-muted">{v.rule}</span>
-        <span className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-brand">
-          How it’s worked out <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-1" />
-        </span>
-      </motion.button>
-    );
-  };
-
   const card = (label: string, i: number, title: string, group = '') => {
     const v = result?.indicators.find((x) => x.label === label);
     const Icon = iconFor(title);
@@ -242,6 +194,45 @@ export default function DiagnosticAreaPage() {
           <p className="mt-4 text-3xl font-bold text-ink-subtle">—</p>
           <p className="mt-2 text-[11px] text-ink-subtle">{release === 'coming-soon' ? 'Coming Soon' : 'Not measured yet'}</p>
         </motion.div>
+      );
+    }
+    if (/^All Fields/.test(label)) {
+      // area 2's starting point, highlighted like area 1's All Records card
+      const split = (v.criteria ?? []).find(([k]) => k === 'Fields')?.[1]?.match(/— ([\d,]+) standard, ([\d,]+) custom/);
+      return (
+        <motion.button
+          key={label}
+          type="button"
+          onClick={() => navigate(`/measures/${area.id}?${new URLSearchParams({ label })}`)}
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: i * 0.04 }}
+          whileHover={{ y: -4 }}
+          className="group relative flex flex-col overflow-hidden rounded-2xl bg-brand p-5 text-left text-white shadow-pop"
+          title="See every field, how full it is and which record types use it"
+        >
+          <span className="pointer-events-none absolute -right-8 -top-10 h-36 w-36 rounded-full bg-white/10" />
+          <span className="pointer-events-none absolute -bottom-12 right-10 h-28 w-28 rounded-full bg-white/5" />
+          <span className="flex items-center gap-2.5">
+            <span className="grid h-9 w-9 place-items-center rounded-xl bg-white/15">
+              <Icon className="h-4 w-4" />
+            </span>
+            <span className="text-sm font-semibold">{title}</span>
+          </span>
+          <span className="mt-4 text-4xl font-bold tabular-nums tracking-tight">
+            <AnimatedNumber value={v.value} />
+          </span>
+          <span className="mt-1 text-xs text-white/80">Fields on {group || 'this object'} the last check looked at</span>
+          {split && (
+            <span className="mt-3 flex flex-wrap gap-1.5">
+              <span className="w-fit rounded-full bg-white/15 px-2.5 py-1 text-[11px] font-semibold">{split[1]} standard</span>
+              <span className="w-fit rounded-full bg-white/15 px-2.5 py-1 text-[11px] font-semibold">{split[2]} custom</span>
+            </span>
+          )}
+          <span className="mt-auto inline-flex items-center gap-1 pt-4 text-xs font-semibold">
+            Browse fields <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-1" />
+          </span>
+        </motion.button>
       );
     }
     const tone = TONES[toneOf(v)];
@@ -293,11 +284,7 @@ export default function DiagnosticAreaPage() {
           {sub && <span className="text-xs text-ink-muted">{sub}</span>}
         </span>
         <span className="mt-3 block">
-          {/^All Fields/.test(label) ? (
-            <span className="block h-1.5" aria-hidden="true" />
-          ) : (
-            <ProgressBar value={v.direction === 'higher-better' ? share : Math.max(share, v.value > 0 ? 2 : 0)} color={tone.bar} delay={i * 0.04} />
-          )}
+          <ProgressBar value={v.direction === 'higher-better' ? share : Math.max(share, v.value > 0 ? 2 : 0)} color={tone.bar} delay={i * 0.04} />
         </span>
         {v.cause ? (
           <span className="mt-3 text-xs" title={v.how ?? undefined}>
@@ -411,7 +398,7 @@ export default function DiagnosticAreaPage() {
               {tab === 'indicators' && (
                 <div className="space-y-5">
                   {sections.map((sec, si) =>
-                    sec.name === 'Organization' && scorecardOf(sec.items[0]?.label) ? (
+                    sec.name === 'Organization' && result?.indicators.some((x) => x.label === sec.items[0]?.label) ? (
                       <section key={sec.name} className="rounded-xl border border-line bg-muted/30 p-4">
                         <h3 className="mb-4 flex items-center gap-2 text-base font-semibold">
                           <span className="h-2.5 w-2.5 rounded-full bg-brand" />
@@ -427,7 +414,7 @@ export default function DiagnosticAreaPage() {
                           </span>
                           <span className="min-w-0 flex-1">
                             <span className="block text-sm font-semibold">Data Quality Scorecard</span>
-                            <span className="block text-xs text-ink-muted">A–F grades for Accounts, Leads, Contacts, Opportunities and overall, with charts, analysis and downloads.</span>
+                            <span className="block text-xs text-ink-muted">A score (%) for each object checked and overall, with charts, analysis and downloads.</span>
                           </span>
                           <span className="inline-flex items-center gap-1 text-xs font-semibold text-brand">
                             Open the scorecard <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-1" />

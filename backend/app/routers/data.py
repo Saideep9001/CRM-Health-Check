@@ -12,7 +12,7 @@ from ..deps import http_dep, settings_dep
 from ..salesforce import duplicates, empty_fields, explorer, field_check, finder, service
 from ..salesforce.client import SalesforceClient
 from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
-from ..schemas import FieldCheckRequest, FieldCheckResult, FieldValues, DataAnswer, DataAskRequest, DuplicateOptions, DuplicateRequest, DuplicateResult, EmptyField, EmptyRequest, EmptyResult, DataObject, DataObjectDetail, DataRecord, DataRecordPage, DataRelatedPage, DataSearchGroup
+from ..schemas import ApiModel, FieldCheckRequest, FieldCheckResult, FieldValues, DataAnswer, DataAskRequest, DuplicateOptions, DuplicateRequest, DuplicateResult, EmptyField, EmptyRequest, EmptyResult, DataObject, DataObjectDetail, DataRecord, DataRecordPage, DataRelatedPage, DataSearchGroup
 
 router = APIRouter(prefix="/data", tags=["data"])
 

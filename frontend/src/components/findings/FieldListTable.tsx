@@ -10,7 +10,8 @@ const filledBand = (f: FieldListItem) => {
   const exact = (100 * f.filled) / f.of; // not the rounded %: 0.99% is under 1%, as the check counts it
   return f.filled === 0 ? 'Never filled in' : exact < 1 ? 'Under 1%' : exact < 20 ? '1% to 20%' : '20% or more';
 };
-const whyListed = (f: FieldListItem) => (/^Filled on only/.test(f.note) ? 'Filled on only a few records' : f.note || null);
+// "Rarely filled — on 120 records" → "Rarely filled", so the filter offers the bands, not every count
+const whyListed = (f: FieldListItem) => (/^Filled on only/.test(f.note) ? 'Filled on only a few records' : f.note.split(' — ')[0] || null);
 const COLUMNS: { name: string; label: string; get: (f: FieldListItem) => string | null }[] = [
   { name: 'kind', label: 'Custom or standard', get: (f) => (f.custom ? 'Custom' : 'Standard') },
   { name: 'type', label: 'Type', get: (f) => f.type || null },

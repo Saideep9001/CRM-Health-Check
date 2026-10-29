@@ -104,7 +104,7 @@ def combined_view(db: Session, row: AssessmentRow) -> tuple[dict, list[FindingRo
 
 
 # Which per-object numbers each area measures.
-_OBJECT_FIELDS = {"records": None, "duplicates": "area-1", "completeness": "area-1"}  # completeness = key values filled (Completeness card)
+_OBJECT_FIELDS = {"records": None, "duplicates": "area-1", "completeness": "area-1"}  # completeness = key fields filled (Missing Key Fields)
 
 
 def _combine_objects(db: Session, row: AssessmentRow, source: dict[str, str], findings: list[FindingRow]) -> list[dict]:

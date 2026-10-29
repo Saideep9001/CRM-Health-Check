@@ -55,8 +55,6 @@ class Metric:
     # What the number is out of, when it isn't the object's records: e.g. (225, "custom fields").
     out_of: int | None = None
     out_of_label: str | None = None
-    # The main cause in a few words, shown on the card: "Least filled: Zip Code (2% filled)".
-    cause: str | None = None
 
 
 @dataclass
@@ -108,6 +106,12 @@ class Ctx:
     _count_cache: dict[str, int] = field(default_factory=dict)
     _setup_cache: dict[str, list[dict]] = field(default_factory=dict)
     memo: dict[str, Any] = field(default_factory=dict)  # values shared between checks in one run
+    on_progress: Callable[[float], None] | None = None  # set by the runner: how far through the current step (0–1)
+
+    def tick(self, done: float) -> None:
+        """Report progress within the current step, so the progress bar moves during long steps."""
+        if self.on_progress:
+            self.on_progress(min(max(done, 0.0), 1.0))
 
     # ---------------- objects in scope ----------------
 

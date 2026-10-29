@@ -160,6 +160,20 @@ def _run(db, http: httpx.Client, row: AssessmentRow) -> None:
     ctx = Ctx(sf, Scope(scope.get("lookbackDays"), scope.get("staleLeadDays", 30), scope.get("stuckOpportunityDays", 60), objects))
     area_ids = [a for a in scope.get("areaIds", []) if a in AREAS]
     steps = [(a, check) for a in area_ids for check in AREAS[a][1]]
+    # Each step's share of the progress bar: none for the per-object steps whose object wasn't chosen (they're skipped at once).
+    per_object = {"account": "Account", "contact": "Contact", "lead": "Lead", "opportunity": "Opportunity"}
+
+    def weight(check) -> float:
+        name = check.__name__
+        if check.__module__.endswith("data_quality") and name.endswith("_cards"):
+            obj = per_object.get(name.split("_")[0])
+            if obj and obj not in objects or name.startswith("other_object") and not ctx.others():
+                return 0.0
+        return 1.0
+
+    weights = [weight(check) for _, check in steps]
+    total = sum(weights) or 1.0
+    before = [sum(weights[:k]) for k in range(len(steps))]  # the share done when each step starts
     failures: dict[str, list[str]] = {}
     skipped: dict[str, list[str]] = {}
     ran: set[str] = set()  # areas where at least one check applied to the chosen objects
@@ -168,10 +182,18 @@ def _run(db, http: httpx.Client, row: AssessmentRow) -> None:
         db.refresh(row)
         if row.status == "cancelled":
             raise Cancelled()
-        row.progress = round(100 * i / max(len(steps), 1))
+        row.progress = round(100 * before[i] / total)
         row.current_step = AREAS[area_id][2].get(check, "Checking your data")
         db.commit()
         ctx.area_id = area_id
+
+        def report(done: float, i: int = i) -> None:  # progress within this step, saved only when the % changes
+            pct = round(100 * (before[i] + done * weights[i]) / total)
+            if pct != row.progress:
+                row.progress = pct
+                db.commit()
+
+        ctx.on_progress = report
         before_m, before_f = len(ctx.metrics.get(area_id, [])), len(ctx.findings)
         try:
             check(ctx)
@@ -211,7 +233,7 @@ def _run(db, http: httpx.Client, row: AssessmentRow) -> None:
             "status": status,
             "indicators": [{"label": m.label, "value": m.value, "unit": m.unit, "direction": m.direction, "score": m.score,
                             "how": m.how, "rule": m.rule, "records": m.records, "criteria": m.criteria,
-                            "fieldScores": m.field_scores, "fieldList": m.field_list, "outOf": m.out_of, "outOfLabel": m.out_of_label, "cause": m.cause}
+                            "fieldScores": m.field_scores, "fieldList": m.field_list, "outOf": m.out_of, "outOfLabel": m.out_of_label}
                            for m in metrics],
             "recordsEvaluated": sum(ctx.totals.values()) or None,
             "message": ("Some checks couldn’t run: " + " · ".join(notes)) if notes

@@ -179,14 +179,16 @@ export function fieldFlowFor(v: IndicatorValue): FlowStep[] | null {
     ];
   }
   if (of == null) return null;
-  if (/^Unused Fields/.test(v.label))
+  if (/^Unused & Low-Completion Fields/.test(v.label)) {
+    const hardly = items.filter((f) => /^Hardly ever/.test(f.note)).length;
     return [
       { label: 'Fields checked', value: of, hint: 'Standard and custom fields people fill in' },
-      { label: 'In use', value: of - n, hint: `Filled on 1% of records or more · ${pctOf(of - n, of)}`, tone: 'good' },
-      { label: 'Hardly ever filled', value: n - never, hint: 'On fewer than 1% of records', tone: 'warn' },
+      { label: 'Well used', value: of - n, hint: `Filled on 20% of records or more · ${pctOf(of - n, of)}`, tone: 'good' },
+      { label: 'Rarely filled', value: n - hardly - never, hint: 'On 1% to under 20% of records', tone: 'warn' },
+      { label: 'Hardly ever filled', value: hardly, hint: 'On fewer than 1% of records', tone: 'bad' },
       { label: 'Never filled in', value: never, hint: 'Empty on every record', tone: 'bad' },
-      { label: 'Unused fields', value: n, hint: `${pctOf(n, of)} of the fields`, tone: 'bad' },
     ];
+  }
   if (/^Outdated Fields/.test(v.label))
     return [
       { label: 'Custom fields checked', value: of, hint: 'Built in your org' },
@@ -200,15 +202,6 @@ export function fieldFlowFor(v: IndicatorValue): FlowStep[] | null {
       { label: 'Built in your org', value: of, hint: 'Each pair has at least one of these' },
       { label: 'Look-alike pairs', value: n, hint: 'Fields that seem to hold the same thing', tone: 'bad' },
       { label: 'Fields in a pair', value: items.length, hint: 'Listed below with the field they look like', tone: 'warn' },
-    ];
-  }
-  if (/^Low-Completion Fields/.test(v.label)) {
-    const emptier = num(crit('Left to Unused Fields')); // under 0.1%: listed under Unused Fields, not here
-    return [
-      { label: 'Fields checked', value: of, hint: 'Fields people fill in, standard and custom' },
-      { label: 'Filled on 20%+', value: Math.max(of - n - emptier, 0), hint: pctOf(Math.max(of - n - emptier, 0), of), tone: 'good' },
-      { label: 'Filled on 0.1% to under 20%', value: n, hint: `Low completion · ${pctOf(n, of)} · listed below`, tone: 'warn' },
-      { label: 'Under 0.1%', value: emptier, hint: 'Mostly never filled — shown under Unused Fields', tone: 'bad' },
     ];
   }
   if (/^Empty Fields Others Depend On/.test(v.label))
@@ -239,22 +232,15 @@ export function fieldFlowForRecordType(
       { label: 'Added in your org', value: custom, hint: 'Custom fields' },
     ];
   }
-  if (/^Unused Fields|^Low-Completion Fields/.test(v.label)) {
+  if (/^Unused & Low-Completion Fields/.test(v.label)) {
     const checked = inScope(scope.fillable);
-    const unused = /^Unused/.test(v.label);
-    if (!unused)
-      return [
-        { label: 'Fields checked', value: checked, hint: `Fields people fill in, ${on}` },
-        { label: 'Filled on 0.1% to under 20%', value: n, hint: `Low completion · ${pctOf(n, checked)} · listed below`, tone: 'warn' },
-      ];
+    const hardly = items.filter((f) => /^Hardly ever/.test(f.note)).length;
     return [
       { label: 'Fields checked', value: checked, hint: `Fields people fill in, ${on}` },
-      { label: unused ? 'In use' : 'Filled on 20%+', value: Math.max(checked - n, 0), hint: pctOf(Math.max(checked - n, 0), checked), tone: 'good' },
-      ...(unused ? [{ label: 'Hardly ever filled', value: n - never, hint: 'On fewer than 1% of records', tone: 'warn' as const }] : [
-        { label: 'Filled on under 20%', value: n, hint: `Low completion · ${pctOf(n, checked)}`, tone: 'warn' as const },
-      ]),
+      { label: 'Well used', value: Math.max(checked - n, 0), hint: `Filled on 20%+ · ${pctOf(Math.max(checked - n, 0), checked)}`, tone: 'good' },
+      { label: 'Rarely filled', value: n - hardly - never, hint: 'On 1% to under 20% of records', tone: 'warn' },
+      { label: 'Hardly ever filled', value: hardly, hint: 'On fewer than 1% of records', tone: 'bad' },
       { label: 'Never filled in', value: never, hint: 'Empty on every record', tone: 'bad' },
-      ...(unused ? [{ label: 'Unused fields', value: n, hint: `${pctOf(n, checked)} of the fields`, tone: 'bad' as const }] : []),
     ];
   }
   if (/^Outdated Fields/.test(v.label)) {
