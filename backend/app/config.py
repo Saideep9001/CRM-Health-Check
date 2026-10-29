@@ -64,6 +64,11 @@ class Settings(BaseSettings):
     # --- Sign-in. When false, everyone is treated as a local admin (single-user development only). ---
     auth_required: bool = True
 
+    # --- Default admin: created at start-up when there are no users yet (set these as host secrets, never in code) ---
+    default_admin_email: str = ""
+    default_admin_password: str = ""
+    default_admin_name: str = "Admin"
+
     # --- Local profile (used only when AUTH_REQUIRED=false) ---
     local_user_name: str = "Local User"
     local_user_email: str = "user@localhost"

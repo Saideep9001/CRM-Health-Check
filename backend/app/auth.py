@@ -253,5 +253,32 @@ def user_count(db: Session) -> int:
     return int(db.scalar(select(func.count()).select_from(UserRow)) or 0)
 
 
+def ensure_default_admin(settings: Settings) -> None:
+    """Create the admin from DEFAULT_ADMIN_EMAIL / DEFAULT_ADMIN_PASSWORD when no one has an account yet.
+    The credentials come from the environment (e.g. Railway variables) only; nothing happens once any user exists."""
+    import logging
+    import uuid
+
+    log = logging.getLogger("aquarient")
+    email = settings.default_admin_email.strip().lower()
+    if not (email and settings.default_admin_password):
+        return
+    db = SessionLocal()
+    try:
+        if user_count(db) > 0:
+            return
+        try:
+            check_password_rules(settings.default_admin_password, email)
+        except HTTPException as exc:
+            log.warning("Default admin not created: %s", exc.detail)
+            return
+        db.add(UserRow(id=str(uuid.uuid4()), email=email, name=settings.default_admin_name.strip() or "Admin",
+                       password_hash=hash_password(settings.default_admin_password), role="admin", all_orgs=True, is_active=True))
+        db.commit()
+        log.info("Default admin created: %s", email)
+    finally:
+        db.close()
+
+
 def secure_cookie(settings: Settings) -> bool:
     return urlparse(settings.frontend_origin).scheme == "https"

@@ -19,7 +19,7 @@ from .db import init_db
 from .engine import jobs
 from fastapi import Depends
 
-from .auth import AuthMiddleware, require_user
+from .auth import AuthMiddleware, ensure_default_admin, require_user
 from .routers import admin, assessments, assistant, consultant, data, salesforce, uploads, users, workspace
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(name)s: %(message)s")
@@ -29,6 +29,7 @@ log = logging.getLogger("aquarient")
 @asynccontextmanager
 async def lifespan(api: FastAPI):
     init_db()
+    ensure_default_admin(get_settings())
     s = get_settings()
     log.info("Salesforce app keys in .env: %s (they can also be entered on the Connect Salesforce page)", "yes" if s.salesforce_configured else "no")
     log.info("OAuth callback URL (add this to the Connected App): %s", s.oauth_callback_url)

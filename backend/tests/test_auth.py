@@ -142,3 +142,23 @@ def test_team_management_and_last_admin(client):
     _login(v["email"], "brand new password 1")
     with SessionLocal() as db:
         assert db.query(UserRow).filter(UserRow.email == v["email"]).one().password_hash.startswith("scrypt$")
+
+
+def test_default_admin_from_environment(client):
+    """DEFAULT_ADMIN_EMAIL / DEFAULT_ADMIN_PASSWORD create the first admin at start-up, and only while no one exists."""
+    from app import auth
+    from app.config import Settings
+
+    settings = Settings(default_admin_email="Boss@Example.test", default_admin_password="example pass for tests", default_admin_name="Boss")
+    with SessionLocal() as db:  # back to an empty install
+        db.query(SessionRow).delete()
+        db.query(UserRow).delete()
+        db.commit()
+    auth.ensure_default_admin(settings)
+    c = _login("boss@example.test", "example pass for tests")
+    me = c.get(f"{API}/me").json()
+    assert me["role"] == "admin" and me["name"] == "Boss"
+
+    auth.ensure_default_admin(Settings(default_admin_email="second@example.test", default_admin_password="another example pass"))
+    with SessionLocal() as db:
+        assert [u.email for u in db.query(UserRow).all()] == ["boss@example.test"]  # someone exists: nothing more is created
