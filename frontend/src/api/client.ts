@@ -45,6 +45,8 @@ type Query = Record<string, string | number | boolean | null | undefined>;
 interface RequestOptions {
   query?: Query;
   body?: unknown;
+  /** A file sent as-is (an upload), instead of a JSON body. */
+  raw?: Blob;
   signal?: AbortSignal;
   responseType?: 'json' | 'blob';
   timeoutMs?: number;
@@ -59,9 +61,9 @@ function buildUrl(path: string, query?: Query) {
   return s ? `${url}?${s}` : url;
 }
 
-function buildHeaders(hasBody: boolean): HeadersInit {
+function buildHeaders(hasBody: boolean, raw = false): HeadersInit {
   const h: Record<string, string> = { Accept: 'application/json' };
-  if (hasBody) h['Content-Type'] = 'application/json';
+  if (hasBody) h['Content-Type'] = raw ? 'application/octet-stream' : 'application/json';
   return h;
 }
 
@@ -84,8 +86,8 @@ export async function request<T>(method: string, path: string, opts: RequestOpti
     res = await fetch(buildUrl(path, opts.query), {
       method,
       credentials: 'include',
-      headers: buildHeaders(opts.body !== undefined),
-      body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+      headers: buildHeaders(opts.body !== undefined || opts.raw !== undefined, opts.raw !== undefined),
+      body: opts.raw ?? (opts.body !== undefined ? JSON.stringify(opts.body) : undefined),
       signal: ctrl.signal,
     });
   } catch (e) {
@@ -128,4 +130,6 @@ export const http = {
   patch: <T>(path: string, body: unknown) => request<T>('PATCH', path, { body }),
   delete: <T>(path: string) => request<T>('DELETE', path),
   blob: (path: string, body: unknown) => request<Blob>('POST', path, { body, responseType: 'blob', timeoutMs: 120_000 }),
+  /** Send a file as the request body. */
+  upload: <T>(path: string, file: Blob, query?: Query) => request<T>('POST', path, { raw: file, query, timeoutMs: 180_000 }),
 };

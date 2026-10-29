@@ -11,6 +11,7 @@ import {
   useDataObjects,
   useRole,
 } from '@/api/queries';
+import { isApiError } from '@/api/client';
 import { ObjectChooser } from '@/components/data/ObjectList';
 import { Button, LinkButton } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Form';
@@ -92,7 +93,7 @@ export function RunCheckPanel({
   const [staleDays, setStaleDays] = useState<DayOption>('30');
   const [stuckDays, setStuckDays] = useState<DayOption>('60');
   const [startedId, setStartedId] = useState<string | null>(null);
-  const [objects, setObjects] = useState<string[]>(loadObjects);
+  const [chosen, setObjects] = useState<string[]>(loadObjects);
   const [chooserOpen, setChooserOpen] = useState(false);
   const updateObjects = (v: string[]) => {
     setObjects(v);
@@ -109,6 +110,20 @@ export function RunCheckPanel({
   const watched = useAssessment(watchId);
   const run = watched.data ?? active;
   const running = !!run && (run.status === 'queued' || run.status === 'running');
+  // Started elsewhere (another tab or person) and this page hadn't seen it yet: not an error, so fetch it and show its progress.
+  const busy = isApiError(create.error) && create.error.status === 409 && /already running/i.test(create.error.message);
+  useEffect(() => {
+    if (busy) list.refetch();
+  }, [busy]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (running && create.error) create.reset();
+  }, [running]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!running) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [running]);
 
   // Tell the user once when the check they started here finishes.
   const announced = useRef<string | null>(null);
@@ -130,6 +145,10 @@ export function RunCheckPanel({
   const usesStuck = runnable.includes('area-5') || runnable.includes('area-10');
   const orgObjects = useDataObjects(connected && objectPicker && checksObjects);
   const labels = useMemo(() => new Map((orgObjects.data ?? []).map((o) => [o.name, o.labelPlural])), [orgObjects.data]);
+  // Uploaded CSV/Excel data: only the objects that were uploaded (the saved choice is for Salesforce orgs).
+  const uploaded = conn.data?.environment === 'upload' && orgObjects.data?.length ? orgObjects.data.map((o) => o.name) : null;
+  const inUpload = uploaded ? chosen.filter((o) => uploaded.includes(o)) : chosen;
+  const objects = uploaded ? (inUpload.length ? inUpload : uploaded.slice(0, MAX_OBJECTS)) : chosen;
   const isDefault = objects.length === DEFAULT_DQ_OBJECTS.length && DEFAULT_DQ_OBJECTS.every((o) => objects.includes(o));
   // The objects the last finished check of these areas looked at; results on this page come from that check.
   const lastRun = list.data?.find((a) => a.status === 'completed' && a.scope.areaIds?.some((id) => runnable.includes(id))) ?? null;
@@ -167,25 +186,29 @@ export function RunCheckPanel({
 
   // ---- running: live progress
   if (running && run) {
-    const pct = Math.max(3, run.progress ?? 0);
+    const done = run.progress ?? 0;
+    const since = Date.parse(run.startedAt ?? run.createdAt);
+    const secs = Number.isFinite(since) ? Math.max(0, Math.round((now - since) / 1000)) : null;
+    const elapsed = secs == null ? null : secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${String(secs % 60).padStart(2, '0')}s`;
+    const step = run.currentStep ?? (run.status === 'queued' ? 'Waiting to start' : 'Starting');
     return (
-      <div className="mb-6 rounded-xl border border-brand/25 bg-brand-soft px-4 py-3" role="status" aria-live="polite">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <div className="flex min-w-0 flex-1 items-start gap-3 text-sm">
-            <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-brand" />
-            <div className="min-w-0 flex-1">
-              <p className="font-semibold">
-                Checking your Salesforce… <span className="font-normal text-ink-muted">{run.progress ?? 0}%</span>
-              </p>
-              <p className="truncate text-ink-muted">{run.currentStep ?? 'Starting'}</p>
-              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface">
-                <motion.div className="h-full rounded-full bg-brand" initial={false} animate={{ width: `${pct}%` }} transition={{ duration: 0.6 }} />
-              </div>
-            </div>
-          </div>
-          <Button size="sm" icon={<Square className="h-3.5 w-3.5" />} disabled={cancel.isPending} onClick={() => cancel.mutate(run.id)}>
-            {cancel.isPending ? 'Stopping…' : 'Stop'}
-          </Button>
+      <div className="mb-6 rounded-lg border border-brand/20 bg-brand-soft/60 px-3 py-2" role="status" aria-live="polite">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
+          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-brand" />
+          <span className="min-w-0 flex-1 truncate text-ink" title={step}>
+            <span className="font-semibold">{step}</span>
+          </span>
+          <span className="flex w-full items-center gap-2 sm:w-56">
+            <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface">
+              <motion.span className="block h-full rounded-full bg-brand" initial={false} animate={{ width: `${Math.max(done, 2)}%` }} transition={{ duration: 0.6 }} />
+            </span>
+            <span className="w-9 text-right font-semibold tabular-nums text-brand">{done}%</span>
+          </span>
+          {elapsed && <span className="tabular-nums text-ink-subtle">{elapsed}</span>}
+          <button type="button" disabled={cancel.isPending} onClick={() => cancel.mutate(run.id)}
+            className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-medium text-ink-muted hover:bg-surface hover:text-ink disabled:opacity-50">
+            <Square className="h-3 w-3" /> {cancel.isPending ? 'Stopping…' : 'Stop'}
+          </button>
         </div>
         <InlineError error={cancel.error} />
       </div>
@@ -300,7 +323,17 @@ export function RunCheckPanel({
         </div>
         {objectRow}
       </div>
-      <InlineError error={create.error} />
+      {busy ? (
+        <div className="-mt-3 mb-6 flex items-center gap-3 rounded-xl border border-brand/20 bg-brand-soft px-4 py-3 text-sm" role="status">
+          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-brand" />
+          <span className="text-ink-muted">
+            <span className="font-semibold text-ink">A health check is already running for this Salesforce.</span> Its progress will show here in a moment;
+            when it finishes you can check again.
+          </span>
+        </div>
+      ) : (
+        <InlineError error={create.error} />
+      )}
     </>
   );
 }

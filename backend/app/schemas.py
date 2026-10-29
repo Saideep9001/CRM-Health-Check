@@ -10,7 +10,7 @@ class ApiModel(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
 
-Environment = Literal["production", "sandbox", "custom"]
+Environment = Literal["production", "sandbox", "custom", "upload"]
 ConnectionStatus = Literal["disconnected", "connected", "expired", "error"]
 
 
@@ -60,7 +60,7 @@ class SalesforceAppUpdate(ApiModel):
 
 
 class OAuthStartRequest(ApiModel):
-    environment: Environment
+    environment: Literal["production", "sandbox", "custom"]  # an upload isn't signed in to
     my_domain: str | None = None
     redirect_uri: str
 
@@ -359,7 +359,6 @@ class IndicatorValue(ApiModel):
     field_list: list[FieldListItem] | None = None  # cards about fields: the fields themselves
     out_of: int | None = None  # what the number is out of, when not the object's records (e.g. 225 custom fields)
     out_of_label: str | None = None
-    cause: str | None = None  # the main cause in a few words, e.g. "Least filled: Zip Code (2% filled)"
 
     @model_validator(mode="before")
     @classmethod

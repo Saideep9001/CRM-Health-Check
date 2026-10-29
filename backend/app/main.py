@@ -16,7 +16,7 @@ from .engine import jobs
 from fastapi import Depends
 
 from .auth import AuthMiddleware, require_user
-from .routers import admin, assessments, assistant, consultant, data, salesforce, users, workspace
+from .routers import admin, assessments, assistant, consultant, data, salesforce, uploads, users, workspace
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(name)s: %(message)s")
 log = logging.getLogger("aquarient")
@@ -58,5 +58,5 @@ app.add_middleware(
 # Public: health, sign-in and first-run setup. Everything else needs a signed-in user (roles are checked per route).
 for r in (workspace.router, users.router):
     app.include_router(r, prefix="/api/v1")
-for r in (salesforce.router, assistant.router, data.router, assessments.router, consultant.router, admin.router, admin.requests_router):
+for r in (salesforce.router, uploads.router, assistant.router, data.router, assessments.router, consultant.router, admin.router, admin.requests_router):
     app.include_router(r, prefix="/api/v1", dependencies=[Depends(require_user)])

@@ -1,7 +1,7 @@
 import { QueryCache, QueryClient, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { AccessRequestStatus, AppSettings, Assessment, CreateAssessmentRequest, DataFilter, DataRecordQuery, Finding, Paginated, SalesforceAppConfig, SalesforceAppUpdate, ScanScheduleUpdate, TeamMember, TeamMemberCreate, UpdateFindingRequest, UserProfile, UserRole } from '@/types';
 import { isApiError } from './client';
-import { accessApi, adminApi, assessmentApi, authApi, indicatorApi, connectionApi, consultantApi, dataApi, findingApi, reportApi, systemApi, teamApi, userApi } from './endpoints';
+import { accessApi, adminApi, assessmentApi, authApi, indicatorApi, connectionApi, consultantApi, dataApi, findingApi, reportApi, systemApi, teamApi, uploadApi, userApi } from './endpoints';
 
 export const queryClient: QueryClient = new QueryClient({
   queryCache: new QueryCache({
@@ -84,6 +84,24 @@ export const useConnectionSnapshot = (orgId: string | null, enabled: boolean) =>
   });
 
 export const useStartOAuth = () => useMutation({ mutationFn: connectionApi.startOAuth });
+
+// ---- Uploaded CSV / Excel data ----
+
+export const useUploadPreview = () => useMutation({ mutationFn: ({ file, object }: { file: File; object: string }) => uploadApi.preview(file, object) });
+
+/** Loading a file makes its upload the active org, so everything is refetched (like switching orgs). */
+export function useImportUpload() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: uploadApi.import, onSuccess: () => qc.invalidateQueries() });
+}
+
+export const useUploadedObjects = (orgId: string | null, enabled: boolean) =>
+  useQuery({ queryKey: ['uploads', orgId, 'objects'], queryFn: ({ signal }) => uploadApi.objects(orgId!, signal), enabled: enabled && !!orgId });
+
+export function useRemoveUploadedObject() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: ({ orgId, name }: { orgId: string; name: string }) => uploadApi.removeObject(orgId, name), onSuccess: () => qc.invalidateQueries() });
+}
 
 export function useCompleteOAuth() {
   const qc = useQueryClient();

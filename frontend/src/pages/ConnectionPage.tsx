@@ -1,11 +1,12 @@
-import { ArrowRight, CheckCircle2, ExternalLink, KeyRound, Play, ServerCog, ShieldCheck } from 'lucide-react';
+import { ArrowRight, CheckCircle2, ExternalLink, FileSpreadsheet, KeyRound, Play, Plus, ServerCog, ShieldCheck, Table2, Trash2, Upload } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { useAssessments, useCheckConnection, useConnection, useConnectionSnapshot, useSalesforceApp, useStartOAuth, useRole } from '@/api/queries';
+import { useAssessments, useCheckConnection, useConnection, useConnectionSnapshot, useRemoveUploadedObject, useSalesforceApp, useStartOAuth, useRole, useUploadedObjects } from '@/api/queries';
 import { OrgSnapshot } from '@/components/connection/OrgSnapshot';
 import { ScoreRing } from '@/components/ui/Visuals';
 import { SalesforceConnectionCard } from '@/components/connection/SalesforceConnectionCard';
 import { DisconnectDialog } from '@/components/connection/DisconnectDialog';
+import { UploadDataModal } from '@/components/connection/UploadDataModal';
 import { Button, LinkButton } from '@/components/ui/Button';
 import { Field } from '@/components/ui/Form';
 import { InfoTip } from '@/components/ui/HelpTip';
@@ -14,7 +15,7 @@ import { Modal } from '@/components/ui/Overlay';
 import { PageHeader, SectionCard } from '@/components/ui/Page';
 import { ErrorState, InlineError, LoadingState } from '@/components/ui/States';
 import { useToast } from '@/context/ToastContext';
-import { cx, fmtAgo, scoreBand } from '@/lib/format';
+import { cx, fmtAgo, fmtNumber, scoreBand } from '@/lib/format';
 import type { SalesforceEnvironment } from '@/types';
 
 
@@ -169,6 +170,44 @@ function RecentChecks({ orgId, canRun }: { orgId: string; canRun: boolean }) {
   );
 }
 
+/** The files in the active upload: one per object, each replaceable or removable. */
+function UploadedFiles({ orgId, canEdit, onAdd }: { orgId: string; canEdit: boolean; onAdd: () => void }) {
+  const files = useUploadedObjects(orgId, true);
+  const remove = useRemoveUploadedObject();
+  return (
+    <SectionCard
+      className="mt-6"
+      title="Uploaded files"
+      description="One file per object. Loading a file for an object again replaces it."
+      actions={canEdit && <Button size="sm" variant="primary" icon={<Plus className="h-3.5 w-3.5" />} onClick={onAdd}>Add a file</Button>}
+      bodyClassName="p-0"
+    >
+      {files.isLoading ? (
+        <div className="p-6"><LoadingState rows={2} /></div>
+      ) : (
+        <ul className="divide-y divide-line">
+          {(files.data ?? []).map((o) => (
+            <li key={o.name} className="flex items-center gap-4 px-6 py-3">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-brand-soft text-brand"><FileSpreadsheet className="h-4 w-4" /></span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium">{o.plural} <span className="font-normal text-ink-subtle">· {fmtNumber(o.rows)} records</span></p>
+                <p className="truncate text-xs text-ink-subtle">{o.filename}{o.loadedAt ? ` · loaded ${fmtAgo(o.loadedAt)}` : ''}</p>
+              </div>
+              <LinkButton to={`/data/${encodeURIComponent(o.name)}`} size="sm" icon={<Table2 className="h-3.5 w-3.5" />}>Open table</LinkButton>
+              {canEdit && (
+                <Button size="sm" variant="ghost" icon={<Trash2 className="h-3.5 w-3.5" />} disabled={remove.isPending} onClick={() => remove.mutate({ orgId, name: o.name })}>
+                  Remove
+                </Button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      <InlineError error={files.error ?? remove.error} />
+    </SectionCard>
+  );
+}
+
 export default function ConnectionPage() {
   const conn = useConnection();
   const check = useCheckConnection();
@@ -176,6 +215,7 @@ export default function ConnectionPage() {
   const { notify } = useToast();
   const [connectOpen, setConnectOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
   const app = useSalesforceApp();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
@@ -192,7 +232,7 @@ export default function ConnectionPage() {
   const autoChecked = useRef(false);
   useEffect(() => {
     const c = conn.data;
-    if (autoChecked.current || !c || c.status !== 'connected') return;
+    if (autoChecked.current || !c || c.status !== 'connected' || c.environment === 'upload') return;
     autoChecked.current = true;
     const last = c.lastCheckedAt ? new Date(c.lastCheckedAt).getTime() : 0;
     if (Date.now() - last > 60 * 60_000) check.mutate();
@@ -200,6 +240,7 @@ export default function ConnectionPage() {
 
   const isConnected = conn.data?.status === 'connected';
   const orgId = conn.data?.orgId ?? null;
+  const isUpload = conn.data?.environment === 'upload';
   const snapshot = useConnectionSnapshot(orgId, isConnected).data ?? null;
 
   // Without app keys, Connect can't work yet: go to the setup page first.
@@ -241,8 +282,20 @@ export default function ConnectionPage() {
         )
       )}
 
-      {isConnected && orgId && <OrgSnapshot orgId={orgId} />}
+      {isConnected && orgId && isUpload && <UploadedFiles orgId={orgId} canEdit={canEdit} onAdd={() => setUploadOpen(true)} />}
+      {isConnected && orgId && !isUpload && <OrgSnapshot orgId={orgId} />}
       {isConnected && orgId && <RecentChecks orgId={orgId} canRun={canEdit} />}
+
+      {canEdit && !isUpload && (
+        <section className="mt-6 flex flex-col gap-4 rounded-2xl border border-dashed border-line bg-muted/30 p-5 sm:flex-row sm:items-center">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-soft text-brand"><FileSpreadsheet className="h-5 w-5" /></span>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold">No Salesforce access? Upload a file instead</p>
+            <p className="text-sm text-ink-muted">A CSV or Excel export of Accounts, Contacts, Leads, Opportunities or any other records — checked with the same rules.</p>
+          </div>
+          <Button icon={<Upload className="h-4 w-4" />} onClick={() => setUploadOpen(true)}>Upload CSV or Excel</Button>
+        </section>
+      )}
 
       {!isConnected && (
       <SectionCard className="mt-6" title="What happens when you connect" description="Takes about a minute">
@@ -263,6 +316,11 @@ export default function ConnectionPage() {
       )}
 
       <ConnectModal open={connectOpen} onClose={() => setConnectOpen(false)} />
+      <UploadDataModal
+        open={uploadOpen}
+        onClose={() => setUploadOpen(false)}
+        addTo={isUpload && orgId ? { orgId, name: conn.data?.organizationName ?? 'this upload' } : null}
+      />
 
       <DisconnectDialog open={confirmOpen} orgId={conn.data?.orgId ?? null} orgName={conn.data?.organizationName ?? 'this org'} onClose={() => setConfirmOpen(false)} />
     </div>

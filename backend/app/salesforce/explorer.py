@@ -146,6 +146,8 @@ def _name_field(desc: dict) -> str | None:
 
 def default_columns(desc: dict) -> list[str]:
     fields = _fields(desc)
+    if desc.get("uploadColumns"):  # an uploaded file: all its columns, in the file's order
+        return ["Id", *[c for c in desc["uploadColumns"] if c != "Id" and c in fields]][:MAX_COLUMNS]
     cols = ["Id"]
     name = _name_field(desc)
     if name:

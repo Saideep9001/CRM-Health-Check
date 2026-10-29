@@ -219,15 +219,22 @@ export function SalesforceConnectionCard({
   const apiUsed = api ?? (connection.apiRequestsMax && connection.apiRequestsRemaining !== null ? { used: connection.apiRequestsMax - connection.apiRequestsRemaining, max: connection.apiRequestsMax } : null);
   const apiPct = apiUsed && apiUsed.max ? Math.round((100 * apiUsed.used) / apiUsed.max) : null;
   const ms = snapshot?.responseMs;
+  const uploaded = connection.environment === 'upload'; // CSV/Excel data, checked like an org
 
-  const details = [
-    { icon: Fingerprint, label: 'Salesforce Org ID', value: connection.orgId, copy: true },
-    { icon: Globe2, label: 'Instance URL', value: connection.instanceUrl?.replace(/^https:\/\//, '') ?? null, full: connection.instanceUrl, copy: true },
-    { icon: Code2, label: 'API version', value: connection.apiVersion },
-    { icon: UserRound, label: 'Connected by', value: connection.connectedBy },
-    { icon: CalendarClock, label: 'Connected', value: connection.connectedAt ? `${fmtAgo(connection.connectedAt)} · ${fmtDateTime(connection.connectedAt)}` : null },
-    { icon: Activity, label: 'Last connection check', value: connection.lastCheckedAt ? fmtAgo(connection.lastCheckedAt) : null, full: connection.lastCheckedAt ? fmtDateTime(connection.lastCheckedAt) : null },
-  ];
+  const details = uploaded
+    ? [
+        { icon: Fingerprint, label: 'Upload ID', value: connection.orgId, copy: true },
+        { icon: UserRound, label: 'Uploaded by', value: connection.connectedBy },
+        { icon: CalendarClock, label: 'Uploaded', value: connection.connectedAt ? `${fmtAgo(connection.connectedAt)} · ${fmtDateTime(connection.connectedAt)}` : null },
+      ]
+    : [
+        { icon: Fingerprint, label: 'Salesforce Org ID', value: connection.orgId, copy: true },
+        { icon: Globe2, label: 'Instance URL', value: connection.instanceUrl?.replace(/^https:\/\//, '') ?? null, full: connection.instanceUrl, copy: true },
+        { icon: Code2, label: 'API version', value: connection.apiVersion },
+        { icon: UserRound, label: 'Connected by', value: connection.connectedBy },
+        { icon: CalendarClock, label: 'Connected', value: connection.connectedAt ? `${fmtAgo(connection.connectedAt)} · ${fmtDateTime(connection.connectedAt)}` : null },
+        { icon: Activity, label: 'Last connection check', value: connection.lastCheckedAt ? fmtAgo(connection.lastCheckedAt) : null, full: connection.lastCheckedAt ? fmtDateTime(connection.lastCheckedAt) : null },
+      ];
 
   return (
     <section className={cx('card relative overflow-hidden border', t.ring)}>
@@ -247,7 +254,7 @@ export function SalesforceConnectionCard({
             <StatusPill status={status} checking={checking} />
             {linked && connection.environment && (
               <span className={cx('rounded-full border px-2.5 py-0.5 text-xs font-medium', connection.environment === 'sandbox' ? 'border-warn/30 bg-warn-soft text-warn' : 'border-line bg-surface text-ink-muted')}>
-                {connection.environment === 'sandbox' ? 'Sandbox' : 'Production'}
+                {connection.environment === 'sandbox' ? 'Sandbox' : uploaded ? 'Uploaded file' : 'Production'}
               </span>
             )}
             {linked && connection.edition && <span className="rounded-full border border-line bg-surface px-2.5 py-0.5 text-xs font-medium text-ink-muted">{connection.edition}</span>}
@@ -260,7 +267,7 @@ export function SalesforceConnectionCard({
             {status === 'connected' && (
               <>
                 <ShieldCheck className="-mt-0.5 mr-1 inline h-4 w-4 text-good" />
-                Read-only access — we can read your data but never change it.
+                {uploaded ? 'Data from an uploaded file, kept on this server and checked like a Salesforce org.' : 'Read-only access — we can read your data but never change it.'}
               </>
             )}
             {status === 'disconnected' && 'Sign in on Salesforce’s own page. We only ever read your data.'}
@@ -268,7 +275,7 @@ export function SalesforceConnectionCard({
             {status === 'error' && (connection.errorMessage ?? 'The last connection check failed.')}
           </p>
 
-          {status === 'connected' && (
+          {status === 'connected' && !uploaded && (
             <div className="mt-3 flex flex-wrap gap-2">
               <Chip icon={Activity} tone="good" title={connection.lastCheckedAt ? fmtDateTime(connection.lastCheckedAt) : undefined}>
                 Healthy{connection.lastCheckedAt ? ` · checked ${fmtAgo(connection.lastCheckedAt)}` : ''}
@@ -292,7 +299,7 @@ export function SalesforceConnectionCard({
                 {linked ? 'Reconnect Salesforce' : 'Connect Salesforce'}
               </Button>
             )}
-            {linked && (
+            {linked && !uploaded && (
               <Button icon={<RefreshCw className={cx('h-4 w-4', checking && 'animate-spin')} />} onClick={onCheck} disabled={checking}>
                 {checking ? 'Checking…' : 'Check connection'}
               </Button>
@@ -309,7 +316,7 @@ export function SalesforceConnectionCard({
             )}
             {onDisconnect && linked && (
               <Button variant="danger" icon={<Unplug className="h-4 w-4" />} onClick={onDisconnect}>
-                Disconnect
+                {uploaded ? 'Remove upload' : 'Disconnect'}
               </Button>
             )}
           </div>

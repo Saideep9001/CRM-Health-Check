@@ -1,4 +1,7 @@
 import type {
+  UploadPreview,
+  UploadResult,
+  UploadedObject,
   DataFilter,
   FieldValues,
   FieldCheckResult,
@@ -77,6 +80,18 @@ export const authApi = {
   ssoStart: (body: SsoStartRequest) => http.post<SsoStartResponse>('/auth/sso/start', body),
   /** Always 202 regardless of whether the account exists. */
   forgotPassword: (body: ForgotPasswordRequest) => http.post<void>('/auth/password/forgot', body),
+};
+
+export const uploadApi = {
+  /** Read a CSV/Excel file: its columns, the field each one matches, a few rows. */
+  preview: (file: File, object: string) => http.upload<UploadPreview>('/uploads/preview', file, { filename: file.name, object }),
+  /** The same file matched to another object. */
+  previewAgain: (token: string, object: string) => http.get<UploadPreview>(`/uploads/preview/${token}`, { object }),
+  /** Load it (a new upload, or added to `orgId`); the upload becomes the active org. */
+  import: (body: { token: string; object: string; mapping: Record<string, string | null>; orgId?: string | null; name?: string }) =>
+    http.post<UploadResult>('/uploads/import', body, 180_000),
+  objects: (orgId: string, signal?: AbortSignal) => http.get<UploadedObject[]>(`/uploads/${encodeURIComponent(orgId)}/objects`, undefined, signal),
+  removeObject: (orgId: string, name: string) => http.delete<void>(`/uploads/${encodeURIComponent(orgId)}/objects/${encodeURIComponent(name)}`),
 };
 
 export const connectionApi = {

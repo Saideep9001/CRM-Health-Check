@@ -14,7 +14,7 @@ from .. import auth, crypto
 from ..config import Settings
 from ..models import OAuthStateRow, SalesforceConnectionRow, UserRow
 from ..schemas import OAuthCallbackRequest, OAuthStartRequest, OAuthStartResponse, SalesforceConnection
-from . import oauth
+from . import local_org, oauth
 from .app_config import get_credentials
 from .client import SalesforceClient
 from .errors import SalesforceAuthExpired, SalesforceError
@@ -219,12 +219,38 @@ def _refresh_limits(sf: SalesforceClient, row: SalesforceConnectionRow) -> None:
     row.error_message = None
 
 
+def _client(db: Session, http: httpx.Client, settings: Settings, row: SalesforceConnectionRow) -> SalesforceClient:
+    if local_org.dataset_of(row.instance_url):  # uploaded CSV/Excel data: answered locally
+        return local_org.LocalSalesforceClient(http, row, settings, None, db.commit)
+    return SalesforceClient(http, row, settings, get_credentials(db, settings), db.commit)
+
+
 def client_for(db: Session, http: httpx.Client, settings: Settings, org_id: str | None = None) -> SalesforceClient:
     """A client for `org_id`'s saved connection, or for the active org."""
     row = row_for_org(db, org_id) if org_id else get_row(db)
     if row is None or row.status == "expired":
         raise NotConnected()
-    return SalesforceClient(http, row, settings, get_credentials(db, settings), db.commit)
+    return _client(db, http, settings, row)
+
+
+def create_upload(db: Session, name: str, by: str | None) -> SalesforceConnectionRow:
+    """A new "org" for uploaded files. It's saved like a connected org and becomes the active one."""
+    dataset = local_org.new_dataset()
+    local_org.set_name(dataset, name)
+    for other in all_rows(db):
+        other.active = False
+    org_id = f"UPL{dataset[:15].upper()}"
+    row = SalesforceConnectionRow(
+        workspace=f"org-{org_id}", active=True, status="connected", environment="upload", login_host="local",
+        instance_url=f"{local_org.LOCAL_SCHEME}{dataset}", org_id=org_id, organization_name=name, edition="Uploaded file",
+        connected_by=by, access_token_enc=crypto.encrypt("local"), refresh_token_enc=None, connected_at=_now(),
+        last_checked_at=_now(), api_requests_max=None, api_requests_remaining=None,
+    )
+    db.add(row)
+    db.flush()
+    _give_access(db, org_id)
+    db.commit()
+    return row
 
 
 def check(db: Session, http: httpx.Client, settings: Settings, org_id: str | None = None) -> SalesforceConnection:
@@ -232,7 +258,7 @@ def check(db: Session, http: httpx.Client, settings: Settings, org_id: str | Non
     if row is None:
         return to_schema(None, settings)
     try:
-        _refresh_limits(SalesforceClient(http, row, settings, get_credentials(db, settings), db.commit), row)
+        _refresh_limits(_client(db, http, settings, row), row)
     except SalesforceAuthExpired as exc:
         row.status, row.error_message, row.last_checked_at = "expired", str(exc), _now()
     except SalesforceError as exc:
@@ -261,12 +287,15 @@ def disconnect(db: Session, http: httpx.Client, org_id: str | None = None) -> No
     if row is None:
         return
     was_active = row.active
-    try:
-        token = crypto.decrypt(row.refresh_token_enc) or crypto.decrypt(row.access_token_enc)
-        if token:
-            oauth.revoke(http, login_host=row.login_host, token=token)
-    except RuntimeError:
-        pass  # undecryptable tokens: nothing to revoke, just forget them
+    if dataset := local_org.dataset_of(row.instance_url):
+        local_org.delete_dataset(dataset)  # an upload: removing it deletes the uploaded data
+    else:
+        try:
+            token = crypto.decrypt(row.refresh_token_enc) or crypto.decrypt(row.access_token_enc)
+            if token:
+                oauth.revoke(http, login_host=row.login_host, token=token)
+        except RuntimeError:
+            pass  # undecryptable tokens: nothing to revoke, just forget them
     db.delete(row)
     db.flush()
     if was_active:

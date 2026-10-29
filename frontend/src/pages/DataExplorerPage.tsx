@@ -351,7 +351,9 @@ function RecordsTab({ detail }: { detail: DataObjectDetail }) {
   const recs = useDataRecords(detail.name, query);
 
   const rows = recs.data?.pages.flatMap((p) => p.records) ?? [];
-  const shownCols = recs.data?.pages[0]?.columns.filter((c) => fieldMap.has(c)) ?? columns;
+  // An uploaded file reads like the spreadsheet: row numbers, gridlines, and no made-up record ids.
+  const uploaded = useConnection().data?.environment === 'upload';
+  const shownCols = (recs.data?.pages[0]?.columns.filter((c) => fieldMap.has(c)) ?? columns).filter((c) => !uploaded || fieldMap.get(c)?.type !== 'id');
   const total = recs.data?.pages[0]?.totalSize ?? null;
 
   const filteredCols = new Set(shownCols.filter((c) => columnFilter(filters, c)));
@@ -423,9 +425,10 @@ function RecordsTab({ detail }: { detail: DataObjectDetail }) {
       ) : (
         <>
           <div className="scrollbar-thin relative overflow-x-auto border-t border-line">
-            <table className="w-full border-collapse">
-              <thead className="bg-muted/50">
+            <table className={cx('w-full border-collapse', uploaded && '[&_td]:border [&_td]:border-line [&_th]:border [&_th]:border-line')}>
+              <thead className={cx('bg-muted/50', uploaded && 'sticky top-0 z-10 bg-muted')}>
                 <tr>
+                  {uploaded && <th className="th w-12 text-center" aria-label="Row">#</th>}
                   {shownCols.map((c) => {
                     const f = fieldMap.get(c)!;
                     const active = sort?.field === c;
@@ -473,6 +476,7 @@ function RecordsTab({ detail }: { detail: DataObjectDetail }) {
                     tabIndex={0}
                     className="cursor-pointer border-t border-line transition hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none"
                   >
+                    {uploaded && <td className="td w-12 bg-muted/50 text-center text-xs tabular-nums text-ink-subtle">{i + 1}</td>}
                     {shownCols.map((c) => {
                       const f = fieldMap.get(c)!;
                       const text = formatValue(f, r.values[c], r.refNames[c]);

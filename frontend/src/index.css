@@ -107,3 +107,8 @@
   animation-iteration-count: 1 !important;
   transition-duration: 0.01ms !important;
 }
+
+/* Uploaded CSV/Excel data has no Salesforce pages to open: hide links into Salesforce for it. */
+a[href^="local://"] {
+  display: none !important;
+}

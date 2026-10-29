@@ -57,7 +57,45 @@ export interface ApiHealth {
 }
 
 export type ConnectionStatus = 'disconnected' | 'connected' | 'expired' | 'error';
-export type SalesforceEnvironment = 'production' | 'sandbox' | 'custom';
+export type SalesforceEnvironment = 'production' | 'sandbox' | 'custom' | 'upload';
+
+// ---- Uploaded CSV / Excel data (checked like an org) ----
+
+export interface UploadColumn {
+  header: string;
+  /** The Salesforce field it matches; null = kept as a custom field. */
+  field: string | null;
+  type: string;
+  filled: number;
+  sample: string;
+}
+
+export interface UploadPreview {
+  token: string;
+  filename: string;
+  object: string;
+  rows: number;
+  columns: UploadColumn[];
+  preview: Record<string, string>[];
+  standardFields: { name: string; label: string; type: string }[];
+}
+
+export interface UploadedObject {
+  name: string;
+  label: string;
+  plural: string;
+  filename: string | null;
+  rows: number;
+  loadedAt: string | null;
+}
+
+export interface UploadResult {
+  orgId: string;
+  name: string;
+  object: string;
+  rows: number;
+  objects: UploadedObject[];
+}
 
 export interface SalesforceConnection {
   id: string | null;
