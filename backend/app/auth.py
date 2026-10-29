@@ -28,6 +28,21 @@ from .models import SessionRow, UserRow
 
 COOKIE = "aq_session"
 ROLES = ("admin", "consultant", "viewer")
+DEFAULT_COMPANY = "default"  # the first company: everything from before companies existed
+
+
+def company_of(org_id: str | None) -> str:
+    """The company an org belongs to. Orgs are saved per company: the first company keeps Salesforce's own org id,
+    any other company saves it as "<org id>~<company id>", so the same Salesforce org connected by two companies
+    stays two separate connections with separate results."""
+    key = org_id or ""
+    return key.rsplit("~", 1)[1] if "~" in key else DEFAULT_COMPANY
+
+
+def scoped_org(org_id: str, company_id: str | None) -> str:
+    """The key an org is saved under for a company (see company_of)."""
+    company = company_id or DEFAULT_COMPANY
+    return org_id if company == DEFAULT_COMPANY else f"{org_id}~{company}"
 MIN_PASSWORD = 10
 MAX_FAILED = 5
 LOCK_MINUTES = 15
@@ -94,21 +109,40 @@ class Principal:
     active_org_id: str | None = None
     session_id: str | None = None
     must_change_password: bool = False
+    company_id: str = DEFAULT_COMPANY
+    platform_admin: bool = False
+    hidden_org_ids: frozenset[str] = field(default_factory=frozenset)  # taken off their own list (still allowed)
 
     @property
     def is_admin(self) -> bool:
-        return self.role == "admin"
+        """Admin of their company (or of the platform)."""
+        return self.role == "admin" or self.platform_admin
 
     @property
     def can_edit(self) -> bool:
-        return self.role in ("admin", "consultant")
+        return self.role in ("admin", "consultant") or self.platform_admin
 
     def sees(self, org_id: str | None) -> bool:
-        return self.is_admin or self.all_orgs or (org_id or "") in self.org_ids
+        """May this person see the org: only orgs of their own company (platform admins: every company), and within it
+        every org for admins and "all orgs" people, otherwise the orgs they were given or connected."""
+        if self.platform_admin:
+            return True
+        if company_of(org_id) != self.company_id:
+            return False
+        return self.role == "admin" or self.all_orgs or (org_id or "") in self.org_ids
 
-    def allowed(self) -> frozenset[str] | None:
-        """Org ids this user may see, or None for every org."""
-        return None if (self.is_admin or self.all_orgs) else self.org_ids
+    def sees_company(self, company_id: str | None) -> bool:
+        return self.platform_admin or (company_id or DEFAULT_COMPANY) == self.company_id
+
+    def org_condition(self, column):
+        """A SQL condition on an org-id column for what this person may see (None: no limit)."""
+        if self.platform_admin:
+            return None
+        if not (self.role == "admin" or self.all_orgs):
+            return column.in_(self.org_ids or {""})
+        if self.company_id == DEFAULT_COMPANY:
+            return ~column.like("%~%")
+        return column.like(f"%~{self.company_id}")
 
 
 _current: ContextVar[Principal | None] = ContextVar("aquarient_user", default=None)
@@ -121,7 +155,8 @@ def current() -> Principal | None:
 def principal(user: UserRow, session_id: str | None = None) -> Principal:
     return Principal(id=user.id, name=user.name, email=user.email, role=user.role, all_orgs=bool(user.all_orgs),
                      org_ids=frozenset(user.org_ids or []), active_org_id=user.active_org_id, session_id=session_id,
-                     must_change_password=bool(user.must_change_password))
+                     must_change_password=bool(user.must_change_password), company_id=user.company_id or DEFAULT_COMPANY,
+                     platform_admin=bool(user.platform_admin), hidden_org_ids=frozenset(user.hidden_org_ids or []))
 
 
 def token_hash(token: str) -> str:
@@ -209,7 +244,7 @@ class AuthMiddleware:
 
 def _local_admin() -> Principal:
     s = get_settings()
-    return Principal(id="local-user", name=s.local_user_name, email=s.local_user_email, role="admin", all_orgs=True)
+    return Principal(id="local-user", name=s.local_user_name, email=s.local_user_email, role="admin", all_orgs=True, platform_admin=True)
 
 
 async def _json(send: Send, status: int, detail: str) -> None:
@@ -238,6 +273,12 @@ def require_editor(user: Principal = Depends(require_user)) -> Principal:
 def require_admin(user: Principal = Depends(require_user)) -> Principal:
     if not user.is_admin:
         raise HTTPException(403, "Only admins can do this.")
+    return user
+
+
+def require_platform_admin(user: Principal = Depends(require_user)) -> Principal:
+    if not user.platform_admin:
+        raise HTTPException(403, "Only platform admins can do this.")
     return user
 
 
@@ -273,7 +314,8 @@ def ensure_default_admin(settings: Settings) -> None:
             log.warning("Default admin not created: %s", exc.detail)
             return
         db.add(UserRow(id=str(uuid.uuid4()), email=email, name=settings.default_admin_name.strip() or "Admin",
-                       password_hash=hash_password(settings.default_admin_password), role="admin", all_orgs=True, is_active=True))
+                       password_hash=hash_password(settings.default_admin_password), role="admin", all_orgs=True, is_active=True,
+                       company_id=DEFAULT_COMPANY, platform_admin=True))
         db.commit()
         log.info("Default admin created: %s", email)
     finally:

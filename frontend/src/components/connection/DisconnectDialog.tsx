@@ -1,7 +1,7 @@
 import { Archive, Trash2, Unplug } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { errorMessage } from '@/api/client';
-import { useRemoveOrg, useSavedResults } from '@/api/queries';
+import { useOrgPeople, useRemoveOrg, useSavedResults } from '@/api/queries';
 import { useToast } from '@/context/ToastContext';
 import { cx, fmtNumber } from '@/lib/format';
 import { Button } from '../ui/Button';
@@ -23,6 +23,7 @@ export function DisconnectDialog({
   deleteOnly?: boolean;
 }) {
   const saved = useSavedResults(orgId, open);
+  const people = useOrgPeople(orgId, open && !deleteOnly);
   const remove = useRemoveOrg();
   const { notify } = useToast();
   const [mode, setMode] = useState<'keep' | 'delete'>('keep');
@@ -81,7 +82,7 @@ export function DisconnectDialog({
     <Modal
       open={open}
       onClose={onClose}
-      title={deleteOnly ? `Delete ${orgName}'s saved results?` : `Disconnect ${orgName}?`}
+      title={deleteOnly ? `Delete ${orgName}'s saved results?` : `Disconnect ${orgName} for everyone?`}
       description={deleteOnly ? 'This org is already disconnected. Its saved health checks are still kept.' : 'The platform stops reading this org straight away and its access keys are revoked in Salesforce.'}
       footer={
         <>
@@ -93,6 +94,12 @@ export function DisconnectDialog({
       }
     >
       <div className="space-y-3">
+        {!deleteOnly && !!people.data?.length && (
+          <p className="rounded-lg border border-warn/30 bg-warn-soft/60 px-3 py-2 text-sm text-ink">
+            This disconnects it for <span className="font-semibold">{people.data.length === 1 ? 'the 1 person' : `all ${people.data.length} people`}</span> who use it:{' '}
+            {people.data.join(', ')}. To only take it off your own list, use <span className="font-semibold">Remove from my list</span> instead.
+          </p>
+        )}
         <p className="text-sm text-ink-muted">
           {saved.isLoading ? 'Counting saved results…' : `Saved for this org: ${fmtNumber(checks)} health check${checks === 1 ? '' : 's'} with ${fmtNumber(problems)} problems (including notes and fix status).`}
         </p>

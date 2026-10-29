@@ -8,9 +8,9 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .. import audit, auth
-from ..auth import Principal, require_admin, require_user
+from ..auth import Principal, require_admin, require_platform_admin, require_user
 from ..db import get_db
-from ..models import AccessRequestRow, AuditEventRow, SessionRow, UserRow
+from ..models import AccessRequestRow, AssessmentRow, AuditEventRow, CompanyRow, SessionRow, UserRow
 from ..salesforce import service
 from ..schemas import ApiModel
 
@@ -94,15 +94,24 @@ def _request(r: AccessRequestRow, u: UserRow | None) -> AccessRequest:
     )
 
 
-def _pending(db: Session) -> int:
-    return int(db.scalar(select(func.count()).select_from(AccessRequestRow).where(AccessRequestRow.status == "pending")) or 0)
+def _company_users(db: Session, me_: Principal) -> list[UserRow]:
+    q = select(UserRow)
+    if not me_.platform_admin:
+        q = q.where(UserRow.company_id == me_.company_id)
+    return list(db.scalars(q))
+
+
+def _pending(db: Session, me_: Principal) -> int:
+    ids = {u.id for u in _company_users(db, me_)}
+    rows = db.scalars(select(AccessRequestRow.user_id).where(AccessRequestRow.status == "pending"))
+    return sum(1 for uid in rows if uid in ids)
 
 
 # ---------------------------------------------------------------- admin panel
 
 @router.get("/overview", response_model=AdminOverview)
-def overview(db: Session = Depends(get_db)):
-    users = list(db.scalars(select(UserRow)))
+def overview(me_: Principal = Depends(require_admin), db: Session = Depends(get_db)):
+    users = _company_users(db, me_)
     now = _now()
     active = [u for u in users if u.is_active]
     return AdminOverview(
@@ -114,25 +123,30 @@ def overview(db: Session = Depends(get_db)):
         locked=sum(bool(_utc(u.locked_until) and _utc(u.locked_until) > now) for u in users),
         never_signed_in=sum(u.last_login_at is None for u in active),
         must_change_password=sum(bool(u.must_change_password) for u in active),
-        pending_requests=_pending(db),
-        orgs_connected=sum(1 for r in service.all_rows(db) if r.org_id),
-        active_sessions=int(db.scalar(select(func.count()).select_from(SessionRow).where(SessionRow.expires_at > now)) or 0),
+        pending_requests=_pending(db, me_),
+        orgs_connected=sum(1 for r in service.all_rows(db) if r.org_id and me_.sees(r.org_id)),
+        active_sessions=int(db.scalar(select(func.count()).select_from(SessionRow).where(
+            SessionRow.expires_at > now, SessionRow.user_id.in_({u.id for u in users} or {""}))) or 0),
     )
 
 
 @router.get("/requests", response_model=list[AccessRequest])
-def list_requests(status: str | None = Query(None, pattern="^(pending|approved|rejected|cancelled)$"), db: Session = Depends(get_db)):
+def list_requests(status: str | None = Query(None, pattern="^(pending|approved|rejected|cancelled)$"),
+                  me_: Principal = Depends(require_admin), db: Session = Depends(get_db)):
     q = select(AccessRequestRow).order_by(AccessRequestRow.created_at.desc()).limit(200)
     if status:
         q = q.where(AccessRequestRow.status == status)
+    if not me_.platform_admin:
+        q = q.where(AccessRequestRow.user_id.in_(select(UserRow.id).where(UserRow.company_id == me_.company_id)))
     rows = list(db.scalars(q))
     users = {u.id: u for u in db.scalars(select(UserRow).where(UserRow.id.in_({r.user_id for r in rows})))} if rows else {}
     return [_request(r, users.get(r.user_id)) for r in rows]
 
 
-def _open_request(db: Session, request_id: str) -> tuple[AccessRequestRow, UserRow]:
+def _open_request(db: Session, request_id: str, me_: Principal) -> tuple[AccessRequestRow, UserRow]:
     r = db.get(AccessRequestRow, request_id)
-    if r is None:
+    owner = db.get(UserRow, r.user_id) if r else None
+    if r is None or (owner is not None and not me_.sees_company(owner.company_id)):
         raise HTTPException(404, "Request not found.")
     if r.status != "pending":
         raise HTTPException(409, f"This request was already {r.status}.")
@@ -144,9 +158,9 @@ def _open_request(db: Session, request_id: str) -> tuple[AccessRequestRow, UserR
 
 @router.post("/requests/{request_id}/approve", response_model=AccessRequest)
 def approve(request_id: str, body: ApproveBody, me_: Principal = Depends(require_admin), db: Session = Depends(get_db)):
-    r, u = _open_request(db, request_id)
+    r, u = _open_request(db, request_id, me_)
     if r.kind == "org":
-        known = {c.org_id for c in service.all_rows(db) if c.org_id}
+        known = {c.org_id for c in service.all_rows(db) if c.org_id and auth.company_of(c.org_id) == (u.company_id or auth.DEFAULT_COMPANY)}
         wanted = set(body.org_ids)
         if not body.all_orgs and not wanted:
             raise HTTPException(422, "Choose which client orgs to give them.")
@@ -172,7 +186,7 @@ def approve(request_id: str, body: ApproveBody, me_: Principal = Depends(require
 
 @router.post("/requests/{request_id}/reject", response_model=AccessRequest)
 def reject(request_id: str, body: RejectBody, me_: Principal = Depends(require_admin), db: Session = Depends(get_db)):
-    r, u = _open_request(db, request_id)
+    r, u = _open_request(db, request_id, me_)
     r.status, r.decided_by, r.decided_at, r.decision_note = "rejected", audit.who(me_), _now(), (body.note or "").strip() or None
     audit.record(db, audit.who(me_), "request.rejected", audit.who(u), "Org access" if r.kind == "org" else f"Role {r.requested_role}")
     db.commit()
@@ -180,9 +194,65 @@ def reject(request_id: str, body: RejectBody, me_: Principal = Depends(require_a
 
 
 @router.get("/activity", response_model=list[AuditEvent])
-def activity(limit: int = Query(100, ge=1, le=500), db: Session = Depends(get_db)):
-    rows = db.scalars(select(AuditEventRow).order_by(AuditEventRow.at.desc()).limit(limit))
+def activity(limit: int = Query(100, ge=1, le=500), me_: Principal = Depends(require_admin), db: Session = Depends(get_db)):
+    q = select(AuditEventRow).order_by(AuditEventRow.at.desc()).limit(limit)
+    if not me_.platform_admin:
+        q = q.where(AuditEventRow.company_id == me_.company_id)
+    rows = db.scalars(q)
     return [AuditEvent(id=e.id, at=_utc(e.at), actor=e.actor, action=e.action, target=e.target, detail=e.detail) for e in rows]
+
+
+# ---------------------------------------------------------------- companies (platform admins)
+
+class Company(ApiModel):
+    id: str
+    name: str
+    users: int
+    admins: int
+    orgs: int
+    created_at: datetime | None = None
+
+
+class CompanyCreate(ApiModel):
+    name: str = Field(min_length=1, max_length=120)
+    admin_name: str = Field(min_length=1, max_length=120)
+    admin_email: str = Field(max_length=254)
+    admin_password: str = Field(max_length=200)  # temporary: they choose their own at first sign-in
+
+
+def _company(c: CompanyRow, db: Session) -> Company:
+    people = [u for u in db.scalars(select(UserRow).where(UserRow.company_id == c.id)) if u.is_active]
+    orgs = {r.org_id for r in service.all_rows(db) if r.org_id and auth.company_of(r.org_id) == c.id}
+    orgs |= {o for o in db.scalars(select(AssessmentRow.org_id).distinct()) if o and auth.company_of(o) == c.id}
+    created = c.created_at if c.created_at is None or c.created_at.tzinfo else c.created_at.replace(tzinfo=timezone.utc)
+    return Company(id=c.id, name=c.name, users=len(people), admins=sum(u.role == "admin" for u in people), orgs=len(orgs), created_at=created)
+
+
+@router.get("/companies", response_model=list[Company])
+def companies(_: Principal = Depends(require_platform_admin), db: Session = Depends(get_db)):
+    return [_company(c, db) for c in db.scalars(select(CompanyRow).order_by(CompanyRow.name))]
+
+
+@router.post("/companies", response_model=Company, status_code=201)
+def create_company(body: CompanyCreate, me_: Principal = Depends(require_platform_admin), db: Session = Depends(get_db)):
+    """A new company and its first admin, who then adds their own people and connects their own orgs."""
+    import re
+
+    email = (body.admin_email or "").strip().lower()
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        raise HTTPException(422, "Enter a valid email address for the company admin.")
+    if db.scalars(select(UserRow).where(UserRow.email == email)).first():
+        raise HTTPException(409, "Someone with that email already has an account.")
+    if db.scalars(select(CompanyRow).where(func.lower(CompanyRow.name) == body.name.strip().lower())).first():
+        raise HTTPException(409, "A company with that name already exists.")
+    auth.check_password_rules(body.admin_password, email)
+    company = CompanyRow(id=uuid.uuid4().hex[:8], name=body.name.strip())
+    admin = UserRow(id=str(uuid.uuid4()), email=email, name=body.admin_name.strip(), password_hash=auth.hash_password(body.admin_password),
+                    role="admin", all_orgs=True, is_active=True, must_change_password=True, company_id=company.id)
+    db.add_all([company, admin])
+    audit.record(db, audit.who(me_), "company.created", company.name, f"Admin: {admin.name} <{email}>", company=company.id)
+    db.commit()
+    return _company(company, db)
 
 
 # ---------------------------------------------------------------- asking for access (anyone signed in)

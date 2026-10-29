@@ -4,12 +4,14 @@ import { errorMessage } from '@/api/client';
 import {
   useCancelAccessRequest,
   useChangePassword,
+  useCompanies,
   useCreateMember,
   useMe,
   useMyAccessRequests,
   usePortfolio,
   useRequestAccess,
   useResetMemberPassword,
+  useRole,
   useSignOutMember,
   useTeam,
   useUnlockMember,
@@ -40,8 +42,12 @@ function tempPassword() {
   return Array.from(bytes, (b) => chars[b % chars.length]).join('');
 }
 
-function OrgPicker({ allOrgs, orgIds, onChange, disabled }: { allOrgs: boolean; orgIds: string[]; onChange: (all: boolean, ids: string[]) => void; disabled?: boolean }) {
-  const orgs = usePortfolio();
+/** The company an org belongs to (orgs of other companies are saved as "<org id>~<company id>"). */
+export const companyOfOrg = (orgId: string) => (orgId.includes('~') ? orgId.split('~').pop()! : 'default');
+
+function OrgPicker({ allOrgs, orgIds, onChange, disabled, companyId }: { allOrgs: boolean; orgIds: string[]; onChange: (all: boolean, ids: string[]) => void; disabled?: boolean; companyId?: string }) {
+  const portfolio = usePortfolio();
+  const orgs = { data: (portfolio.data ?? []).filter((o) => !companyId || companyOfOrg(o.orgId) === companyId) }; // their own company's orgs only
   return (
     <div>
       <Toggle checked={allOrgs} onChange={(v) => onChange(v, orgIds)} label="Access to every org" description="Including orgs connected later." />
@@ -69,10 +75,14 @@ function OrgPicker({ allOrgs, orgIds, onChange, disabled }: { allOrgs: boolean; 
 function AddMemberModal({ onClose }: { onClose: () => void }) {
   const create = useCreateMember();
   const { notify } = useToast();
-  const [form, setForm] = useState({ name: '', email: '', role: 'consultant' as UserRole, allOrgs: false, orgIds: [] as string[], password: tempPassword() });
+  const { isPlatformAdmin } = useRole();
+  const companies = useCompanies(isPlatformAdmin);
+  const me = useMe();
+  const [form, setForm] = useState({ name: '', email: '', role: 'consultant' as UserRole, allOrgs: false, orgIds: [] as string[], password: tempPassword(), companyId: '' });
+  const company = form.companyId || me.data?.companyId || 'default';
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    create.mutate(form, {
+    create.mutate({ ...form, companyId: isPlatformAdmin ? company : undefined }, {
       onSuccess: (m) => {
         notify('Person added', `Share the temporary password with ${m.name} securely (not by email with their address in it).`, 'success');
         onClose();
@@ -97,10 +107,17 @@ function AddMemberModal({ onClose }: { onClose: () => void }) {
           <Field label="Name"><input className="input" value={form.name} maxLength={120} onChange={(e) => setForm({ ...form, name: e.target.value })} autoFocus /></Field>
           <Field label="Work email"><input type="email" className="input" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
         </div>
+        {isPlatformAdmin && (companies.data?.length ?? 0) > 1 && (
+          <Field label="Company" hint="They only see this company's people, orgs and results.">
+            <select className="input" value={company} onChange={(e) => setForm({ ...form, companyId: e.target.value, orgIds: [] })}>
+              {(companies.data ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </Field>
+        )}
         <Field label="Role" hint={ROLE_HELP[form.role]}>
           <Select<UserRole> label="Role" value={form.role} onChange={(role) => setForm({ ...form, role })} options={(['consultant', 'viewer', 'admin'] as UserRole[]).map((r) => ({ value: r, label: ROLE_LABEL[r] }))} />
         </Field>
-        {form.role !== 'admin' && <OrgPicker allOrgs={form.allOrgs} orgIds={form.orgIds} onChange={(allOrgs, orgIds) => setForm({ ...form, allOrgs, orgIds })} />}
+        {form.role !== 'admin' && <OrgPicker companyId={company} allOrgs={form.allOrgs} orgIds={form.orgIds} onChange={(allOrgs, orgIds) => setForm({ ...form, allOrgs, orgIds })} />}
         <Field label="Temporary password" hint="At least 10 characters. Copy it now — it isn’t shown again.">
           <div className="flex gap-2">
             <input className="input font-mono" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
@@ -144,7 +161,7 @@ function EditMemberModal({ member, isMe, onClose }: { member: TeamMember; isMe: 
         <Field label="Role" hint={ROLE_HELP[role]}>
           <Select<UserRole> label="Role" value={role} onChange={setRole} options={(['admin', 'consultant', 'viewer'] as UserRole[]).map((r) => ({ value: r, label: ROLE_LABEL[r] }))} />
         </Field>
-        {role !== 'admin' && <OrgPicker allOrgs={allOrgs} orgIds={orgIds} onChange={(a, ids) => { setAllOrgs(a); setOrgIds(ids); }} />}
+        {role !== 'admin' && <OrgPicker companyId={member.companyId} allOrgs={allOrgs} orgIds={orgIds} onChange={(a, ids) => { setAllOrgs(a); setOrgIds(ids); }} />}
         {update.error && <p className="rounded-lg bg-bad-soft px-3 py-2 text-sm text-bad">{errorMessage(update.error)}</p>}
         {!isMe && (
           <div className="rounded-lg border border-line p-3">
@@ -199,11 +216,12 @@ export function TeamSettings() {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<TeamMember | null>(null);
   const orgName = new Map((orgs.data ?? []).map((o) => [o.orgId, o.organizationName]));
+  const { isPlatformAdmin } = useRole();
 
   return (
     <SectionCard
       title="People & permissions"
-      description="Admins see everything. Consultants and viewers only see the orgs you give them. Changes apply straight away."
+      description={isPlatformAdmin ? 'Everyone on the platform, by company. Company admins see only their own company.' : 'Admins see all of your company’s orgs. Consultants and viewers only see the orgs you give them. Changes apply straight away.'}
       actions={<Button size="sm" variant="primary" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setAdding(true)}>Add person</Button>}
       bodyClassName="p-0"
     >
@@ -217,6 +235,7 @@ export function TeamSettings() {
             <thead className="whitespace-nowrap bg-muted/50 text-left text-[11px] uppercase tracking-wide text-ink-subtle">
               <tr>
                 <th className="px-5 py-2">Person</th>
+                {isPlatformAdmin && <th className="px-3 py-2">Company</th>}
                 <th className="px-3 py-2">Role</th>
                 <th className="px-3 py-2">Orgs</th>
                 <th className="px-3 py-2">Last sign-in</th>
@@ -232,6 +251,12 @@ export function TeamSettings() {
                       <p className="font-medium">{m.name}{isMe && <span className="ml-1.5 text-xs text-ink-subtle">(you)</span>}</p>
                       <p className="text-xs text-ink-subtle">{m.email}</p>
                     </td>
+                    {isPlatformAdmin && (
+                      <td className="px-3 py-3 text-xs">
+                        {m.companyName ?? m.companyId}
+                        {m.platformAdmin && <Badge tone="brand" className="ml-1">Platform admin</Badge>}
+                      </td>
+                    )}
                     <td className="px-3 py-3">
                       <Badge tone={m.role === 'admin' ? 'brand' : m.role === 'consultant' ? 'accent' : 'neutral'}>{ROLE_LABEL[m.role]}</Badge>
                       {!m.isActive && <Badge tone="warn" className="ml-1">Deactivated</Badge>}

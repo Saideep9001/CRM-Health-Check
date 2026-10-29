@@ -163,9 +163,9 @@ def list_assessments(
     active = None if all_orgs else service.get_row(db)
     if active is not None and active.org_id:
         stmt = stmt.where(AssessmentRow.org_id == active.org_id)
-    visible = require_user().allowed()
+    visible = require_user().org_condition(AssessmentRow.org_id)  # your company's orgs you may see
     if visible is not None:
-        stmt = stmt.where(AssessmentRow.org_id.in_(visible or {""}))
+        stmt = stmt.where(visible)
     if status:
         stmt = stmt.where(AssessmentRow.status == status)
     col = SORTS.get(sort.lstrip("-"), AssessmentRow.created_at)

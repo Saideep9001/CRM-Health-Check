@@ -11,7 +11,10 @@ def who(person) -> str:
     return f"{person.name} <{person.email}>"[:255]
 
 
-def record(db: Session, actor: str, action: str, target: str | None = None, detail: str | None = None) -> None:
+def record(db: Session, actor: str, action: str, target: str | None = None, detail: str | None = None, company: str | None = None) -> None:
     """Add an entry; it's saved with the caller's commit."""
+    from . import auth  # auth imports this module's models; import here
+
+    me = auth.current()
     db.add(AuditEventRow(id=str(uuid.uuid4()), actor=actor[:255], action=action[:40], target=(target or None) and target[:255],
-                         detail=(detail or None) and detail[:500]))
+                         detail=(detail or None) and detail[:500], company_id=company or (me.company_id if me else auth.DEFAULT_COMPANY)))

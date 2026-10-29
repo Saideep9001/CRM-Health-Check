@@ -464,6 +464,11 @@ export interface UserProfile {
   role: string | null;
   /** Signed in with a default/temporary password: must choose their own before anything else. */
   mustChangePassword?: boolean;
+  /** The company (workspace) they belong to: they only see its people, orgs and results. */
+  companyId?: string | null;
+  companyName?: string | null;
+  /** Runs the platform: sees every company and can create companies. */
+  platformAdmin?: boolean;
 }
 
 export interface NotificationPreferences {
@@ -538,6 +543,19 @@ export interface TeamMember {
   locked?: boolean;
   createdAt: string | null;
   lastLoginAt: string | null;
+  companyId: string;
+  companyName: string | null;
+  platformAdmin: boolean;
+}
+
+/** A company (workspace): its people, orgs and results are only visible inside it. */
+export interface Company {
+  id: string;
+  name: string;
+  users: number;
+  admins: number;
+  orgs: number;
+  createdAt: string | null;
 }
 
 // ---- Admin Panel ----
@@ -591,6 +609,8 @@ export interface TeamMemberCreate {
   allOrgs: boolean;
   orgIds: string[];
   password: string;
+  /** Platform admins only: the company they join (others add people to their own company). */
+  companyId?: string;
 }
 
 export interface SsoStartRequest {
@@ -804,6 +824,8 @@ export interface ScanScheduleUpdate {
 /** One client org in the consultant's portfolio. */
 export interface PortfolioOrg {
   orgId: string;
+  /** Taken off your own list ("Remove from my list"); opening it adds it back. */
+  hidden?: boolean;
   organizationName: string;
   edition: string | null;
   environment: string | null;

@@ -93,8 +93,48 @@ def portfolio(db: Session = Depends(get_db)):
             high_problems=high,
             category_scores=cats,
             top_problems=top,
+            hidden=org_id in user.hidden_org_ids,
         ))
     return out
+
+
+def _me_row(db: Session):
+    from ..models import UserRow
+
+    user = require_user()
+    return user, (db.get(UserRow, user.id) if user.id != "local-user" else None)
+
+
+@router.post("/salesforce/connections/{org_id}/hide", status_code=204)
+def hide(org_id: str, db: Session = Depends(get_db)):
+    """Remove from my list: only you stop seeing it in your lists. The connection and results stay for everyone else,
+    and you can add it back from Client Portfolio."""
+    from .. import auth
+
+    ensure_org(org_id)
+    user, me = _me_row(db)
+    if me is None:
+        raise HTTPException(409, "Sign in to keep your own list of orgs.")
+    me.hidden_org_ids = sorted({*(me.hidden_org_ids or []), org_id})
+    if me.active_org_id == org_id or me.active_org_id is None:  # switch to another org on your list
+        auth._current.set(auth.principal(me, user.session_id))
+        nxt = next((r for r in service.all_rows(db) if r.org_id and r.org_id != org_id and auth.current().sees(r.org_id)
+                    and r.org_id not in me.hidden_org_ids), None)
+        me.active_org_id = nxt.org_id if nxt else None
+    db.commit()
+    return Response(status_code=204)
+
+
+@router.get("/salesforce/connections/{org_id}/people", response_model=list[str])
+def people(org_id: str, _: Principal = Depends(require_admin), db: Session = Depends(get_db)):
+    """Everyone a disconnect would affect: active people of the org's company who can see it."""
+    from .. import auth
+    from ..models import UserRow
+
+    ensure_org(org_id)
+    company = auth.company_of(org_id)
+    rows = db.scalars(select(UserRow).where(UserRow.is_active.is_(True)).order_by(UserRow.name))
+    return [u.name for u in rows if (u.company_id or auth.DEFAULT_COMPANY) == company and auth.principal(u).sees(org_id)]
 
 
 @router.post("/salesforce/connections/{org_id}/activate", response_model=PortfolioOrg | None)
@@ -115,6 +155,9 @@ def activate(org_id: str, db: Session = Depends(get_db)):
         from ..models import UserRow
 
         me = db.get(UserRow, user.id)
+        if me is not None and org_id in (me.hidden_org_ids or []):  # opening an org you removed adds it back to your list
+            me.hidden_org_ids = [o for o in me.hidden_org_ids if o != org_id]
+            db.commit()
         auth._current.set(auth.principal(me, user.session_id))  # this request now sees the new active org
     return next((o for o in portfolio(db) if o.org_id == org_id), None)
 

@@ -371,7 +371,8 @@ export function useChangePassword() {
 export function useRole() {
   const me = useMe();
   const role = (me.data?.role ?? 'viewer') as UserRole;
-  return { role, isAdmin: role === 'admin', canEdit: role === 'admin' || role === 'consultant', loading: me.isLoading };
+  const isPlatformAdmin = !!me.data?.platformAdmin;
+  return { role, isAdmin: role === 'admin' || isPlatformAdmin, canEdit: role === 'admin' || role === 'consultant' || isPlatformAdmin, isPlatformAdmin, loading: me.isLoading };
 }
 
 export const useTeam = (enabled = true) => useQuery({ queryKey: ['team'], queryFn: ({ signal }) => teamApi.list(signal), enabled });
@@ -411,6 +412,13 @@ export const useAdminOverview = (enabled = true) =>
 export const useAccessRequests = (status?: AccessRequestStatus) =>
   useQuery({ queryKey: ['admin', 'requests', status ?? 'all'], queryFn: ({ signal }) => adminApi.requests(status, signal) });
 export const useAuditLog = () => useQuery({ queryKey: ['admin', 'activity'], queryFn: ({ signal }) => adminApi.activity(signal) });
+
+export const useCompanies = (enabled = true) => useQuery({ queryKey: ['admin', 'companies'], queryFn: ({ signal }) => adminApi.companies(signal), enabled });
+
+export function useCreateCompany() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: adminApi.createCompany, onSuccess: () => qc.invalidateQueries({ queryKey: ['admin'] }) });
+}
 
 export function useDecideRequest() {
   const qc = useQueryClient();
@@ -484,6 +492,21 @@ export function useActivateOrg() {
 
 export const useSavedResults = (orgId: string | null, enabled: boolean) =>
   useQuery({ queryKey: ['saved-results', orgId], queryFn: ({ signal }) => consultantApi.saved(orgId!, signal), enabled: enabled && !!orgId });
+
+/** Remove from my list: refetch everything, since your active org may change. */
+export function useHideOrg() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: consultantApi.hide,
+    onSuccess: () => {
+      qc.removeQueries({ queryKey: qk.data });
+      qc.invalidateQueries();
+    },
+  });
+}
+
+export const useOrgPeople = (orgId: string | null, enabled: boolean) =>
+  useQuery({ queryKey: ['org-people', orgId], queryFn: ({ signal }) => consultantApi.people(orgId!, signal), enabled: enabled && !!orgId });
 
 export function useRemoveOrg() {
   const qc = useQueryClient();

@@ -1,6 +1,7 @@
 import { motion } from 'framer-motion';
 import {
   Activity,
+  EyeOff,
   CalendarClock,
   Check,
   Cloud,
@@ -196,6 +197,7 @@ export function SalesforceConnectionCard({
   connection,
   onConnect,
   onDisconnect,
+  onHide,
   onCheck,
   checking,
   snapshot,
@@ -205,6 +207,8 @@ export function SalesforceConnectionCard({
   onConnect?: () => void;
   /** Omitted when the signed-in role can't disconnect (admins only). */
   onDisconnect?: () => void;
+  /** Remove from my list: only this person stops seeing the org. */
+  onHide?: () => void;
   onCheck: () => void;
   checking: boolean;
   /** Live facts (response time, API use) once loaded. */
@@ -314,9 +318,14 @@ export function SalesforceConnectionCard({
                 <ExternalLink className="h-4 w-4" /> Open in Salesforce
               </a>
             )}
+            {onHide && linked && (
+              <Button variant="ghost" icon={<EyeOff className="h-4 w-4" />} onClick={onHide} title="Only you stop seeing it; everyone else keeps it">
+                Remove from my list
+              </Button>
+            )}
             {onDisconnect && linked && (
               <Button variant="danger" icon={<Unplug className="h-4 w-4" />} onClick={onDisconnect}>
-                {uploaded ? 'Remove upload' : 'Disconnect'}
+                {uploaded ? 'Remove upload for everyone' : 'Disconnect for everyone'}
               </Button>
             )}
           </div>

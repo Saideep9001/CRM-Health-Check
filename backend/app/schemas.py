@@ -242,6 +242,9 @@ class UserProfile(ApiModel):
     title: str | None = None
     role: str | None = None
     must_change_password: bool = False
+    company_id: str | None = None
+    company_name: str | None = None
+    platform_admin: bool = False
 
 
 class UserProfileUpdate(ApiModel):
@@ -543,6 +546,7 @@ class PortfolioOrg(ApiModel):
     critical_problems: int = 0
     value_at_risk: float | None = None
     running: bool = False
+    hidden: bool = False  # taken off your own list ("Remove from my list"); open it to add it back
     schedule: ScanSchedule | None = None
     high_problems: int = 0
     category_scores: list["PortfolioCategoryScore"] = []

@@ -1,7 +1,7 @@
 import { ArrowRight, CheckCircle2, ExternalLink, FileSpreadsheet, KeyRound, Play, Plus, ServerCog, ShieldCheck, Table2, Trash2, Upload } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { useAssessments, useCheckConnection, useConnection, useConnectionSnapshot, useRemoveUploadedObject, useSalesforceApp, useStartOAuth, useRole, useUploadedObjects } from '@/api/queries';
+import { useAssessments, useCheckConnection, useConnection, useConnectionSnapshot, useHideOrg, useRemoveUploadedObject, useSalesforceApp, useStartOAuth, useRole, useUploadedObjects } from '@/api/queries';
 import { OrgSnapshot } from '@/components/connection/OrgSnapshot';
 import { ScoreRing } from '@/components/ui/Visuals';
 import { SalesforceConnectionCard } from '@/components/connection/SalesforceConnectionCard';
@@ -216,6 +216,7 @@ export default function ConnectionPage() {
   const [connectOpen, setConnectOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const hide = useHideOrg();
   const app = useSalesforceApp();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
@@ -270,6 +271,15 @@ export default function ConnectionPage() {
             connection={conn.data}
             onConnect={canEdit ? onConnect : undefined}
             onDisconnect={isAdmin ? () => setConfirmOpen(true) : undefined}
+            onHide={
+              conn.data.orgId
+                ? () =>
+                    hide.mutate(conn.data!.orgId!, {
+                      onSuccess: () => notify('Removed from your list', 'Everyone else still has it. Add it back any time from Client Portfolio.', 'success'),
+                      onError: (e) => notify('Couldn’t remove it', e.message, 'warning'),
+                    })
+                : undefined
+            }
             checking={check.isPending}
             snapshot={snapshot}
             onCheck={() =>

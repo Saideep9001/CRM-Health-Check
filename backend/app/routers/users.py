@@ -13,7 +13,7 @@ from ..auth import Principal, require_admin, require_user
 from ..config import Settings
 from ..db import get_db
 from ..deps import settings_dep
-from ..models import UserRow
+from ..models import CompanyRow, UserRow
 from ..schemas import ApiModel, UserProfile
 
 router = APIRouter(tags=["users"])
@@ -60,6 +60,9 @@ class TeamMember(ApiModel):
     locked: bool = False
     created_at: datetime | None = None
     last_login_at: datetime | None = None
+    company_id: str = auth.DEFAULT_COMPANY
+    company_name: str | None = None
+    platform_admin: bool = False
 
 
 class TeamMemberCreate(ApiModel):
@@ -69,6 +72,8 @@ class TeamMemberCreate(ApiModel):
     all_orgs: bool = False
     org_ids: list[str] = Field(default_factory=list, max_length=500)
     password: str = Field(max_length=200)
+    company_id: str | None = None  # platform admins only; others add people to their own company
+    platform_admin: bool = False  # platform admins only
 
 
 class TeamMemberUpdate(ApiModel):
@@ -77,6 +82,7 @@ class TeamMemberUpdate(ApiModel):
     all_orgs: bool | None = None
     org_ids: list[str] | None = Field(None, max_length=500)
     is_active: bool | None = None
+    platform_admin: bool | None = None  # platform admins only
 
 
 class PasswordReset(ApiModel):
@@ -102,14 +108,36 @@ def profile(p: Principal) -> UserProfile:
         with SessionLocal() as db:
             row = db.get(UserRow, p.id)
             with_title = row.title if row else None
-    return UserProfile(id=p.id, name=p.name, email=p.email, title=with_title, role=p.role, must_change_password=p.must_change_password)
+    company_name = None
+    if p.id != "local-user":
+        from ..db import SessionLocal
+
+        with SessionLocal() as db:
+            c = db.get(CompanyRow, p.company_id)
+            company_name = c.name if c else None
+    return UserProfile(id=p.id, name=p.name, email=p.email, title=with_title, role=p.role, must_change_password=p.must_change_password,
+                       company_id=p.company_id, company_name=company_name, platform_admin=p.platform_admin)
 
 
-def _member(u: UserRow) -> TeamMember:
+def _member(u: UserRow, companies: dict[str, str] | None = None) -> TeamMember:
+    company = u.company_id or auth.DEFAULT_COMPANY
     return TeamMember(id=u.id, name=u.name, email=u.email, title=u.title, role=u.role, all_orgs=u.role == "admin" or bool(u.all_orgs),
                       org_ids=list(u.org_ids or []), is_active=u.is_active, must_change_password=bool(u.must_change_password),
                       locked=bool(_utc(u.locked_until) and _utc(u.locked_until) > datetime.now(timezone.utc)),
-                      created_at=_utc(u.created_at), last_login_at=_utc(u.last_login_at))
+                      created_at=_utc(u.created_at), last_login_at=_utc(u.last_login_at), company_id=company,
+                      company_name=(companies or {}).get(company), platform_admin=bool(u.platform_admin))
+
+
+def _companies(db: Session) -> dict[str, str]:
+    return {c.id: c.name for c in db.scalars(select(CompanyRow))}
+
+
+def _person(db: Session, user_id: str, me_: Principal) -> UserRow:
+    """Someone an admin may manage: in their own company (platform admins: anyone). Others look like they don't exist."""
+    user = db.get(UserRow, user_id)
+    if user is None or not me_.sees_company(user.company_id):
+        raise HTTPException(404, "User not found.")
+    return user
 
 
 def _start_session(db: Session, user: UserRow, remember: bool, request: Request, response: Response, settings: Settings) -> None:
@@ -132,8 +160,11 @@ def setup(body: SetupRequest, request: Request, response: Response, db: Session 
         raise HTTPException(409, "Setup is already done. Sign in instead.")
     email = _email(body.email)
     auth.check_password_rules(body.password, email)
+    if db.get(CompanyRow, auth.DEFAULT_COMPANY) is None:
+        db.add(CompanyRow(id=auth.DEFAULT_COMPANY, name="Aquarient"))
     user = UserRow(id=str(uuid.uuid4()), email=email, name=body.name.strip(), password_hash=auth.hash_password(body.password),
-                   role="admin", all_orgs=True, is_active=True, last_login_at=datetime.now(timezone.utc))
+                   role="admin", all_orgs=True, is_active=True, last_login_at=datetime.now(timezone.utc),
+                   company_id=auth.DEFAULT_COMPANY, platform_admin=True)  # the first person runs the platform
     db.add(user)
     db.commit()
     _start_session(db, user, False, request, response, settings)
@@ -233,16 +264,23 @@ def _check_role(role: str) -> str:
     return role
 
 
-def _active_admins(db: Session, excluding: str | None = None) -> int:
+def _active_admins(db: Session, excluding: str | None = None, company: str | None = None) -> int:
     q = select(func.count()).select_from(UserRow).where(UserRow.role == "admin", UserRow.is_active.is_(True))
+    if company:
+        q = q.where(UserRow.company_id == company)
     if excluding:
         q = q.where(UserRow.id != excluding)
     return int(db.scalar(q) or 0)
 
 
 @router.get("/users", response_model=list[TeamMember])
-def list_users(_: Principal = Depends(require_admin), db: Session = Depends(get_db)):
-    return [_member(u) for u in db.scalars(select(UserRow).order_by(UserRow.name))]
+def list_users(me_: Principal = Depends(require_admin), db: Session = Depends(get_db)):
+    """Your company's people (platform admins: everyone, with their company)."""
+    q = select(UserRow).order_by(UserRow.name)
+    if not me_.platform_admin:
+        q = q.where(UserRow.company_id == me_.company_id)
+    companies = _companies(db)
+    return [_member(u, companies) for u in db.scalars(q)]
 
 
 @router.post("/users", response_model=TeamMember, status_code=201)
@@ -252,22 +290,31 @@ def create_user(body: TeamMemberCreate, me_: Principal = Depends(require_admin),
         raise HTTPException(409, "Someone with that email already has an account.")
     auth.check_password_rules(body.password, email)
     role = _check_role(body.role)
+    company = (body.company_id or me_.company_id) if me_.platform_admin else me_.company_id
+    if db.get(CompanyRow, company) is None:
+        raise HTTPException(422, "That company doesn't exist.")
+    orgs = sorted(o for o in set(body.org_ids) if auth.company_of(o) == company)  # only orgs of their own company
     user = UserRow(id=str(uuid.uuid4()), email=email, name=body.name.strip(), password_hash=auth.hash_password(body.password), role=role,
-                   all_orgs=role == "admin" or body.all_orgs, org_ids=sorted(set(body.org_ids)), is_active=True, must_change_password=True)
+                   all_orgs=role == "admin" or body.all_orgs, org_ids=orgs, is_active=True, must_change_password=True,
+                   company_id=company, platform_admin=bool(body.platform_admin and me_.platform_admin))
     db.add(user)
-    audit.record(db, audit.who(me_), "user.added", audit.who(user), f"Role: {role}")
+    audit.record(db, audit.who(me_), "user.added", audit.who(user), f"Role: {role}", company=company)
     db.commit()
-    return _member(user)
+    return _member(user, _companies(db))
 
 
 @router.patch("/users/{user_id}", response_model=TeamMember)
 def update_user(user_id: str, body: TeamMemberUpdate, me_: Principal = Depends(require_admin), db: Session = Depends(get_db)):
-    user = db.get(UserRow, user_id)
-    if user is None:
-        raise HTTPException(404, "User not found.")
+    user = _person(db, user_id, me_)
     losing_admin = (body.role is not None and body.role != "admin") or body.is_active is False
-    if user.role == "admin" and losing_admin and _active_admins(db, excluding=user.id) == 0:
-        raise HTTPException(409, "Keep at least one active admin.")
+    if user.role == "admin" and losing_admin and _active_admins(db, excluding=user.id, company=user.company_id) == 0:
+        raise HTTPException(409, "Keep at least one active admin in the company.")
+    if body.platform_admin is not None:
+        if not me_.platform_admin:
+            raise HTTPException(403, "Only platform admins can change this.")
+        if user.id == me_.id and not body.platform_admin:
+            raise HTTPException(409, "You can't remove your own platform admin access.")
+        user.platform_admin = body.platform_admin
     before = (user.role, bool(user.all_orgs), sorted(user.org_ids or []), user.is_active)
     if body.name is not None:
         user.name = body.name.strip()
@@ -276,7 +323,7 @@ def update_user(user_id: str, body: TeamMemberUpdate, me_: Principal = Depends(r
     if body.all_orgs is not None:
         user.all_orgs = body.all_orgs
     if body.org_ids is not None:
-        user.org_ids = sorted(set(body.org_ids))
+        user.org_ids = sorted(o for o in set(body.org_ids) if auth.company_of(o) == (user.company_id or auth.DEFAULT_COMPANY))
     if user.role == "admin":
         user.all_orgs = True
     if body.is_active is not None:
@@ -289,19 +336,17 @@ def update_user(user_id: str, body: TeamMemberUpdate, me_: Principal = Depends(r
     if before[3] != user.is_active:
         changes.append("reactivated" if user.is_active else "deactivated")
     if changes:
-        audit.record(db, audit.who(me_), "user.updated", audit.who(user), "; ".join(changes))
+        audit.record(db, audit.who(me_), "user.updated", audit.who(user), "; ".join(changes), company=user.company_id)
     db.commit()
     if body.is_active is False or body.role is not None or body.org_ids is not None or body.all_orgs is not None:
         if user.id != me_.id:
             auth.end_sessions(db, user.id)  # new access applies at their next sign-in
-    return _member(user)
+    return _member(user, _companies(db))
 
 
 @router.post("/users/{user_id}/password", status_code=204)
 def reset_password(user_id: str, body: PasswordReset, me_: Principal = Depends(require_admin), db: Session = Depends(get_db)):
-    user = db.get(UserRow, user_id)
-    if user is None:
-        raise HTTPException(404, "User not found.")
+    user = _person(db, user_id, me_)
     auth.check_password_rules(body.password, user.email)
     user.password_hash, user.failed_logins, user.locked_until = auth.hash_password(body.password), 0, None
     user.must_change_password = True
@@ -313,9 +358,7 @@ def reset_password(user_id: str, body: PasswordReset, me_: Principal = Depends(r
 
 @router.post("/users/{user_id}/unlock", status_code=204)
 def unlock_user(user_id: str, me_: Principal = Depends(require_admin), db: Session = Depends(get_db)):
-    user = db.get(UserRow, user_id)
-    if user is None:
-        raise HTTPException(404, "User not found.")
+    user = _person(db, user_id, me_)
     user.failed_logins, user.locked_until = 0, None
     audit.record(db, audit.who(me_), "account.unlocked", audit.who(user))
     db.commit()
@@ -325,9 +368,7 @@ def unlock_user(user_id: str, me_: Principal = Depends(require_admin), db: Sessi
 @router.post("/users/{user_id}/sign-out", status_code=204)
 def sign_out_user(user_id: str, me_: Principal = Depends(require_admin), db: Session = Depends(get_db)):
     """End every session of this person (they must sign in again)."""
-    user = db.get(UserRow, user_id)
-    if user is None:
-        raise HTTPException(404, "User not found.")
+    user = _person(db, user_id, me_)
     auth.end_sessions(db, user.id, keep=me_.session_id if user.id == me_.id else None)
     audit.record(db, audit.who(me_), "user.signed_out", audit.who(user), "All sessions ended")
     db.commit()

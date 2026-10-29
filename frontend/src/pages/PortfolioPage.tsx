@@ -432,7 +432,10 @@ export default function PortfolioPage() {
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<SortKey>('attention');
   const [filter, setFilter] = useState<FilterKey>('all');
-  const orgs = q.data ?? [];
+  const all = q.data ?? [];
+  const orgs = useMemo(() => all.filter((o) => !o.hidden), [all]);
+  const removed = all.filter((o) => o.hidden);
+  const addBack = useActivateOrg();
 
   const shown = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -505,6 +508,19 @@ export default function PortfolioPage() {
             </StaggerGrid>
           )}
         </>
+      )}
+      {removed.length > 0 && (
+        <details className="card mt-6 px-5 py-3">
+          <summary className="cursor-pointer text-sm font-medium text-ink-muted">Removed from your list ({removed.length})</summary>
+          <ul className="mt-2 divide-y divide-line">
+            {removed.map((o) => (
+              <li key={o.orgId} className="flex items-center gap-3 py-2 text-sm">
+                <span className="min-w-0 flex-1 truncate">{o.organizationName}</span>
+                <Button size="sm" disabled={addBack.isPending} onClick={() => addBack.mutate(o.orgId)}>Add back</Button>
+              </li>
+            ))}
+          </ul>
+        </details>
       )}
       <ConnectModal open={adding} onClose={() => setAdding(false)} />
       {scheduling && <ScheduleModal org={scheduling} onClose={() => setScheduling(null)} />}

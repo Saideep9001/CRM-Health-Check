@@ -1,8 +1,8 @@
-import { Activity, Building2, Check, Inbox, KeyRound, Lock, MonitorSmartphone, ShieldCheck, ShieldOff, Users, X } from 'lucide-react';
-import { useState, type ReactNode } from 'react';
+import { Activity, Building, Building2, Check, Inbox, KeyRound, Lock, MonitorSmartphone, Plus, ShieldCheck, ShieldOff, Users, X } from 'lucide-react';
+import { useState, type FormEvent, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { errorMessage } from '@/api/client';
-import { useAccessRequests, useAdminOverview, useAuditLog, useDecideRequest, usePortfolio, useRole } from '@/api/queries';
+import { useAccessRequests, useAdminOverview, useAuditLog, useCompanies, useCreateCompany, useDecideRequest, usePortfolio, useRole } from '@/api/queries';
 import { TeamSettings } from '@/components/settings/TeamSettings';
 import { Badge } from '@/components/ui/Badges';
 import { Button, LinkButton } from '@/components/ui/Button';
@@ -15,7 +15,7 @@ import { useToast } from '@/context/ToastContext';
 import { cx, fmtDateTime } from '@/lib/format';
 import type { AccessRequest, AuditEvent, UserRole } from '@/types';
 
-type Tab = 'people' | 'requests' | 'activity';
+type Tab = 'people' | 'requests' | 'activity' | 'companies';
 
 const ROLE_LABEL: Record<string, string> = { admin: 'Admin', consultant: 'Consultant', viewer: 'Viewer' };
 
@@ -31,6 +31,9 @@ const ACTION_LABEL: Record<string, string> = {
   'request.created': 'Asked for access',
   'request.approved': 'Approved a request',
   'request.rejected': 'Rejected a request',
+  'company.created': 'Created a company',
+  'org.disconnected': 'Disconnected an org',
+  'org.deleted': 'Deleted an org and its results',
 };
 
 function Stat({ icon, label, value, tone, hint }: { icon: ReactNode; label: string; value: number | undefined; tone?: 'warn' | 'brand'; hint?: string }) {
@@ -240,11 +243,109 @@ function ActivityPanel() {
   );
 }
 
+/** A random temporary password for a new company admin (they choose their own at first sign-in). */
+function tempPassword() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+  const bytes = new Uint32Array(14);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => chars[b % chars.length]).join('');
+}
+
+function NewCompanyModal({ onClose }: { onClose: () => void }) {
+  const create = useCreateCompany();
+  const { notify } = useToast();
+  const [form, setForm] = useState({ name: '', adminName: '', adminEmail: '', adminPassword: tempPassword() });
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    create.mutate(form, {
+      onSuccess: (c) => {
+        notify('Company created', `Share the temporary password with ${form.adminName} securely. ${c.name}'s admin then adds their own people and orgs.`, 'success');
+        onClose();
+      },
+    });
+  };
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="New company"
+      description="A separate workspace: its people, orgs, uploads and results can't be seen by any other company."
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button variant="primary" type="submit" form="new-company" disabled={create.isPending}>{create.isPending ? 'Creating…' : 'Create company'}</Button>
+        </>
+      }
+    >
+      <form id="new-company" onSubmit={submit} className="space-y-3" noValidate>
+        <Field label="Company name"><input className="input" value={form.name} maxLength={120} onChange={(e) => setForm({ ...form, name: e.target.value })} autoFocus /></Field>
+        <p className="pt-1 text-sm font-medium">Their first admin</p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Name"><input className="input" value={form.adminName} maxLength={120} onChange={(e) => setForm({ ...form, adminName: e.target.value })} /></Field>
+          <Field label="Work email"><input type="email" className="input" value={form.adminEmail} onChange={(e) => setForm({ ...form, adminEmail: e.target.value })} /></Field>
+        </div>
+        <Field label="Temporary password" hint="Copy it now. They're asked to choose their own at first sign-in.">
+          <div className="flex gap-2">
+            <input className="input font-mono" value={form.adminPassword} onChange={(e) => setForm({ ...form, adminPassword: e.target.value })} />
+            <Button type="button" size="sm" onClick={() => setForm({ ...form, adminPassword: tempPassword() })}>New</Button>
+          </div>
+        </Field>
+        {create.error && <p className="rounded-lg bg-bad-soft px-3 py-2 text-sm text-bad">{errorMessage(create.error)}</p>}
+      </form>
+    </Modal>
+  );
+}
+
+function CompaniesPanel() {
+  const list = useCompanies();
+  const [adding, setAdding] = useState(false);
+  return (
+    <SectionCard
+      title="Companies"
+      description="Each company is a separate workspace. Its admin manages its own people and orgs; nobody sees another company's data. Platform admins see them all."
+      actions={<Button size="sm" variant="primary" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setAdding(true)}>New company</Button>}
+      bodyClassName="p-0"
+    >
+      {list.isLoading ? (
+        <div className="p-5"><LoadingState rows={3} /></div>
+      ) : list.error ? (
+        <div className="p-5"><ErrorState error={list.error} onRetry={() => list.refetch()} /></div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[560px] text-sm">
+            <thead className="bg-muted/50 text-left text-[11px] uppercase tracking-wide text-ink-subtle">
+              <tr>
+                <th className="px-5 py-2">Company</th>
+                <th className="px-3 py-2 text-right">People</th>
+                <th className="px-3 py-2 text-right">Admins</th>
+                <th className="px-3 py-2 text-right">Orgs</th>
+                <th className="px-5 py-2">Created</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(list.data ?? []).map((c) => (
+                <tr key={c.id} className="border-t border-line">
+                  <td className="px-5 py-2.5 font-medium">{c.name}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{c.users}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{c.admins}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{c.orgs}</td>
+                  <td className="px-5 py-2.5 text-xs text-ink-muted">{c.createdAt ? fmtDateTime(c.createdAt) : ''}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {adding && <NewCompanyModal onClose={() => setAdding(false)} />}
+    </SectionCard>
+  );
+}
+
 export default function AdminPage() {
-  const { isAdmin, loading } = useRole();
+  const { isAdmin, isPlatformAdmin, loading } = useRole();
   const overview = useAdminOverview(isAdmin);
   const [params, setParams] = useSearchParams();
-  const tab = ((['people', 'requests', 'activity'] as Tab[]).find((t) => t === params.get('tab')) ?? 'people') as Tab;
+  const tab = ((['people', 'requests', 'activity', ...(isPlatformAdmin ? ['companies'] : [])] as Tab[]).find((t) => t === params.get('tab')) ?? 'people') as Tab;
 
   if (loading) return <LoadingState rows={4} />;
   if (!isAdmin) {
@@ -265,6 +366,7 @@ export default function AdminPage() {
     { id: 'people' as Tab, label: 'People & permissions', icon: <Users className="h-4 w-4" /> },
     { id: 'requests' as Tab, label: 'Access requests', icon: <Inbox className="h-4 w-4" />, count: pending || undefined },
     { id: 'activity' as Tab, label: 'Activity log', icon: <Activity className="h-4 w-4" /> },
+    ...(isPlatformAdmin ? [{ id: 'companies' as Tab, label: 'Companies', icon: <Building className="h-4 w-4" /> }] : []),
   ];
 
   return (
@@ -295,6 +397,7 @@ export default function AdminPage() {
       {tab === 'people' && <TeamSettings />}
       {tab === 'requests' && <RequestsPanel />}
       {tab === 'activity' && <ActivityPanel />}
+      {tab === 'companies' && isPlatformAdmin && <CompaniesPanel />}
     </div>
   );
 }

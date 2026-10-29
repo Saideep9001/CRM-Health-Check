@@ -185,6 +185,12 @@ class UserRow(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     # Set for default/temporary passwords: the person must choose their own before using the app.
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
+    # The company (workspace) this person belongs to: they only ever see its orgs and people.
+    company_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    # Platform admin: sees every company and can create companies (the people who run this platform).
+    platform_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # Orgs this person took off their own list ("Remove from my list"); everyone else still sees them.
+    hidden_org_ids: Mapped[list | None] = mapped_column(JSON)
     failed_logins: Mapped[int] = mapped_column(Integer, default=0)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -233,3 +239,14 @@ class AuditEventRow(Base):
     action: Mapped[str] = mapped_column(String(40))
     target: Mapped[str | None] = mapped_column(String(255))
     detail: Mapped[str | None] = mapped_column(String(500))
+    company_id: Mapped[str | None] = mapped_column(String(36), index=True)  # whose Admin Panel shows it
+
+
+class CompanyRow(Base):
+    """A company (workspace). Its people, orgs, uploads, checks and results are only visible inside it."""
+
+    __tablename__ = "company"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)  # "default" for the first company, else 8 hex characters
+    name: Mapped[str] = mapped_column(String(120))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

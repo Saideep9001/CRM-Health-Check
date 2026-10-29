@@ -55,7 +55,8 @@ def get_row(db: Session) -> SalesforceConnectionRow | None:
         row = row_for_org(db, user.active_org_id)
         if row is not None:
             return row
-    return next((r for r in db.scalars(q) if user.sees(r.org_id)), None)
+    visible = [r for r in db.scalars(q) if user.sees(r.org_id)]
+    return next((r for r in visible if r.org_id not in user.hidden_org_ids), None)
 
 
 def all_rows(db: Session) -> list[SalesforceConnectionRow]:
@@ -188,7 +189,9 @@ def complete_oauth(db: Session, http: httpx.Client, req: OAuthCallbackRequest, s
     try:
         if tokens.identity_url:
             ident = oauth.fetch_identity(http, tokens.identity_url, tokens.access_token)
-            row.org_id = ident.get("organization_id")
+            me = auth.current()
+            # Saved under the connecting person's company: another company connecting the same org gets its own connection.
+            row.org_id = auth.scoped_org(ident["organization_id"], me.company_id if me else None) if ident.get("organization_id") else None
             row.connected_by = ident.get("display_name") or ident.get("username")
             # Reconnecting an org that's already saved replaces its old connection.
             for old in all_rows(db):
@@ -239,7 +242,8 @@ def create_upload(db: Session, name: str, by: str | None) -> SalesforceConnectio
     local_org.set_name(dataset, name)
     for other in all_rows(db):
         other.active = False
-    org_id = f"UPL{dataset[:15].upper()}"
+    me = auth.current()
+    org_id = auth.scoped_org(f"UPL{dataset[:15].upper()}", me.company_id if me else None)
     row = SalesforceConnectionRow(
         workspace=f"org-{org_id}", active=True, status="connected", environment="upload", login_host="local",
         instance_url=f"{local_org.LOCAL_SCHEME}{dataset}", org_id=org_id, organization_name=name, edition="Uploaded file",

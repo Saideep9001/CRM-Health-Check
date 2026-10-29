@@ -1,4 +1,5 @@
 import type {
+  Company,
   UploadPreview,
   UploadResult,
   UploadedObject,
@@ -244,6 +245,9 @@ export const adminApi = {
     http.post<AccessRequest>(`/admin/requests/${encodeURIComponent(id)}/approve`, body),
   reject: (id: string, note?: string) => http.post<AccessRequest>(`/admin/requests/${encodeURIComponent(id)}/reject`, { note }),
   activity: (signal?: AbortSignal) => http.get<AuditEvent[]>('/admin/activity', { limit: 200 }, signal),
+  /** Platform admins: every company, and creating one with its first admin. */
+  companies: (signal?: AbortSignal) => http.get<Company[]>('/admin/companies', undefined, signal),
+  createCompany: (body: { name: string; adminName: string; adminEmail: string; adminPassword: string }) => http.post<Company>('/admin/companies', body),
 };
 
 /** Asking an admin for more access (anyone signed in). */
@@ -256,6 +260,10 @@ export const accessApi = {
 export const consultantApi = {
   portfolio: (signal?: AbortSignal) => http.get<PortfolioOrg[]>('/portfolio', undefined, signal),
   activate: (orgId: string) => http.post<PortfolioOrg | null>(`/salesforce/connections/${encodeURIComponent(orgId)}/activate`),
+  /** Remove from my list: only you stop seeing it; everyone else keeps it. */
+  hide: (orgId: string) => http.post<void>(`/salesforce/connections/${encodeURIComponent(orgId)}/hide`),
+  /** Who a disconnect would affect (admins). */
+  people: (orgId: string, signal?: AbortSignal) => http.get<string[]>(`/salesforce/connections/${encodeURIComponent(orgId)}/people`, undefined, signal),
   /** Disconnect an org; `deleteResults` also permanently deletes its saved health checks. */
   removeOrg: (orgId: string, deleteResults = false) =>
     http.delete<void>(`/salesforce/connections/${encodeURIComponent(orgId)}${deleteResults ? '?deleteResults=true' : ''}`),
