@@ -25,8 +25,8 @@ export interface NavItem {
 
 export const NAV_ITEMS: NavItem[] = [
   { to: '/dashboard',  label: 'Overview',            icon: LayoutDashboard },
-  { to: '/portfolio',  label: 'Client Portfolio',    icon: Briefcase },
   { to: '/connection', label: 'Connect Salesforce',  icon: Cloud },
+  { to: '/portfolio',  label: 'Client Portfolio',    icon: Briefcase },
   { to: '/data',       label: 'Your Data',           icon: Database },
   { to: '/assessment', label: 'What We Check',       icon: ClipboardCheck },
   { to: '/results',    label: 'My Results',          icon: ListChecks },
