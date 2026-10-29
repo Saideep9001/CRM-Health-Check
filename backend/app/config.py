@@ -1,8 +1,10 @@
 """Application settings, read from environment variables or backend/.env."""
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -61,6 +63,21 @@ class Settings(BaseSettings):
     # --- Local profile (used only when AUTH_REQUIRED=false) ---
     local_user_name: str = "Local User"
     local_user_email: str = "user@localhost"
+
+    # --- One-service hosting (e.g. Railway): the built website, served by the API on the same domain ---
+    static_dir: str = ""
+
+    @model_validator(mode="after")
+    def _hosting(self) -> "Settings":
+        # Hosts hand out postgres:// URLs; SQLAlchemy needs the driver named (psycopg 3).
+        for prefix in ("postgres://", "postgresql://"):
+            if self.database_url.startswith(prefix):
+                self.database_url = "postgresql+psycopg://" + self.database_url[len(prefix):]
+        # On Railway the public address is known: use it unless FRONTEND_ORIGIN was set.
+        domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN")
+        if domain and "FRONTEND_ORIGIN" not in os.environ:
+            self.frontend_origin = f"https://{domain}"
+        return self
 
     @property
     def salesforce_configured(self) -> bool:

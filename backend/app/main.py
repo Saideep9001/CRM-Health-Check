@@ -7,8 +7,12 @@ import logging
 import threading
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
 from .db import init_db
@@ -60,3 +64,20 @@ for r in (workspace.router, users.router):
     app.include_router(r, prefix="/api/v1")
 for r in (salesforce.router, uploads.router, assistant.router, data.router, assessments.router, consultant.router, admin.router, admin.requests_router):
     app.include_router(r, prefix="/api/v1", dependencies=[Depends(require_user)])
+
+
+# One-service hosting: the built website comes from the same server and domain as the API (no CORS, one callback URL).
+_site = Path(get_settings().static_dir) if get_settings().static_dir else None
+if _site and (_site / "index.html").exists():
+    if (_site / "assets").is_dir():
+        app.mount("/assets", StaticFiles(directory=_site / "assets"), name="assets")
+
+    @app.get("/{path:path}", include_in_schema=False)
+    def website(path: str):
+        """Files in the build (favicon, images…) as they are; any other page is the single-page app."""
+        file = (_site / path).resolve()
+        if path and not path.startswith("api/") and file.is_file() and _site.resolve() in file.parents:
+            return FileResponse(file)
+        if path.startswith("api/"):
+            raise HTTPException(404, "Not found.")
+        return FileResponse(_site / "index.html")
