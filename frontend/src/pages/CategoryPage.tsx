@@ -6,7 +6,6 @@ import { RunCheckPanel } from '@/components/assessment/RunCheckPanel';
 import { DiagnosticAreaCard, type ObjectChip } from '@/components/category/DiagnosticAreaCard';
 import { measureFor } from '@/components/findings/DetailsPanel';
 import { SEVERITY_RANK } from '@/lib/health';
-import { MeasurePreview } from '@/components/category/MeasurePreview';
 import { TopicHero } from '@/components/category/TopicHero';
 import { Button, LinkButton } from '@/components/ui/Button';
 import { SearchInput, Select } from '@/components/ui/Form';
@@ -110,8 +109,6 @@ export default function CategoryPage() {
           objectPicker={category.id === 'data-quality'}
         />
       ) : null}
-
-      {!soon && coverage === 'not-assessed' && state !== 'loading' && <MeasurePreview areas={areas} color={color} />}
 
       <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <h2 className="shrink-0 whitespace-nowrap text-lg font-semibold tracking-tight">

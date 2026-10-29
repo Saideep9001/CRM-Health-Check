@@ -29,6 +29,12 @@ export default defineConfig(({ mode }) => {
           target: apiTarget,
           changeOrigin: true,
           configure: (proxy) => {
+            // Calls from this dev server go out as coming from the backend's own address, so a deployed backend
+            // (e.g. Railway) doesn't block them as cross-site. Only this machine's own pages are rewritten.
+            proxy.on('proxyReq', (proxyReq, req) => {
+              const origin = req.headers.origin;
+              if (origin && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) proxyReq.setHeader('origin', new URL(apiTarget).origin);
+            });
             // Report an unreachable backend as 503 so the client shows "service unavailable".
             proxy.on('error', (_err, _req, res) => {
               const r = res as ServerResponse;

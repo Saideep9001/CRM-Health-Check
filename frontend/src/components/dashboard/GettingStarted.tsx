@@ -55,13 +55,14 @@ function Step({
 /** One step of the file flow: a small numbered tile. */
 function FileStep({ n, icon: Icon, title, text, state }: { n: number; icon: LucideIcon; title: string; text: string; state: StepState }) {
   return (
-    <li className={cx('flex flex-1 items-start gap-3 rounded-xl border bg-surface p-3', state === 'current' ? 'border-brand/40' : 'border-line')}>
+    <li className={cx('flex flex-1 items-center gap-3 rounded-xl border bg-surface p-3', state === 'current' ? 'border-brand/40' : 'border-line')}>
       <span className={cx('grid h-8 w-8 shrink-0 place-items-center rounded-full', state === 'done' ? 'bg-good-soft text-good' : state === 'current' ? 'bg-brand text-white' : 'bg-muted text-ink-subtle')}>
         {state === 'done' ? <CheckCircle2 className="h-4 w-4" /> : <Icon className="h-4 w-4" />}
       </span>
-      <span className="min-w-0">
-        <span className="block text-sm font-semibold">{n}. {title}</span>
-        <span className="block text-xs text-ink-muted">{text}</span>
+      {/* the explanation sits behind the ⓘ, so the three steps stay compact */}
+      <span className="flex min-w-0 items-center gap-1.5 text-sm font-semibold">
+        {n}. {title}
+        <InfoTip label={`About step ${n}`}>{text}</InfoTip>
       </span>
     </li>
   );

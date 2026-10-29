@@ -366,21 +366,11 @@ export default function HomePage() {
                 <ol className="mt-6 space-y-3">
                   {getAreasForCategory(cat.id).map((a, i) => (
                     <motion.li key={a.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 + i * 0.05 }} className="rounded-xl border border-line p-4">
-                      <div className="flex items-start gap-3">
+                      <div className="flex items-center gap-3">
                         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-sm font-bold text-white" style={{ background: CATEGORY_COLORS[cat.id] }}>
                           {a.number}
                         </span>
-                        <div className="min-w-0">
-                          <p className="text-sm font-semibold">{a.name}</p>
-                          <p className="mt-0.5 text-sm text-ink-muted">{a.description}</p>
-                          <div className="mt-2.5 flex flex-wrap gap-1.5">
-                            {a.indicators.map((ind) => (
-                              <span key={ind} className="rounded-md bg-muted px-2 py-0.5 text-[11px] font-medium text-ink-muted">
-                                {ind}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
+                        <p className="min-w-0 text-sm font-semibold">{a.name}</p>
                       </div>
                     </motion.li>
                   ))}
