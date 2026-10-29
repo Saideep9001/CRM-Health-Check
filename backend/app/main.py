@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from .config import get_settings
+from .config import ON_RAILWAY, get_settings
 from .db import init_db
 from .engine import jobs
 from fastapi import Depends
@@ -32,6 +32,9 @@ async def lifespan(api: FastAPI):
     s = get_settings()
     log.info("Salesforce app keys in .env: %s (they can also be entered on the Connect Salesforce page)", "yes" if s.salesforce_configured else "no")
     log.info("OAuth callback URL (add this to the Connected App): %s", s.oauth_callback_url)
+    if ON_RAILWAY:
+        for w in s.hosting_warnings():
+            log.warning("Deployment setting: %s", w)
     stop = threading.Event()
     threads = []
     if s.job_mode == "embedded":

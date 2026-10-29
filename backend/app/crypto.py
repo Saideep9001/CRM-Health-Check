@@ -4,10 +4,10 @@ import logging
 
 from cryptography.fernet import Fernet, InvalidToken
 
-from .config import BACKEND_DIR, get_settings
+from .config import DATA_DIR, get_settings
 
 log = logging.getLogger(__name__)
-_KEY_FILE = BACKEND_DIR / ".data" / "token.key"
+_KEY_FILE = DATA_DIR / "token.key"
 
 
 @lru_cache

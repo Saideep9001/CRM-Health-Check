@@ -23,7 +23,12 @@ PostgreSQL; uploaded CSV/Excel files go on a volume.
 | `FRONTEND_ORIGIN` | Optional. Defaults to `https://<the Railway domain>`. Set it if you add a custom domain, e.g. `https://health.example.com`. |
 | `SMTP_HOST`, `SMTP_FROM`, … | Optional, for alert email (see `backend/.env.example`). |
 
-Already set by the image: `STATIC_DIR=/app/static`, `UPLOAD_DIR=/data/uploads`. Railway sets `PORT`.
+Already set by the image: `STATIC_DIR=/app/static`, `DATA_DIR=/data` (uploaded files; also the key file and a SQLite
+database if `TOKEN_ENCRYPTION_KEY` / `DATABASE_URL` aren't set — so keep the volume either way). The app listens on
+`PORT`, or 8000 if Railway doesn't set one: when generating the domain, use the port in the deploy log
+("Uvicorn running on …:8000").
+
+Anything missing is listed in the deploy log at start-up as **"Deployment setting: …"** warnings.
 
 ## 3. Salesforce Connected App
 

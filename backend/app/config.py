@@ -8,6 +8,10 @@ from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
+# Where local data lives when no database server is set: the SQLite file, the token key file and uploaded files.
+# Hosted (e.g. Railway) this is a mounted volume, /data, so nothing is lost on redeploy.
+DATA_DIR = Path(os.environ.get("DATA_DIR") or BACKEND_DIR / ".data")
+ON_RAILWAY = any(k.startswith("RAILWAY_") for k in os.environ)
 
 
 class Settings(BaseSettings):
@@ -17,7 +21,7 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
     # The frontend's origin. OAuth redirect URIs must start with this, and CORS allows it.
     frontend_origin: str = "http://localhost:5173"
-    database_url: str = f"sqlite:///{(BACKEND_DIR / '.data' / 'aquarient.db').as_posix()}"
+    database_url: str = f"sqlite:///{(DATA_DIR / 'aquarient.db').as_posix()}"
 
     # --- Security ---
     # Fernet key used to encrypt Salesforce tokens at rest. Generated into .data/ if empty (dev only).
@@ -78,6 +82,20 @@ class Settings(BaseSettings):
         if domain and "FRONTEND_ORIGIN" not in os.environ:
             self.frontend_origin = f"https://{domain}"
         return self
+
+    def hosting_warnings(self) -> list[str]:
+        """Settings a hosted deployment should have, with what to do (logged at start-up)."""
+        out = []
+        if self.database_url.startswith("sqlite"):
+            out.append(f"Using a SQLite file ({self.database_url.removeprefix('sqlite:///')}). For a hosted deployment add PostgreSQL "
+                       "and set DATABASE_URL (on Railway: ${{Postgres.DATABASE_URL}}); otherwise keep a volume mounted at DATA_DIR.")
+        if not self.token_encryption_key.strip():
+            out.append(f"TOKEN_ENCRYPTION_KEY is not set; a key file in {DATA_DIR} is used. Set TOKEN_ENCRYPTION_KEY so saved "
+                       "Salesforce connections stay readable if that file is lost.")
+        if "localhost" in self.frontend_origin or "127.0.0.1" in self.frontend_origin:
+            out.append("FRONTEND_ORIGIN is a localhost address, so Salesforce sign-in can't come back here. On Railway, generate a "
+                       "domain for the service (Settings > Networking), or set FRONTEND_ORIGIN=https://your-domain.")
+        return out
 
     @property
     def salesforce_configured(self) -> bool:

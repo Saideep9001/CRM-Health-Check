@@ -14,7 +14,7 @@ RUN npm run build
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     STATIC_DIR=/app/static \
-    UPLOAD_DIR=/data/uploads
+    DATA_DIR=/data
 WORKDIR /app
 
 COPY backend/requirements.txt .
@@ -22,8 +22,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ ./
 COPY --from=web /src/dist ./static
-# Uploaded CSV/Excel data lives under /data: mount a volume there so it survives redeploys.
-# (Runs as root because Railway mounts volumes owned by root.)
+# Local data lives under /data (uploaded CSV/Excel files; the key file and SQLite database when TOKEN_ENCRYPTION_KEY /
+# DATABASE_URL aren't set): mount a volume there so it survives redeploys. Runs as root: Railway mounts volumes as root.
 RUN mkdir -p /data/uploads
 
 EXPOSE 8000

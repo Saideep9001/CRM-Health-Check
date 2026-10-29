@@ -25,10 +25,10 @@ from xml.etree import ElementTree
 
 import httpx
 
-from ..config import BACKEND_DIR
+from ..config import DATA_DIR
 from .client import SalesforceClient
 
-UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR") or BACKEND_DIR / ".data" / "uploads")  # one SQLite file per upload
+UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR") or DATA_DIR / "uploads")  # one SQLite file per upload
 LOCAL_SCHEME = "local://"
 MAX_ROWS = 200_000
 MAX_COLUMNS = 500
