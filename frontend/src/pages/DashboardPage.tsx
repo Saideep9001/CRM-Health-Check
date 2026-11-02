@@ -1,9 +1,9 @@
 import { ArrowRight, Cloud, Database, FileBarChart, Gauge, LayoutGrid, ListChecks, OctagonAlert, Play, TriangleAlert, Workflow } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { isApiError } from '@/api/client';
 import { useApiHealth, useAssessments } from '@/api/queries';
 import { AssessmentTable } from '@/components/assessments/AssessmentTable';
-import { CategoryHealthChart, FindingsBySeverityChart, IssuesByCategoryChart, ScoreTrendChart } from '@/components/charts/Charts';
+import { FindingsBySeverityChart, IssuesByCategoryChart, ScoreTrendChart, SEVERITY_COLORS } from '@/components/charts/Charts';
 import { CategoryCard } from '@/components/dashboard/CategoryCard';
 import { GettingStarted } from '@/components/dashboard/GettingStarted';
 import { HealthHero } from '@/components/dashboard/HealthHero';
@@ -12,45 +12,83 @@ import { InfoTip } from '@/components/ui/HelpTip';
 import { Button, LinkButton } from '@/components/ui/Button';
 import { PageHeader, SectionCard, StaggerGrid, StaggerItem } from '@/components/ui/Page';
 import { EmptyState, ErrorState, LoadingState, Skeleton } from '@/components/ui/States';
-import { CATEGORIES } from '@/config/categories';
+import { CATEGORIES, CATEGORY_COLORS } from '@/config/categories';
 import { useLatestAssessment } from '@/hooks/useLatestAssessment';
-import { countBySeverity, delta, pctChange } from '@/lib/health';
-import type { HealthMetric } from '@/types';
+import { SEVERITIES, SEVERITY_RANK, countBySeverity, delta, pctChange } from '@/lib/health';
+import { fmtNumber } from '@/lib/format';
+import type { Finding, HealthMetric, Severity } from '@/types';
 
 const KPI_META = {
   overall: {
     icon: Gauge,
     accent: '#3b82f6',
-    hint: 'Your overall score. 80+ is healthy.',
+    hint: 'A score from 0 to 100 (not a percentage): the average of the topic scores below. 100 means no problems were found. 80+ healthy, 65–79 fair, below 65 needs attention.',
   },
   dataQuality: {
     icon: Database,
     accent: '#14b8a6',
-    hint: 'How clean and complete your data is.',
+    hint: 'Score out of 100 for the Data Quality & Optimization topic: duplicate, missing and invalid values in your records, and unused or look-alike fields.',
   },
   salesProcess: {
     icon: Workflow,
     accent: '#8b5cf6',
-    hint: 'How well your sales process is set up.',
+    hint: 'The average score of two topics: Workflows & Automation (lead assignment, stale leads, stage progression, overdue and stuck deals, automation) and Reporting & Dashboards (unused, outdated and duplicate reports and dashboards). Out of 100.',
   },
   records: {
     icon: LayoutGrid,
     accent: '#06b6d4',
-    hint: 'How many records we looked at.',
+    hint: 'How many Salesforce records the last check read.',
   },
   issues: {
     icon: TriangleAlert,
     accent: '#f59e0b',
     lowerIsBetter: true,
-    hint: 'All problems found. Click to see them.',
+    hint: 'Every problem the last check found, by topic. Click a topic to see only its problems.',
   },
   critical: {
     icon: OctagonAlert,
     accent: '#ef4444',
     lowerIsBetter: true,
-    hint: 'The most serious problems. Fix these first.',
+    hint: 'Critical problems: they block the sales process or affect most of the records checked. Fix these first.',
   },
 } as const;
+
+const URGENCY_MEANING: Record<Severity, string> = {
+  critical: 'Blocks the sales process or affects most records. Fix now.',
+  high: 'Causes wrong numbers or lost deals. Fix this month.',
+  medium: 'Slows people down or makes reports less reliable. Plan it in.',
+  low: 'Tidy-up. Fix when convenient.',
+};
+
+/** Each urgency level: what it means, and its biggest problems by name (so the counts are never just numbers). */
+function UrgencyList({ findings, worstFirst, assessmentId }: { findings: Finding[]; worstFirst: (l: Finding[]) => Finding[]; assessmentId: string }) {
+  const levels = SEVERITIES.map((s) => ({ s, list: worstFirst(findings.filter((f) => f.severity === s)) })).filter((x) => x.list.length);
+  if (!levels.length) return null;
+  return (
+    <ul className="mt-5 space-y-3 border-t border-line pt-4">
+      {levels.map(({ s, list }) => (
+        <li key={s} className="text-sm">
+          <div className="flex items-center gap-2">
+            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: SEVERITY_COLORS[s] }} />
+            <Link to={`/results?assessment=${assessmentId}&severity=${s}`} className="font-semibold capitalize hover:text-brand">{s} · {list.length}</Link>
+            <span className="text-xs text-ink-subtle">{URGENCY_MEANING[s]}</span>
+          </div>
+          <ul className="ml-4 mt-1 space-y-0.5 text-xs text-ink-muted">
+            {list.slice(0, 3).map((f) => (
+              <li key={f.id} className="truncate">
+                <Link to={`/problems/${encodeURIComponent(f.id)}`} className="hover:text-brand">
+                  {f.name}
+                  {f.affectedRecords > 0 && <span className="text-ink-subtle"> · {fmtNumber(f.affectedRecords)} records</span>}
+                </Link>
+              </li>
+            ))}
+            {list.length > 3 && <li className="text-ink-subtle">+{list.length - 3} more</li>}
+          </ul>
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 export default function DashboardPage() {
   const navigate = useNavigate();
@@ -87,7 +125,7 @@ export default function DashboardPage() {
         },
         {
           key: 'critical',
-          label: 'Urgent Issues',
+          label: 'Critical Problems',
           unit: 'count',
           value: countBySeverity(findings).critical,
           trend: null,
@@ -95,6 +133,32 @@ export default function DashboardPage() {
       ]
     : [];
   const overallSpark = [...history].reverse().map((a) => a.overallScore).filter((s): s is number => s !== null);
+  const byTopic = CATEGORIES.map((c) => ({ c, n: findings.filter((f) => f.categoryId === c.id).length })).filter((x) => x.n > 0);
+  const worstFirst = (list: Finding[]) => [...list].sort((a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity] || b.affectedRecords - a.affectedRecords);
+  const critical = worstFirst(findings.filter((f) => f.severity === 'critical'));
+  const problemLink = (f: Finding) => `/problems/${encodeURIComponent(f.id)}`;
+  const footers: Partial<Record<string, React.ReactNode>> = latest
+    ? {
+        issues: byTopic.length ? (
+          <span className="flex flex-wrap gap-1">
+            {byTopic.map(({ c, n }) => (
+              <Link key={c.id} to={`/results?assessment=${latest.id}&category=${c.id}`} onClick={(e) => e.stopPropagation()}
+                className="rounded-full border border-line px-2 py-0.5 hover:border-brand/40 hover:text-brand" style={{ borderLeftColor: CATEGORY_COLORS[c.id], borderLeftWidth: 3 }}>
+                {c.shortName} {n}
+              </Link>
+            ))}
+          </span>
+        ) : null,
+        critical: critical.length ? (
+          <span className="block space-y-0.5">
+            {critical.slice(0, 2).map((f) => (
+              <Link key={f.id} to={problemLink(f)} onClick={(e) => e.stopPropagation()} className="block truncate text-ink hover:text-brand">• {f.name}</Link>
+            ))}
+            {critical.length > 2 && <span className="text-ink-subtle">+{critical.length - 2} more</span>}
+          </span>
+        ) : null,
+      }
+    : {};
 
   return (
     <div>
@@ -153,6 +217,8 @@ export default function DashboardPage() {
                     icon={meta.icon}
                     accent={meta.accent}
                     hint={meta.hint}
+                    note={m.key === 'salesProcess' ? 'Workflows + Reporting average' : m.key === 'dataQuality' ? 'Data Quality & Optimization topic' : undefined}
+                    footer={footers[m.key]}
                     lowerIsBetter={'lowerIsBetter' in meta}
                     spark={m.key === 'overall' ? overallSpark : undefined}
                     onClick={
@@ -170,16 +236,12 @@ export default function DashboardPage() {
 
           <div className="mt-8 grid gap-6 xl:grid-cols-2">
             <SectionCard
-              title="Health by area"
-              description="Score for each topic (0–100)"
-            >
-              <CategoryHealthChart results={results} />
-            </SectionCard>
-            <SectionCard
               title="Problems by urgency"
-              description="How serious the problems are"
+              description="What each level means, and the biggest problems in it"
+              className="xl:row-span-2"
             >
-              <FindingsBySeverityChart findings={findings} />
+              <FindingsBySeverityChart findings={findings} onSelect={(s) => navigate(`/results?assessment=${latest.id}&severity=${s}`)} />
+              <UrgencyList findings={findings} worstFirst={worstFirst} assessmentId={latest.id} />
             </SectionCard>
             <SectionCard
               title="Which areas have the most problems?"

@@ -1,3 +1,4 @@
+import { objectLabel } from '@/components/category/DiagnosticAreaCard';
 import { motion } from 'framer-motion';
 import { ChangeBadge } from './AffectedRecords';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
@@ -49,13 +50,11 @@ export function FindingsTable({
         <table className={`w-full border-collapse ${compact ? 'min-w-[760px]' : 'min-w-[1100px]'}`}>
           <thead className="border-b border-line bg-muted/50">
             <tr>
-              {/* Finding ID hidden by default — shown only in full (non-compact) mode for technical users */}
-              {!compact && <SortableTh label="ID" sortKey="id" {...th} />}
               <SortableTh label="Problem" sortKey="name" {...th} />
               {!compact && <SortableTh label="Topic Area" sortKey="category" {...th} />}
               <SortableTh label="Check" sortKey="area" {...th} />
               <SortableTh label="Urgency" sortKey="severity" {...th} />
-              <SortableTh label="Records Affected" sortKey="affected" {...th} />
+              <SortableTh label="What's Affected" sortKey="affected" {...th} />
               {!compact && <th className="th">Why It Matters</th>}
               {!compact && <th className="th">What to Do</th>}
               <SortableTh label="Progress" sortKey="status" {...th} />
@@ -77,11 +76,9 @@ export function FindingsTable({
                   tabIndex={0}
                   className="group cursor-pointer border-b border-line last:border-0 transition-colors hover:bg-muted/60 focus-visible:bg-muted/60"
                 >
-                  {!compact && (
-                    <td className="td whitespace-nowrap font-mono text-xs text-ink-muted" title="Problem reference number">{f.id}</td>
-                  )}
                   <td className="td min-w-[220px] max-w-[320px] font-medium">
                     <span className="block">{f.name}</span>
+                    {f.description && <span className="mt-0.5 line-clamp-2 block text-xs font-normal text-ink-muted" title={f.description}>{f.description}</span>}
                     {f.change && f.change !== 'same' && <ChangeBadge finding={f} className="mt-1" />}
                   </td>
                   {!compact && (
@@ -100,9 +97,19 @@ export function FindingsTable({
                     ) : (
                       f.areaId
                     )}
+                    {f.measure && <span className="mt-0.5 block text-[11px] text-ink-subtle" title="The measure that raised this problem">Measure: {f.measure}</span>}
                   </td>
                   <td className="td"><SeverityBadge severity={f.severity} /></td>
-                  <td className="td text-right tabular-nums">{fmtNumber(f.affectedRecords)}</td>
+                  <td className="td whitespace-nowrap text-right tabular-nums">
+                    {f.affectedRecords > 0 ? (
+                      <>
+                        {fmtNumber(f.affectedRecords)}
+                        {f.objectName && <span className="block text-[11px] text-ink-subtle">{objectLabel(f.objectName)}</span>}
+                      </>
+                    ) : (
+                      <span className="text-xs text-ink-subtle">{f.objectName ? objectLabel(f.objectName) : 'Org setting'}</span>
+                    )}
+                  </td>
                   {!compact && <td className="td min-w-[200px] max-w-[240px] text-xs text-ink-muted">{f.businessImpact}</td>}
                   {!compact && <td className="td min-w-[200px] max-w-[240px] text-xs text-ink-muted">{f.recommendedAction}</td>}
                   <td className="td"><FindingStatusBadge status={f.status} /></td>

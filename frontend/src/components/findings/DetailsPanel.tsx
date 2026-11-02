@@ -352,6 +352,13 @@ function Records({
             No fields ticked. Tick a field in Check fields above, or <span className="font-medium">Select all</span>, to see its records.
           </p>
         ) : (
+        <>
+        {duplicates && !checkData && (
+          <p className="mb-3 rounded-lg border border-brand/20 bg-brand-soft/50 px-3 py-2 text-xs text-ink-muted">
+            Showing every duplicate the health check found. To see the duplicates of one field, wait for <span className="font-medium text-ink">Check fields</span> above
+            to finish reading the records (usually under a minute), then tick that field.
+          </p>
+        )}
         <RecordsTable
           query={measureRecords}
           title={only.length ? `${objectLabel(object!)} · ${only.map((f) => choices.find((c) => c.field === f)?.label ?? f).join(', ')}` : objectLabel(object!)}
@@ -366,6 +373,7 @@ function Records({
             load: (field, others, signal) => indicatorApi.values(measureAssessmentId!, area.id, indicator!.label, object!, field, others, signal, only),
           }}
         />
+        </>
         )}
         </div>
         <p className="mt-2 text-[11px] text-ink-subtle">
@@ -548,7 +556,8 @@ export function DetailsPanel({
     ? [
         ...(v.criteria ?? []).map(([name, detail]) => ({ name, detail: detail as ReactNode })),
         ...(v.rule ? [{ name: 'Score', detail: v.rule as ReactNode }] : []),
-        {
+        // Cards shown for information (All Fields) never raise a problem: no urgency rule for them.
+        ...(v.score == null ? [] : [{
           name: 'Problem raised when',
           detail: (
             <>
@@ -561,7 +570,7 @@ export function DetailsPanel({
               ))}
             </>
           ),
-        },
+        }]),
         {
           name: 'This org',
           strong: true,

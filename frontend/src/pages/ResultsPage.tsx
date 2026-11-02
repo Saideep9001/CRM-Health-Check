@@ -19,11 +19,11 @@ import { countBySeverity, SEVERITIES } from '@/lib/health';
 import type { Assessment, FindingStatus } from '@/types';
 
 const SUMMARY = [
-  { key: 'total',    label: 'Problems Found',       icon: ListChecks,  cls: 'text-brand bg-brand-soft',          hint: 'All problems found' },
-  { key: 'critical', label: 'Urgent — Fix Now',     icon: OctagonAlert, cls: 'text-sev-critical bg-sev-critical/10', hint: 'Fix these now' },
-  { key: 'high',    label: 'High Priority',         icon: ShieldAlert, cls: 'text-sev-high bg-sev-high/10',      hint: 'Fix these soon' },
-  { key: 'medium',  label: 'Medium Priority',       icon: TriangleAlert, cls: 'text-sev-medium bg-sev-medium/10', hint: 'Plan a fix' },
-  { key: 'low',     label: 'Low Priority',          icon: CircleAlert, cls: 'text-sev-low bg-sev-low/10',        hint: 'Fix when you can' },
+  { key: 'total',    label: 'All problems', icon: ListChecks,    cls: 'text-brand bg-brand-soft',               hint: 'Every problem this check found, in every topic' },
+  { key: 'critical', label: 'Critical',     icon: OctagonAlert,  cls: 'text-sev-critical bg-sev-critical/10', hint: 'Blocks the sales process or affects most records. Fix now.' },
+  { key: 'high',     label: 'High',         icon: ShieldAlert,   cls: 'text-sev-high bg-sev-high/10',         hint: 'Causes wrong numbers or lost deals. Fix this month.' },
+  { key: 'medium',   label: 'Medium',       icon: TriangleAlert, cls: 'text-sev-medium bg-sev-medium/10',     hint: 'Slows people down or makes reports less reliable. Plan it in.' },
+  { key: 'low',      label: 'Low',          icon: CircleAlert,   cls: 'text-sev-low bg-sev-low/10',           hint: 'Tidy-up. Fix when convenient.' },
 ] as const;
 
 function RunningPanel({ assessment }: { assessment: Assessment }) {
@@ -238,6 +238,14 @@ export default function ResultsPage() {
             <>
               {resultsQ.data?.resolved && resultsQ.data.resolved.length > 0 && <ResolvedCard resolved={resultsQ.data.resolved} />}
 
+              {/* How the pieces fit together */}
+              <p className="mb-3 rounded-lg border border-line bg-muted/40 px-4 py-2.5 text-xs text-ink-muted">
+                <span className="font-semibold text-ink">How to read this:</span> each <span className="font-medium text-ink">topic</span> (e.g. Data Quality) has
+                checks, and each check measures something on an <span className="font-medium text-ink">object</span> (e.g. Missing Key Fields on Accounts). When a
+                measure scores too low it raises a <span className="font-medium text-ink">problem</span>. Its <span className="font-medium text-ink">urgency</span> comes from
+                that score: Critical below 40, High 40–59, Medium 60–79, Low 80 and up. Click a card to see only that urgency, or a row for the records and the fix.
+              </p>
+
               {/* Summary cards — also act as severity filters */}
               <StaggerGrid className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-5">
                 {SUMMARY.map((s) => {
@@ -260,8 +268,9 @@ export default function ResultsPage() {
                         <p className="mt-1 text-[28px] font-semibold leading-none">
                           {findingsQ.isLoading ? '—' : <AnimatedNumber value={counts[s.key]} duration={0.6} />}
                         </p>
-                        <p className="mt-1 text-[11px] text-ink-subtle">
-                          {s.key === 'total' ? (severity === 'all' ? 'All urgency levels' : 'Click to show all') : active ? 'Click to clear filter' : 'Click to filter'}
+                        <p className="mt-1.5 text-[11px] leading-snug text-ink-muted">{s.hint}</p>
+                        <p className="mt-auto pt-1.5 text-[11px] text-ink-subtle">
+                          {s.key === 'total' ? (severity === 'all' ? 'Showing all' : 'Click to show all') : active ? 'Showing only these · click to clear' : 'Click to show only these'}
                         </p>
                       </button>
                     </StaggerItem>

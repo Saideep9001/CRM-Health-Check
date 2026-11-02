@@ -284,12 +284,13 @@ export function SalesforceConnectionCard({
               <Chip icon={Activity} tone="good" title={connection.lastCheckedAt ? fmtDateTime(connection.lastCheckedAt) : undefined}>
                 Healthy{connection.lastCheckedAt ? ` · checked ${fmtAgo(connection.lastCheckedAt)}` : ''}
               </Chip>
-              {ms !== undefined && (
+              {/* Response time and API use are shown once, in the live snapshot below */}
+              {!snapshot && ms !== undefined && (
                 <Chip icon={Gauge} tone={ms < 600 ? 'good' : ms < 1800 ? 'warn' : 'bad'} title="Time for one small Salesforce query">
                   Response {fmtNumber(ms)} ms
                 </Chip>
               )}
-              {apiPct !== null && apiUsed && (
+              {!snapshot && apiPct !== null && apiUsed && (
                 <Chip icon={RefreshCw} tone={apiPct >= 85 ? 'bad' : apiPct >= 65 ? 'warn' : 'neutral'} title={`${fmtNumber(apiUsed.used)} of ${fmtNumber(apiUsed.max)} API calls today`}>
                   API {apiPct}% used today
                 </Chip>

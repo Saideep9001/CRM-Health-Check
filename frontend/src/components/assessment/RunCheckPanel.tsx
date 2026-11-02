@@ -256,7 +256,9 @@ export function RunCheckPanel({
 
   const objectRow = objectPicker && checksObjects && connected && (
     <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-line/70 pt-3">
-      <span className="mr-1 text-xs font-medium text-ink-muted">Objects to check:</span>
+      <span className="mr-1 text-xs font-medium text-ink-muted" title="Choose the objects the next check looks at. To see results for an object, use the object buttons on each area below.">
+        Objects for the next check:
+      </span>
       {objects.map((o) => (
         <span key={o} className="inline-flex items-center gap-1 rounded-full border border-line bg-surface py-0.5 pl-2.5 pr-1 text-xs font-medium">
           {labels.get(o) ?? o}

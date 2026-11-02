@@ -4,7 +4,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { errorMessage } from '@/api/client';
 import { useConnectionSnapshot } from '@/api/queries';
-import { cx, fmtCompact, fmtDate, fmtNumber } from '@/lib/format';
+import { cx, fmtDate, fmtNumber } from '@/lib/format';
 import type { ConnectionSnapshot } from '@/types';
 import { Button } from '../ui/Button';
 import { AnimatedNumber } from '../ui/Visuals';
@@ -48,55 +48,71 @@ function Kpi({ icon, label, children, sub, delay }: { icon: ReactNode; label: st
   );
 }
 
-/** Small ring showing how much of a limit is used. */
-function LimitRing({ pct }: { pct: number }) {
-  const size = 44;
-  const r = 18;
-  const c = 2 * Math.PI * r;
-  const shown = Math.max(pct, pct > 0 ? 2 : 0); // a sliver, so "1%" is visible
-  return (
-    <svg width={size} height={size} viewBox="0 0 44 44" className="-rotate-90 shrink-0" aria-hidden="true">
-      <circle cx="22" cy="22" r={r} fill="none" stroke="rgb(var(--muted))" strokeWidth="5" />
-      <motion.circle
-        cx="22"
-        cy="22"
-        r={r}
-        fill="none"
-        stroke={usedColor(pct)}
-        strokeWidth="5"
-        strokeLinecap="round"
-        strokeDasharray={c}
-        initial={{ strokeDashoffset: c }}
-        animate={{ strokeDashoffset: c * (1 - shown / 100) }}
-        transition={{ duration: 1.1, ease: [0.16, 1, 0.3, 1] }}
-      />
-    </svg>
-  );
+/** What each limit is, in plain words, and when it resets. */
+const LIMIT_INFO: Record<string, { what: string; resets: string }> = {
+  DailyApiRequests: {
+    what: 'Calls made to Salesforce’s API by every integration and app, including this health check. When it runs out, integrations stop working until it resets.',
+    resets: 'Rolling 24 hours',
+  },
+  DataStorageMB: { what: 'Space used by records (Accounts, Contacts, Leads, Opportunities…). When full, no new records can be saved.', resets: 'Doesn’t reset' },
+  FileStorageMB: { what: 'Space used by files, attachments and documents.', resets: 'Doesn’t reset' },
+  DailyAsyncApexExecutions: { what: 'Background jobs run by code in your org (batch, future and queueable Apex).', resets: 'Rolling 24 hours' },
+  DailyBulkV2QueryJobs: { what: 'Large data exports through the Bulk API (this health check uses them only for very large objects).', resets: 'Rolling 24 hours' },
+  SingleEmail: { what: 'Emails sent by code or automation (not emails people send themselves).', resets: 'Daily' },
+};
+
+/** "<1%" instead of a misleading "0%" when something is used; one decimal under 10%. */
+function pctText(used: number, max: number) {
+  if (!max) return '—';
+  const p = (100 * used) / max;
+  if (used > 0 && p < 1) return '<1%';
+  return p < 10 ? `${p.toFixed(1).replace(/\.0$/, '')}%` : `${Math.round(p)}%`;
 }
 
 function Limits({ limits }: { limits: ConnectionSnapshot['limits'] }) {
   if (!limits.length) return null;
   return (
     <div>
-      <h3 className="mb-2 text-sm font-semibold">Org limits</h3>
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        {limits.map((l) => {
-          const pct = l.max ? Math.round((100 * l.used) / l.max) : 0;
-          return (
-            <div key={l.key} className="flex items-center gap-3 rounded-xl border border-line p-3">
-              <div className="relative">
-                <LimitRing pct={pct} />
-                <span className="absolute inset-0 grid place-items-center text-[10px] font-semibold tabular-nums">{pct}%</span>
-              </div>
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium">{l.label}</p>
-                <p className="text-xs tabular-nums text-ink-muted">
-                  {fmtNumber(l.used)} of {fmtCompact(l.max)} {l.unit}
-                </p>
-              </div>
-            </div>
-          );
-        })}
+      <h3 className="mb-1 text-sm font-semibold">Org limits</h3>
+      <p className="mb-2 text-xs text-ink-subtle">How much of each Salesforce allowance is used and how much is left. Green is fine; orange from 65% used; red from 85%.</p>
+      <div className="overflow-x-auto rounded-xl border border-line">
+        <table className="w-full min-w-[640px] text-sm">
+          <thead className="bg-muted/50 text-left text-[11px] uppercase tracking-wide text-ink-subtle">
+            <tr>
+              <th className="px-3 py-2">Limit</th>
+              <th className="px-3 py-2 text-right">Used</th>
+              <th className="px-3 py-2 text-right">Remaining</th>
+              <th className="px-3 py-2 text-right">Limit</th>
+              <th className="w-40 px-3 py-2">Usage</th>
+            </tr>
+          </thead>
+          <tbody>
+            {limits.map((l) => {
+              const pct = l.max ? (100 * l.used) / l.max : 0;
+              const info = LIMIT_INFO[l.key];
+              return (
+                <tr key={l.key} className="border-t border-line align-top">
+                  <td className="px-3 py-2.5">
+                    <p className="font-medium">{l.label}</p>
+                    {info && <p className="mt-0.5 max-w-md text-xs text-ink-muted">{info.what} <span className="text-ink-subtle">Resets: {info.resets}.</span></p>}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums">{fmtNumber(l.used)} <span className="text-xs text-ink-subtle">{l.unit}</span></td>
+                  <td className="whitespace-nowrap px-3 py-2.5 text-right font-medium tabular-nums">{fmtNumber(Math.max(l.max - l.used, 0))}</td>
+                  <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-ink-muted">{fmtNumber(l.max)}</td>
+                  <td className="px-3 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <span className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+                        <motion.span className="block h-full rounded-full" style={{ background: usedColor(pct) }}
+                          initial={{ width: 0 }} animate={{ width: `${Math.max(pct, l.used > 0 ? 1.5 : 0)}%` }} transition={{ duration: 0.9 }} />
+                      </span>
+                      <span className="w-10 text-right text-xs font-semibold tabular-nums" style={{ color: usedColor(pct) }}>{pctText(l.used, l.max)}</span>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );
@@ -203,12 +219,12 @@ export function OrgSnapshot({ orgId }: { orgId: string | null }) {
           <Limits limits={s.limits} />
           <Records records={s.records} />
 
-          <div className="flex flex-wrap gap-x-6 gap-y-1 border-t border-line pt-4 text-xs text-ink-muted">
-            <span className="inline-flex items-center gap-1.5"><Globe2 className="h-3.5 w-3.5" /> Instance {s.instanceName ?? '—'}</span>
-            {s.timeZone && <span>Time zone {s.timeZone}</span>}
-            {s.locale && <span>Locale {s.locale}</span>}
-            <span>{s.isSandbox ? 'Sandbox (test copy)' : 'Production (live org)'}</span>
-          </div>
+          {(s.timeZone || s.locale) && (
+            <div className="flex flex-wrap gap-x-6 gap-y-1 border-t border-line pt-4 text-xs text-ink-muted">
+              {s.timeZone && <span className="inline-flex items-center gap-1.5"><Globe2 className="h-3.5 w-3.5" /> Time zone {s.timeZone}</span>}
+              {s.locale && <span>Locale {s.locale}</span>}
+            </div>
+          )}
         </div>
       )}
     </section>

@@ -6,7 +6,7 @@ import { CATEGORIES } from '@/config/categories';
 import { useToast } from '@/context/ToastContext';
 import { useSort } from '@/hooks/useSort';
 import { errorMessage } from '@/api/client';
-import { fmtDate, fmtNumber } from '@/lib/format';
+import { fmtDate, fmtDateTime, fmtNumber } from '@/lib/format';
 import type { Assessment } from '@/types';
 import { AssessmentStatusBadge } from '../ui/Badges';
 import { Button } from '../ui/Button';
@@ -110,7 +110,7 @@ export function AssessmentTable({ rows, variant }: { rows: Assessment[]; variant
                 {history && <td className="td whitespace-nowrap font-mono text-xs text-ink-muted">{a.id}</td>}
                 <td className="td font-medium">{a.name}</td>
                 <td className="td text-ink-muted">{a.organizationName}</td>
-                <td className="td whitespace-nowrap text-ink-muted">{fmtDate(a.completedAt ?? a.startedAt ?? a.createdAt)}</td>
+                <td className="td whitespace-nowrap text-ink-muted" title={fmtDate(a.completedAt ?? a.startedAt ?? a.createdAt)}>{fmtDateTime(a.completedAt ?? a.startedAt ?? a.createdAt)}</td>
                 <td className="td">
                   <CategoryStack ids={a.scope.categoryIds} />
                 </td>

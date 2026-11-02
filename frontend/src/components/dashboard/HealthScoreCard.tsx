@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion';
 import { Minus, TrendingDown, TrendingUp, type LucideIcon } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { cx, fmtCompact, fmtNumber } from '@/lib/format';
 import type { HealthMetric } from '@/types';
 import { HelpTip } from '../ui/HelpTip';
@@ -16,6 +17,8 @@ export function HealthScoreCard({
   lowerIsBetter,
   spark,
   hint,
+  note,
+  footer,
   onClick,
 }: {
   metric: HealthMetric;
@@ -24,6 +27,10 @@ export function HealthScoreCard({
   lowerIsBetter?: boolean;
   spark?: number[];
   hint?: string;
+  /** A short line under the label saying what the number is made of. */
+  note?: string;
+  /** Extra detail under the number (e.g. which topics the problems are in). */
+  footer?: ReactNode;
   onClick?: () => void;
 }) {
   const isScore = metric.unit === 'score';
@@ -45,12 +52,17 @@ export function HealthScoreCard({
         <span>{metric.label}</span>
         {hint && <HelpTip side="top">{hint}</HelpTip>}
       </p>
+      {note && <p className="text-[11px] text-ink-subtle">{note}</p>}
 
       <div className="mt-1 flex items-baseline gap-2">
         <span className="text-[28px] font-semibold leading-none tracking-tight">
           {value === null ? '—' : <AnimatedNumber value={value} format={value > 99_999 ? fmtCompact : fmtNumber} />}
         </span>
-        {isScore && value !== null && <span className="text-sm text-ink-subtle">/ 100</span>}
+        {isScore && value !== null && (
+          <span className="text-sm text-ink-subtle" title="A score from 0 to 100 (not a percentage): 100 means no problems were found">
+            score out of 100
+          </span>
+        )}
       </div>
 
       {isScore && (
@@ -58,6 +70,8 @@ export function HealthScoreCard({
           <ProgressBar value={value ?? 0} />
         </div>
       )}
+
+      {footer && <div className="mt-3 text-xs">{footer}</div>}
 
       <div className="mt-3 flex items-center justify-between text-xs">
         {trend === null ? (

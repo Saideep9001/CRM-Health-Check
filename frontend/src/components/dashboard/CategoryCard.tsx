@@ -2,8 +2,8 @@ import { motion } from 'framer-motion';
 import { ArrowRight, Layers, TriangleAlert } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { CATEGORY_COLORS } from '@/config/categories';
-import { scoreBand } from '@/lib/format';
-import { findingsForCategory, getCategoryCoverage, getCategoryScore } from '@/lib/health';
+import { fmtNumber, scoreBand } from '@/lib/format';
+import { SEVERITY_RANK, findingsForCategory, getCategoryCoverage, getCategoryScore } from '@/lib/health';
 import type { AssessmentResults, Category, Finding } from '@/types';
 import { CoverageBadge, ReleaseBadge } from '../ui/Badges';
 import { Button } from '../ui/Button';
@@ -23,7 +23,9 @@ export function CategoryCard({
   const navigate = useNavigate();
   const score = getCategoryScore(results, category.id);
   const coverage = getCategoryCoverage(results, category.id);
-  const count = findingsForCategory(findings, category.id).length;
+  const mine = findingsForCategory(findings, category.id);
+  const count = mine.length;
+  const biggest = [...mine].sort((a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity] || b.affectedRecords - a.affectedRecords)[0];
   const color = CATEGORY_COLORS[category.id];
   const soon = category.release === 'coming-soon';
   const band = scoreBand(score);
@@ -60,6 +62,27 @@ export function CategoryCard({
           <InfoTip label={`About ${category.name}`}>{category.purpose}</InfoTip>
         </h3>
         <div className="flex-1" />
+
+        {/* This topic's own biggest problem: what to look at first */}
+        {coverage !== 'not-assessed' && !soon && (
+          biggest ? (
+            <button
+              type="button"
+              onClick={() => navigate(`/problems/${encodeURIComponent(biggest.id)}`)}
+              className="mt-3 rounded-lg border border-line px-3 py-2 text-left text-xs transition hover:border-brand/40 hover:bg-muted/50"
+            >
+              <span className="block text-[10px] font-semibold uppercase tracking-wide text-ink-subtle">Biggest problem · {biggest.severity}</span>
+              <span className="mt-0.5 block font-medium text-ink">{biggest.name}</span>
+              {biggest.affectedRecords > 0 && (
+                <span className="block text-ink-muted">
+                  {fmtNumber(biggest.affectedRecords)} {biggest.objectName ? `${biggest.objectName} ` : ''}records affected
+                </span>
+              )}
+            </button>
+          ) : (
+            <p className="mt-3 rounded-lg bg-good-soft/60 px-3 py-2 text-xs text-good">No problems found in this topic.</p>
+          )
+        )}
 
         {/* Stats grid */}
         <dl className="mt-4 grid grid-cols-3 gap-2 rounded-lg bg-muted/70 p-3 text-center">

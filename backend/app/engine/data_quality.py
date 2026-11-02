@@ -254,6 +254,10 @@ def duplicates_on_fields(ctx: Ctx, obj: str) -> None:
         return f"“{r.get(name_field) or r.get('Id')}” ({len(g)})"
 
     records = _listed(ctx, obj, ids)
+    # Which fields actually make the records duplicates: per field, the extra copies whose value matches their group's first record.
+    matched = {f: sum(1 for g in groups for m in g[1:] if filled(vals[g[0]][f]) and filled(vals[m][f]) and _matches(kinds[f], vals[g[0]][f], vals[m][f]))
+               for f in keys}
+    matched_on = " · ".join(f"{_flabel(ctx, obj, f)} {n:,}" for f, n in sorted(matched.items(), key=lambda x: -x[1]) if n)
     ctx.metric(
         f"Duplicate {ctx.label(obj)}", extra, "count", "lower-better", score,
         how=f"{_cap(label)} that match another record on {names}, out of {total:,}. We count only the extra copies beyond the first in each group.",
@@ -271,6 +275,7 @@ def duplicates_on_fields(ctx: Ctx, obj: str) -> None:
             ("Duplicate group", "Records that all match the group's first record (no chains of near-matches)."),
             ("What's counted", f"The extra copies in each group (group size minus the one you keep): {extra:,} in {len(groups):,} groups."),
             ("Records listed", f"Every record in a duplicate group, including the one you'd keep (up to {LISTED})."),
+            *([("Matched on", matched_on)] if matched_on else []),
         ],
     )
     ctx.finding(
@@ -978,6 +983,37 @@ def all_fields(ctx: Ctx, obj: str) -> None:
     )
 
 
+def _relied_on(ctx: Ctx, obj: str) -> tuple[list[str], list[str], dict[str, str], dict[str, dict[str, int]]]:
+    """Nearly empty custom fields (filled on fewer than 20% of records) and which of them something still relies on:
+    (nearly empty, relied on, field → Salesforce id, field id → what relies on it by type). Asked once per object."""
+    from .core import DEFAULT_OBJECTS
+    from .deep import DEPENDENT_TYPES as AUTOMATION
+
+    key = ("relied_on", obj)
+    if key in ctx.memo:
+        return ctx.memo[key]
+    dependent = {**AUTOMATION, "CustomField": "formula field"}  # formulas that read the field rely on it too
+    out: tuple = ([], [], {}, {})
+    total, filled = _fill(ctx, obj)
+    if obj in DEFAULT_OBJECTS and total >= MIN_RECORDS:  # Salesforce lists dependencies by field id for these objects only
+        rows = ctx.setup(f"SELECT Id, DeveloperName, NamespacePrefix FROM CustomField WHERE TableEnumOrId = '{obj}'")
+        ids = {f"{r.get('DeveloperName')}__c": r["Id"] for r in rows if not r.get("NamespacePrefix")}
+        empty = [f for f in ids if f in filled and filled[f] / total < LOW_FILL]
+        deps: dict[str, dict[str, int]] = {}
+        for i in range(0, len(empty), 100):
+            chunk = ", ".join(f"'{ids[f]}'" for f in empty[i:i + 100])
+            for r in ctx.setup("SELECT MetadataComponentType, RefMetadataComponentId FROM MetadataComponentDependency "
+                               f"WHERE RefMetadataComponentId IN ({chunk})"):
+                t = r.get("MetadataComponentType")
+                if t in dependent:
+                    d = deps.setdefault(r.get("RefMetadataComponentId"), {})
+                    d[t] = d.get(t, 0) + 1
+        matter = sorted((f for f in empty if deps.get(ids[f])), key=lambda f: (-sum(deps[ids[f]].values()), filled[f]))
+        out = (empty, matter, ids, deps)
+    ctx.memo[key] = out
+    return out
+
+
 def unused_low_completion_fields(ctx: Ctx, obj: str) -> None:
     """Fields people fill in (standard and custom) that are filled on fewer than 20% of records, in three bands: never filled,
     hardly ever filled (under 1%) and rarely filled (1% to under 20%)."""
@@ -986,7 +1022,11 @@ def unused_low_completion_fields(ctx: Ctx, obj: str) -> None:
     checked = [f for f in _fillable(fields) if f in filled]
     if total < MIN_RECORDS or not checked:
         return
-    low = sorted((f for f in checked if filled[f] / total < LOW_FILL), key=lambda f: (filled[f], not fields[f].get("custom")))
+    try:  # fields something relies on are listed under Empty Fields Others Depend On instead, so no field is in both cards
+        relied = set(_relied_on(ctx, obj)[1])
+    except (Unavailable, SalesforceError):
+        relied = set()  # can't tell (e.g. no "View Setup and Configuration"): every low-use field is listed here
+    low = sorted((f for f in checked if filled[f] / total < LOW_FILL and f not in relied), key=lambda f: (filled[f], not fields[f].get("custom")))
     never = [f for f in low if not filled[f]]
     hardly = [f for f in low if filled[f] and filled[f] / total < UNUSED_FILL]
     rarely = [f for f in low if filled[f] / total >= UNUSED_FILL]
@@ -1009,6 +1049,8 @@ def unused_low_completion_fields(ctx: Ctx, obj: str) -> None:
             ("Fields checked", f"{len(checked):,} fields people fill in, standard and custom ({sum(1 for f in checked if fields[f].get('custom')):,} custom); "
              "checkboxes, long text, formulas and system fields are left out"),
             ("Records", f"{total:,} {label}, all of them"),
+            *([("Listed elsewhere", f"{len(relied):,} low-use fields that formulas, flows, reports or code rely on are under Empty Fields Others "
+                "Depend On instead (they mustn't be deleted)")] if relied else []),
             ("Counts as unused or low-completion", f"Filled on fewer than {LOW_FILL:.0%} of records, in three bands: never filled in; hardly ever filled "
              f"(under {UNUSED_FILL:.0%}); rarely filled ({UNUSED_FILL:.0%} to under {LOW_FILL:.0%})."),
             ("Never filled in", f"{len(never):,}"),
@@ -1158,19 +1200,7 @@ def depended_empty_fields(ctx: Ctx, obj: str) -> None:
     total, filled = _fill(ctx, obj)
     if total < MIN_RECORDS:
         return
-    rows = ctx.setup(f"SELECT Id, DeveloperName, NamespacePrefix FROM CustomField WHERE TableEnumOrId = '{obj}'")
-    ids = {f"{r.get('DeveloperName')}__c": r["Id"] for r in rows if not r.get("NamespacePrefix")}
-    empty = [f for f in ids if f in filled and filled[f] / total < LOW_FILL]
-    deps: dict[str, dict[str, int]] = {}
-    for i in range(0, len(empty), 100):
-        chunk = ", ".join(f"'{ids[f]}'" for f in empty[i:i + 100])
-        for r in ctx.setup("SELECT MetadataComponentType, RefMetadataComponentId FROM MetadataComponentDependency "
-                           f"WHERE RefMetadataComponentId IN ({chunk})"):
-            t = r.get("MetadataComponentType")
-            if t in DEPENDENT_TYPES:
-                d = deps.setdefault(r.get("RefMetadataComponentId"), {})
-                d[t] = d.get(t, 0) + 1
-    matter = sorted((f for f in empty if deps.get(ids[f])), key=lambda f: (-sum(deps[ids[f]].values()), filled[f]))
+    empty, matter, ids, deps = _relied_on(ctx, obj)
     score = rate_score(len(matter) / max(len(empty), 1), 0.5) if empty else 100
     label = _label(ctx, obj)
     used_by = lambda f: "Used by " + ", ".join(_plural(c, DEPENDENT_TYPES[t]) for t, c in deps[ids[f]].items())  # noqa: E731

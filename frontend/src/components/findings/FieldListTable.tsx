@@ -6,7 +6,7 @@ import type { DataField, DataFilter, FieldListItem } from '@/types';
 
 /** What each column filters on (worked out from the list itself, so filtering needs no server). */
 const filledBand = (f: FieldListItem) => {
-  if (f.pct == null || f.filled == null || !f.of) return 'Can’t be counted';
+  if (f.pct == null || f.filled == null || !f.of) return 'Not countable';
   const exact = (100 * f.filled) / f.of; // not the rounded %: 0.99% is under 1%, as the check counts it
   return f.filled === 0 ? 'Never filled in' : exact < 1 ? 'Under 1%' : exact < 20 ? '1% to 20%' : '20% or more';
 };
@@ -23,9 +23,27 @@ const asField = (name: string) => ({ name, label: column(name).label, type: 'str
 
 function keeps(f: FieldListItem, filter: DataFilter): boolean {
   const v = column(filter.field)?.get(f) ?? null;
-  if (filter.op === 'blank') return v == null;
-  const named = (filter.value as unknown[]) ?? [];
-  return filter.op === 'in' ? named.includes(v) : !named.includes(v);
+  const text = (x: unknown) => String(x ?? '').toLowerCase();
+  switch (filter.op) {
+    case 'blank':
+      return v == null;
+    case 'notblank':
+      return v != null;
+    case 'eq':
+      return text(v) === text(filter.value);
+    case 'ne':
+      return text(v) !== text(filter.value);
+    case 'contains':
+      return text(v).includes(text(filter.value));
+    case 'in':
+    case 'notin': {
+      const named = Array.isArray(filter.value) ? (filter.value as unknown[]) : [filter.value];
+      const hit = named.includes(v);
+      return filter.op === 'in' ? hit : !hit;
+    }
+    default:
+      return true; // an unknown kind of filter never hides fields
+  }
 }
 
 /** The fields behind a card about fields (unused, outdated, look-alike…): fill rate and why each is listed, with
@@ -71,7 +89,7 @@ export function FieldListTable({
   const recordTypes = (f: string) => {
     if (!recordTypesOf) return null;
     const r = rtsOf(f);
-    if (!r.length) return <span className="rounded bg-muted px-1.5 py-px text-[10px] font-medium text-ink-muted" title="On no record type’s page layout">Other</span>;
+    if (!r.length) return <span className="rounded bg-muted px-1.5 py-px text-[10px] font-medium text-ink-muted" title="Not on any record type’s page layout (only on the default layout, or on none)">Other</span>;
     return (
       <span className="inline-flex flex-wrap items-center gap-1">
         {r.slice(0, 2).map((t) => (
@@ -133,7 +151,7 @@ export function FieldListTable({
   // Each column's values and how many fields have each, among the fields the other filters keep.
   const source: ValuesSource = useMemo(
     () => ({
-      key: ['field-list', id, items.length],
+      key: ['field-list', id, items.length, items[0]?.name, items[items.length - 1]?.name],
       load: async (name, others) => {
         const kept = items.filter((f) => others.every((x) => keeps(f, x)));
         const counts = new Map<string, number>();
@@ -203,7 +221,7 @@ export function FieldListTable({
     const fillCell = (f: FieldListItem) => (
       <td className="px-3 py-2 align-top">
         {f.pct == null ? (
-          <span className="text-ink-subtle">Can’t be counted</span>
+          <span className="text-ink-subtle" title="Salesforce can't count how many records have this kind of field filled in (long text, rich text, formulas and some other types)">Not countable</span>
         ) : (
           <span className="block">
             <span className="flex items-center gap-2">
@@ -325,7 +343,7 @@ export function FieldListTable({
                 <td className="px-3 py-2 text-ink-muted">{f.type}</td>
                 <td className="px-3 py-2">
                   {f.pct == null ? (
-                    <span className="text-ink-subtle">Can’t be counted</span>
+                    <span className="text-ink-subtle" title="Salesforce can't count how many records have this kind of field filled in (long text, rich text, formulas and some other types)">Not countable</span>
                   ) : (
                     <span className="flex items-center gap-2">
                       <span className="h-1.5 w-20 overflow-hidden rounded-full bg-muted">

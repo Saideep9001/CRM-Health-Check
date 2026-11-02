@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion';
 import { ArrowRight, CalendarDays, TriangleAlert } from 'lucide-react';
+import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { SEVERITY_COLORS } from '@/components/charts/Charts';
 import { SEVERITY_RANK } from '@/lib/health';
@@ -30,6 +31,20 @@ function indicatorTone(i: IndicatorValue): 'good' | 'warn' | 'bad' {
 }
 
 const DOT = { good: 'bg-good', warn: 'bg-warn', bad: 'bg-bad' };
+
+/** Does a measure belong to an object ("Missing Key Fields (Accounts)", "Duplicate Accounts", "Accounts Without Contacts")? */
+export function measureOf(label: string, plural: string) {
+  return label.endsWith(`(${plural})`) || label === `Duplicate ${plural}` || label === `Stale ${plural}` || label.startsWith(`${plural} Without`);
+}
+
+/** The measure's name without its object: "Missing Key Fields (Accounts)" → "Missing Key Fields". */
+function shortName(label: string, plural: string) {
+  return label.replace(` (${plural})`, '').replace(`Duplicate ${plural}`, 'Duplicates').replace(`${plural} Without`, 'Without');
+}
+
+export const URGENCY_HELP = 'Urgency of the problem a measure raised. Critical: blocks the sales process or affects most records, fix now. High: causes wrong numbers or lost deals. Medium: slows people down or makes reports less reliable. Low: tidy-up. No badge: no problem raised.';
+const URGENCY_CLASS: Record<string, string> = { critical: 'bg-bad-soft text-bad', high: 'bg-warn-soft text-warn', medium: 'bg-warn-soft/60 text-warn', low: 'bg-brand-soft text-brand-ink' };
+const DATA_QUALITY_AREAS = new Set(['area-1', 'area-2']);
 
 export function DiagnosticAreaCard({
   area,
@@ -64,6 +79,19 @@ export function DiagnosticAreaCard({
   const navigate = useNavigate();
   const release = getAreaRelease(area);
   const assessed = result?.status === 'assessed';
+  // Data Quality areas: one object at a time, chosen on the card (score and measures follow it).
+  const perObject = DATA_QUALITY_AREAS.has(area.id);
+  const measures = (result?.indicators ?? []).filter((i) => i.label !== 'Data Quality Scorecard');
+  const checkedObjects = perObject ? objects.filter((o) => measures.some((i) => measureOf(i.label, o.label))) : [];
+  const [picked, setPicked] = useState<string | null>(null);
+  const current = checkedObjects.find((o) => o.name === picked) ?? checkedObjects[0];
+  const shown = current
+    ? measures.filter((i) => measureOf(i.label, current.label))
+    : measures.filter((i) => area.indicators.includes(i.label)).slice(0, 3);
+  const scored = shown.filter((i) => i.score != null).map((i) => i.score!);
+  const shownScore = current && scored.length ? Math.round(scored.reduce((a, b) => a + b, 0) / scored.length) : result?.score ?? null;
+  const urgencyOf = (label: string) => findings.find((f) => f.measure === label && f.status !== 'resolved' && f.status !== 'accepted-risk')?.severity;
+  const objectProblems = current ? findings.filter((f) => f.objectName === current.name).length : findingsCount;
 
   return (
     <motion.article
@@ -95,28 +123,61 @@ export function DiagnosticAreaCard({
         </div>
       </div>
 
+      {assessed && result.score !== null && checkedObjects.length > 1 && (
+        <div className="mt-4 flex flex-wrap gap-1" role="tablist" aria-label="Object">
+          {checkedObjects.map((o) => (
+            <button
+              key={o.name}
+              type="button"
+              role="tab"
+              aria-selected={o.name === current?.name}
+              onClick={() => setPicked(o.name)}
+              className={cx('rounded-full border px-2.5 py-0.5 text-xs font-medium transition',
+                o.name === current?.name ? 'border-brand bg-brand-soft text-brand-ink' : 'border-line text-ink-muted hover:border-brand/40 hover:text-ink')}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {assessed && result.score !== null ? (
-        <div className="mt-4 flex items-center gap-4">
-          <ScoreRing score={result.score} size={72} stroke={7} showBand={false} />
-          <ul className="min-w-0 flex-1 space-y-1.5">
-            {result.indicators.filter((i) => area.indicators.includes(i.label)).slice(0, 3).map((i) => (
-              <li key={i.label}>
-                <button
-                  type="button"
-                  disabled={!onSelectMeasure}
-                  onClick={() => onSelectMeasure?.(i.label)}
-                  className="group/m -mx-1.5 flex w-[calc(100%+0.75rem)] items-center gap-2 rounded-md px-1.5 py-0.5 text-left text-xs enabled:hover:bg-muted"
-                  title={onSelectMeasure ? 'See the rules and the records behind this number' : undefined}
-                >
-                  <span className={cx('h-1.5 w-1.5 shrink-0 rounded-full', DOT[indicatorTone(i)])} />
-                  <span className="min-w-0 flex-1 truncate text-ink-muted group-enabled/m:group-hover/m:text-brand" title={i.label}>{i.label}</span>
-                  <span className="font-semibold tabular-nums">
-                    {fmtNumber(Math.round(i.value))}
-                    {i.unit === '%' && '%'}
-                  </span>
-                </button>
+        <div className="mt-4 flex items-start gap-4">
+          <div className="shrink-0 text-center">
+            <ScoreRing score={shownScore ?? result.score} size={72} stroke={7} showBand={false} />
+            {current && <p className="mt-1 text-[10px] text-ink-subtle">{current.label}</p>}
+          </div>
+          <ul className="min-w-0 flex-1 space-y-1">
+            {current && (
+              <li className="flex items-center gap-1 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink-subtle">
+                What we measured on {current.label}
+                <InfoTip label="What the badges mean">{URGENCY_HELP}</InfoTip>
               </li>
-            ))}
+            )}
+            {shown.map((i) => {
+              const urgency = urgencyOf(i.label);
+              return (
+                <li key={i.label}>
+                  <button
+                    type="button"
+                    disabled={!onSelectMeasure}
+                    onClick={() => onSelectMeasure?.(i.label)}
+                    className="group/m -mx-1.5 flex w-[calc(100%+0.75rem)] items-center gap-2 rounded-md px-1.5 py-0.5 text-left text-xs enabled:hover:bg-muted"
+                    title={onSelectMeasure ? 'See the rules and the records behind this number' : undefined}
+                  >
+                    <span className={cx('h-1.5 w-1.5 shrink-0 rounded-full', DOT[indicatorTone(i)])} />
+                    <span className="min-w-0 flex-1 truncate text-ink-muted group-enabled/m:group-hover/m:text-brand" title={i.label}>
+                      {current ? shortName(i.label, current.label) : i.label}
+                    </span>
+                    {urgency && <span className={cx('shrink-0 rounded px-1.5 py-px text-[9px] font-semibold uppercase', URGENCY_CLASS[urgency])}>{urgency}</span>}
+                    <span className="font-semibold tabular-nums">
+                      {fmtNumber(Math.round(i.value))}
+                      {i.unit === '%' && '%'}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         </div>
       ) : (
@@ -127,14 +188,17 @@ export function DiagnosticAreaCard({
         </div>
       )}
 
-      {assessed && assessmentId && <AreaExtras areaId={area.id} findings={findings} objects={objects} assessmentId={assessmentId} onSelectFinding={onSelectFinding} onSelectObject={onSelectObject} />}
+      {/* Other areas: their most urgent problems and objects (Data Quality cards list every measure above instead) */}
+      {assessed && assessmentId && !current && (
+        <AreaExtras areaId={area.id} findings={findings} objects={objects} assessmentId={assessmentId} onSelectFinding={onSelectFinding} onSelectObject={onSelectObject} />
+      )}
 
       <div className="flex-1" />
 
       <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-muted">
         <span className="inline-flex items-center gap-1">
           <TriangleAlert className="h-3.5 w-3.5" />
-          {assessed ? `${findingsCount} problem${findingsCount === 1 ? '' : 's'}` : 'No problems'}
+          {assessed ? `${objectProblems} problem${objectProblems === 1 ? '' : 's'}${current ? ` on ${current.label}` : ''}` : 'No problems'}
         </span>
         <span className="inline-flex items-center gap-1">
           <CalendarDays className="h-3.5 w-3.5" />

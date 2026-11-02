@@ -294,6 +294,28 @@ export default function DiagnosticAreaPage() {
         ) : (
           v.how && <span className="mt-3 line-clamp-2 text-xs text-ink-muted">{v.how}</span>
         )}
+        {/* Duplicates: the fields that actually matched inside the duplicate groups (or the rule that found them) */}
+        {/^Duplicate /.test(label) && (() => {
+          const crit = (k: string) => (v.criteria ?? []).find(([n]) => n === k)?.[1];
+          const text = crit('Matched on') ?? crit('Found by rule');
+          return text ? (
+            <span className="mt-2 text-[11px]" title="How many of the extra copies match their group on each field">
+              <span className="font-medium text-ink-subtle">Matched on: </span>
+              <span className="text-ink">{text}</span>
+            </span>
+          ) : null;
+        })()}
+        {/* Which fields the empty or invalid values are in, most affected first */}
+        {!v.fieldList && /Missing Key Fields|Data Standardization/.test(label) && (v.fieldScores ?? []).some((f) => f.count > 0) && (
+          <span className="mt-2 flex flex-wrap items-center gap-1 text-[11px]" title="Records affected in each field">
+            <span className="font-medium text-ink-subtle">Found in:</span>
+            {[...(v.fieldScores ?? [])].filter((f) => f.count > 0).sort((a, b) => b.count - a.count).slice(0, 3).map((f) => (
+              <span key={f.field} className="rounded-full bg-muted px-2 py-0.5 text-ink">
+                {f.label} <span className="font-semibold tabular-nums">{fmtNumber(f.count)}</span>
+              </span>
+            ))}
+          </span>
+        )}
         <span className="mt-auto inline-flex items-center gap-1 pt-4 text-xs font-semibold text-brand">
           Rule &amp; {v.fieldList ? 'fields' : 'records'} <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-1" />
         </span>
