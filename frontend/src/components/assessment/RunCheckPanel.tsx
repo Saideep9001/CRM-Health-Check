@@ -21,8 +21,6 @@ import { CATEGORIES, MVP_AREA_IDS } from '@/config/categories';
 import { useToast } from '@/context/ToastContext';
 import { cx, fmtDate } from '@/lib/format';
 
-type Lookback = 'all' | '90' | '180' | '365';
-
 type DayOption = '7' | '14' | '30' | '60' | '90';
 const dayOptions = (prefix: string): { value: DayOption; label: string }[] =>
   (['7', '14', '30', '60', '90'] as DayOption[]).map((d) => ({ value: d, label: `${prefix} ${d} days` }));
@@ -50,13 +48,6 @@ function saveObjects(v: string[]) {
     // The choice just won't be remembered.
   }
 }
-
-const LOOKBACK_OPTIONS: { value: Lookback; label: string }[] = [
-  { value: 'all', label: 'All records' },
-  { value: '90', label: 'Changed in the last 90 days' },
-  { value: '180', label: 'Changed in the last 6 months' },
-  { value: '365', label: 'Changed in the last year' },
-];
 
 /**
  * Start a health check right where the user is (topic, area, or overview page),
@@ -89,7 +80,6 @@ export function RunCheckPanel({
   const create = useCreateAssessment();
   const cancel = useCancelAssessment();
   const { notify } = useToast();
-  const [lookback, setLookback] = useState<Lookback>('all');
   const [staleDays, setStaleDays] = useState<DayOption>('30');
   const [stuckDays, setStuckDays] = useState<DayOption>('60');
   const [startedId, setStartedId] = useState<string | null>(null);
@@ -166,7 +156,7 @@ export function RunCheckPanel({
         scope: {
           categoryIds,
           areaIds: runnable,
-          lookbackDays: lookback === 'all' ? null : Number(lookback),
+          lookbackDays: null, // every record is checked
           staleLeadDays: Number(staleDays),
           stuckOpportunityDays: Number(stuckDays),
           objects: checksObjects ? objects : undefined,
@@ -235,7 +225,6 @@ export function RunCheckPanel({
   const failed = watched.data?.id === startedId && watched.data?.status === 'failed' ? watched.data : null;
   const controls = (
     <div className="flex flex-wrap items-center gap-2">
-      <Select<Lookback> label="Which records to check" value={lookback} onChange={setLookback} options={LOOKBACK_OPTIONS} className="w-full sm:w-56" />
       {usesStale && (
         <Select<DayOption> label="When is a lead stale?" value={staleDays} onChange={setStaleDays} options={dayOptions('Stale lead after')} className="w-full sm:w-48" />
       )}

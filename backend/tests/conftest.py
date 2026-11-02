@@ -16,6 +16,7 @@ os.environ.update(
     SF_CLIENT_SECRET="test-client-secret",
     FRONTEND_ORIGIN="http://localhost:5173",
     SF_QUERY_API="rest",  # the fake org speaks REST; Bulk API jobs have their own tests (test_bulk.py)
+    SF_CACHE_SECONDS="0",  # tests count Salesforce calls exactly; the read cache has its own test (test_read_cache.py)
 )
 
 import httpx  # noqa: E402

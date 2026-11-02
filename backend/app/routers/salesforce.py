@@ -71,8 +71,13 @@ def get_connection(db: Session = Depends(get_db), settings: Settings = Depends(s
 
 
 @router.get("/connection/snapshot", response_model=ConnectionSnapshot)
-def connection_snapshot(db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep), settings: Settings = Depends(settings_dep)):
-    """Live, read-only facts about the active org: limits, users, record counts and response time."""
+def connection_snapshot(fresh: bool = Query(False), db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep),
+                        settings: Settings = Depends(settings_dep)):
+    """Live, read-only facts about the active org: limits, users, record counts and response time.
+    `fresh=true` (the Refresh button) reads everything straight from Salesforce."""
+    from ..salesforce.client import fresh_reads
+
+    fresh_reads.set(fresh)
     try:
         sf = service.client_for(db, http, settings)
     except service.NotConnected:

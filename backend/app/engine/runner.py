@@ -154,6 +154,7 @@ def _link_measures(metrics: list, findings: list) -> None:
 
 def _run(db, http: httpx.Client, row: AssessmentRow) -> None:
     sf = service.client_for(db, http, get_settings(), org_id=row.org_id or None)  # this check's org, not the active one
+    sf.cache_reads = False  # a health check reads Salesforce live, never from the click cache
     _check_api_budget(sf)
     scope = row.scope or {}
     objects = tuple(dict.fromkeys(scope.get("objects") or DEFAULT_OBJECTS))  # keep order, drop repeats

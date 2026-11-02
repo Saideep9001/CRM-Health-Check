@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     sf_query_api: Literal["auto", "bulk", "rest"] = "auto"
     sf_bulk_min_records: int = 20_000
     sf_bulk_timeout_seconds: int = 600  # longest wait for one Bulk query job to finish
+    # Clicking around the app: the same Salesforce read within this many seconds is answered from memory instead of
+    # spending another API call. Health checks and Refresh buttons always read live. 0 turns it off.
+    sf_cache_seconds: int = 300
     # Scopes requested on the consent screen.
     sf_scopes: str = "api refresh_token offline_access"
 

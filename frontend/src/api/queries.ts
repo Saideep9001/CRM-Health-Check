@@ -83,6 +83,15 @@ export const useConnectionSnapshot = (orgId: string | null, enabled: boolean) =>
     retry: 1,
   });
 
+/** The snapshot's Refresh button: reads live from Salesforce (skipping the server's read cache) and shows the result. */
+export function useRefreshSnapshot(orgId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => connectionApi.snapshot(undefined, true),
+    onSuccess: (data) => qc.setQueryData(['connection', 'snapshot', orgId], data),
+  });
+}
+
 export const useStartOAuth = () => useMutation({ mutationFn: connectionApi.startOAuth });
 
 // ---- Uploaded CSV / Excel data ----

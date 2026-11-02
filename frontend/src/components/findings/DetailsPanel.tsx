@@ -124,7 +124,10 @@ function mergeDuplicates(check: FieldCheckResult, picked: string[]): DuplicateRe
     ...(picked.includes(ALL) && check.combined ? [check.combined] : []),
   ];
   if (!parts.length) return null;
-  const columns = parts.flatMap((p) => p.columns).filter((c, i, all) => all.findIndex((x) => x.name === c.name) === i);
+  const all = parts.flatMap((p) => p.columns).filter((c, i, cols) => cols.findIndex((x) => x.name === c.name) === i);
+  // The table shows only the ticked fields (all of them when "All fields together" is ticked).
+  const onlyPicked = picked.includes(ALL) ? all : all.filter((c) => picked.includes(c.name));
+  const columns = onlyPicked.length ? onlyPicked : all;
   return {
     ...parts[0],
     rules: parts.flatMap((p) => p.rules),

@@ -1169,6 +1169,14 @@ class LocalSalesforceClient(SalesforceClient):
     def _refresh(self) -> None:  # nothing to refresh: the data is local
         return None
 
+    @property
+    def cache_reads(self) -> bool:  # local data costs no API calls, so it's never cached
+        return False
+
+    @cache_reads.setter
+    def cache_reads(self, _value: bool) -> None:
+        pass
+
     def _bulk(self, soql: str) -> bool:
         return False
 

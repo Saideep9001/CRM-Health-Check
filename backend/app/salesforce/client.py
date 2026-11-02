@@ -1,7 +1,10 @@
 """Authenticated, read-only Salesforce client (REST, and Bulk API 2.0 for record queries) with automatic token refresh."""
 import logging
+import threading
 import time
+from collections import OrderedDict
 from collections.abc import Callable
+from contextvars import ContextVar
 from urllib.parse import quote
 
 import httpx
@@ -21,6 +24,25 @@ log = logging.getLogger("aquarient.salesforce")
 RETRY_STATUSES = {429, 500, 502, 503, 504}
 RETRIES = 3
 BACKOFF_SECONDS = 1.0
+
+
+# ---- Short-lived cache of reads, so clicking around the app doesn't spend an API call each time ----
+# The same GET (same org, same path or SOQL) within `sf_cache_seconds` is answered from memory. Health checks, Refresh
+# buttons and live counters (org limits, Bulk jobs) always go to Salesforce. Nothing is written to disk.
+CACHE_MAX_ENTRIES = 200
+CACHE_MAX_BYTES = 2_000_000  # bigger answers (huge record pages) aren't kept
+_NEVER_CACHE = ("/limits", "/jobs/")
+_reads: OrderedDict[tuple, tuple[float, dict]] = OrderedDict()
+_reads_lock = threading.Lock()
+# Set for one request (a Refresh button) to read straight from Salesforce and refresh what's cached.
+fresh_reads: ContextVar[bool] = ContextVar("aquarient_fresh_reads", default=False)
+
+
+def forget_reads(org_id: str | None = None) -> None:
+    """Drop cached reads (of one connection, or all)."""
+    with _reads_lock:
+        for k in [k for k in _reads if org_id is None or k[0] == org_id]:
+            _reads.pop(k, None)
 
 
 def _sf_message(resp: httpx.Response) -> str:
@@ -52,6 +74,8 @@ class SalesforceClient:
         self._sleep = time.sleep  # swapped out in tests
         self._save = on_tokens_changed
         self._access = crypto.decrypt(conn.access_token_enc)
+        # Repeat reads within settings.sf_cache_seconds come from memory; health checks turn this off to read live.
+        self.cache_reads = settings.sf_cache_seconds > 0
 
     @property
     def base(self) -> str:
@@ -95,8 +119,29 @@ class SalesforceClient:
         raise AssertionError("unreachable")
 
     def get(self, path: str, headers: dict[str, str] | None = None) -> dict:
-        """GET a REST path (e.g. /services/data/v61.0/limits), refreshing the token once on 401."""
+        """GET a REST path (e.g. /services/data/v61.0/limits), refreshing the token once on 401. Repeat reads are
+        served from the short-lived cache (see sf_cache_seconds) unless this client or request reads live."""
         extra = headers or {}
+        # per connection (not per org address): another company's connection to the same org may see different records
+        key = (self.conn.org_id or str(self.conn.id), self.base, path, tuple(sorted(extra.items())))
+        cacheable = self.cache_reads and not any(n in path for n in _NEVER_CACHE)
+        if cacheable and not fresh_reads.get():
+            with _reads_lock:
+                hit = _reads.get(key)
+                if hit and time.monotonic() - hit[0] < self.settings.sf_cache_seconds:
+                    _reads.move_to_end(key)
+                    return hit[1]
+        self._too_big = False
+        body = self._get_live(path, extra)
+        if cacheable and not self._too_big:
+            with _reads_lock:
+                _reads[key] = (time.monotonic(), body)
+                _reads.move_to_end(key)
+                while len(_reads) > CACHE_MAX_ENTRIES:
+                    _reads.popitem(last=False)
+        return body
+
+    def _get_live(self, path: str, extra: dict[str, str]) -> dict:
         resp = self._send(path, extra)
         if resp.status_code == 401:
             self._refresh()
@@ -105,6 +150,8 @@ class SalesforceClient:
                 raise SalesforceAuthExpired("Your Salesforce session has expired. Please reconnect.", 401)
         if resp.status_code >= 400:
             raise SalesforceError(_sf_message(resp), resp.status_code)
+        if len(resp.content) > CACHE_MAX_BYTES:
+            self._too_big = True
         return resp.json()
 
     def request(self, method: str, path: str, json: dict | None = None, params: dict | None = None,

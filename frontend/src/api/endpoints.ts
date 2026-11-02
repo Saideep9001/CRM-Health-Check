@@ -101,7 +101,9 @@ export const connectionApi = {
   completeOAuth: (body: OAuthCallbackRequest) => http.post<SalesforceConnection>('/salesforce/oauth/callback', body),
   check: () => http.post<SalesforceConnection>('/salesforce/connection/check'),
   /** Live limits, users, record counts and response time of the active org. */
-  snapshot: (signal?: AbortSignal) => http.get<ConnectionSnapshot>('/salesforce/connection/snapshot', undefined, signal),
+  /** `fresh` (the Refresh button) reads straight from Salesforce instead of the server's short-lived read cache. */
+  snapshot: (signal?: AbortSignal, fresh = false) =>
+    http.get<ConnectionSnapshot>('/salesforce/connection/snapshot', fresh ? { fresh: 'true' } : undefined, signal),
   disconnect: () => http.delete<void>('/salesforce/connection'),
   /** Connected App keys entered on the Connect Salesforce page. */
   getApp: (signal?: AbortSignal) => http.get<SalesforceAppConfig>('/salesforce/app', undefined, signal),

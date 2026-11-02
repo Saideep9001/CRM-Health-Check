@@ -3,7 +3,7 @@ import { CalendarDays, Database, Gauge, Globe2, RefreshCw, Users } from 'lucide-
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { errorMessage } from '@/api/client';
-import { useConnectionSnapshot } from '@/api/queries';
+import { useConnectionSnapshot, useRefreshSnapshot } from '@/api/queries';
 import { cx, fmtDate, fmtNumber } from '@/lib/format';
 import type { ConnectionSnapshot } from '@/types';
 import { Button } from '../ui/Button';
@@ -150,6 +150,8 @@ function Records({ records }: { records: ConnectionSnapshot['records'] }) {
 /** Live facts about the connected org: users, records, response time, limits. Refreshes every 5 minutes. */
 export function OrgSnapshot({ orgId }: { orgId: string | null }) {
   const snap = useConnectionSnapshot(orgId, true);
+  const refresh = useRefreshSnapshot(orgId);
+  const busy = snap.isFetching || refresh.isPending;
   const now = useNow();
   const s = snap.data;
 
@@ -174,8 +176,8 @@ export function OrgSnapshot({ orgId }: { orgId: string | null }) {
             {s ? `Read from Salesforce ${ago(s.asOf, now)} · refreshes every 5 minutes` : 'Reading from Salesforce…'}
           </p>
         </div>
-        <Button size="sm" icon={<RefreshCw className={cx('h-3.5 w-3.5', snap.isFetching && 'animate-spin')} />} onClick={() => snap.refetch()} disabled={snap.isFetching}>
-          {snap.isFetching ? 'Refreshing…' : 'Refresh'}
+        <Button size="sm" icon={<RefreshCw className={cx('h-3.5 w-3.5', busy && 'animate-spin')} />} onClick={() => refresh.mutate()} disabled={busy}>
+          {busy ? 'Refreshing…' : 'Refresh'}
         </Button>
       </div>
 

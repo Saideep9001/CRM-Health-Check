@@ -140,6 +140,9 @@ def related(name: str, record_id: str, relationship: str, db: Session = Depends(
 def refresh():
     """Forget cached object lists and field descriptions (e.g. after adding a custom field)."""
     explorer.clear_cache()
+    from ..salesforce.client import forget_reads
+
+    forget_reads()  # the next reads go to Salesforce
 
 
 # ---------------------------------------------------------------- duplicate finder

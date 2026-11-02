@@ -52,6 +52,9 @@ def disconnect_org(db: Session, http: httpx.Client, org_id: str, *, actor: Princ
     counts = saved_counts(db, org_id)
     if row is not None:
         service.disconnect(db, http, org_id)
+    from .salesforce.client import forget_reads
+
+    forget_reads(org_id)  # nothing read from it stays in memory either
     _forget(db, {org_id})
     audit.record(db, audit.who(actor), "org.deleted", name,
                  f"Disconnected; deleted {counts['checks']:,} health checks and {counts['problems']:,} problems")
