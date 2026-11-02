@@ -26,10 +26,22 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(name)s: %(messa
 log = logging.getLogger("aquarient")
 
 
+def _purge_disconnected() -> None:
+    """Nothing about an org outlives its connection: delete results left by orgs that are no longer connected."""
+    from . import org_data
+    from .db import SessionLocal
+
+    with SessionLocal() as db:
+        n = org_data.purge_disconnected(db)
+    if n:
+        log.info("Deleted %d health checks of orgs that are no longer connected", n)
+
+
 @asynccontextmanager
 async def lifespan(api: FastAPI):
     init_db()
     ensure_default_admin(get_settings())
+    _purge_disconnected()
     s = get_settings()
     log.info("Salesforce app keys in .env: %s (they can also be entered on the Connect Salesforce page)", "yes" if s.salesforce_configured else "no")
     log.info("OAuth callback URL (add this to the Connected App): %s", s.oauth_callback_url)

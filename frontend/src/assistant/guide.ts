@@ -600,7 +600,7 @@ const FEATURES: { when: (string | RegExp)[]; text: string; suggestions?: string[
   },
   {
     when: ['disconnect', 'remove salesforce', 'remove the org', 'reconnect', 'expired', 'timed out', 'session expired'],
-    text: 'If Salesforce shows as expired, open [Connect Salesforce](/connection) and click **Reconnect** — your past checks are kept. Admins can disconnect an org from the connection page or the [Client Portfolio](/portfolio).',
+    text: 'If Salesforce shows as expired, open [Connect Salesforce](/connection) and click **Reconnect** — your past checks are kept. Admins can disconnect an org from the connection page or the [Client Portfolio](/portfolio). Disconnecting deletes everything saved about that org (its checks, problems, notes, schedule and alerts): nothing is kept once an org is disconnected. To only take an org off your own list, use **Remove from my list** instead.',
   },
 ];
 

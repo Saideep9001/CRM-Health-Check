@@ -70,10 +70,10 @@ def test_portfolio_switching_and_history_per_org(client, sf):
     assert [a["organizationName"] for a in client.get(f"{API}/assessments").json()["items"]] == ["Beta Corp"]
     assert client.post(f"{API}/salesforce/connections/00Dnope/activate").status_code == 404
 
-    # Removing the active org makes another saved org active; its past checks stay.
+    # Removing the active org makes another saved org active; its past checks are deleted with it.
     assert client.delete(f"{API}/salesforce/connections/00Dyy0000002").status_code == 204
     assert client.get(f"{API}/salesforce/connection").json()["orgId"] == ORG_A
-    assert "00Dyy0000002" in {o["orgId"] for o in client.get(f"{API}/portfolio").json()}
+    assert "00Dyy0000002" not in {o["orgId"] for o in client.get(f"{API}/portfolio").json()}  # disconnected: its results are gone too
 
 
 def test_reconnecting_keeps_one_row_per_org(client, sf):
@@ -186,10 +186,12 @@ def test_no_ai_settings_or_chat(client):
     assert client.post(f"{API}/assistant/chat", json={"messages": [{"role": "user", "content": "hi"}]}).status_code in (404, 405)
 
 
-def test_disconnect_keeps_or_deletes_results(client, sf):
+def test_disconnect_always_deletes_results(client, sf):
+    """Nothing about an org outlives its connection: disconnecting deletes its checks, and only its own."""
     from datetime import datetime, timezone
+    from app import org_data
     from app.db import SessionLocal
-    from app.models import AssessmentRow, AuditEventRow
+    from app.models import AssessmentRow, AuditEventRow, UserRow
     from .conftest import connect
 
     connect(client)
@@ -198,14 +200,23 @@ def test_disconnect_keeps_or_deletes_results(client, sf):
     _completed("00Dyy0000002", "Beta Corp", 55, datetime(2026, 9, 2, tzinfo=timezone.utc))
     assert client.get(f"{API}/salesforce/connections/00Dyy0000002/saved").json()["checks"] == 1
 
-    # Keep: the org goes, its results stay.
-    assert client.delete(f"{API}/salesforce/connections/00Dyy0000002").status_code == 204
+    # Disconnecting an org deletes its results (even when an older client asks to keep them); other orgs' stay.
+    assert client.delete(f"{API}/salesforce/connections/00Dyy0000002", params={"deleteResults": "false"}).status_code == 204
     with SessionLocal() as db:
-        assert db.query(AssessmentRow).filter(AssessmentRow.org_id == "00Dyy0000002").count() == 1
+        assert db.query(AssessmentRow).filter(AssessmentRow.org_id == "00Dyy0000002").count() == 0
+        assert db.query(AssessmentRow).filter(AssessmentRow.org_id == "00Dxx0000001").count() == 1
+        assert all("00Dyy0000002" not in (u.org_ids or []) and u.active_org_id != "00Dyy0000002" for u in db.query(UserRow))
+    assert client.get(f"{API}/salesforce/connections/00Dyy0000002/saved").json()["checks"] == 0
+    assert "00Dyy0000002" not in {o["orgId"] for o in client.get(f"{API}/portfolio").json()}
 
-    # Delete: the active org's results go too, other orgs' stay.
-    assert client.delete(f"{API}/salesforce/connection", params={"deleteResults": "true"}).status_code == 204
+    # Results left behind by an org that's no longer connected are removed at start-up.
+    _completed("00Dzz0000003", "Gone Ltd", 40, datetime(2026, 9, 3, tzinfo=timezone.utc))
     with SessionLocal() as db:
-        assert db.query(AssessmentRow).filter(AssessmentRow.org_id == "00Dxx0000001").count() == 0
-        assert db.query(AssessmentRow).filter(AssessmentRow.org_id == "00Dyy0000002").count() == 1
-        assert {e.action for e in db.query(AuditEventRow)} >= {"org.disconnected", "org.deleted"}
+        assert org_data.purge_disconnected(db) == 1
+        assert db.query(AssessmentRow).filter(AssessmentRow.org_id == "00Dzz0000003").count() == 0
+        assert db.query(AssessmentRow).filter(AssessmentRow.org_id == "00Dxx0000001").count() == 1  # connected: kept
+
+    assert client.delete(f"{API}/salesforce/connection").status_code == 204
+    with SessionLocal() as db:
+        assert db.query(AssessmentRow).count() == 0
+        assert {e.action for e in db.query(AuditEventRow)} >= {"org.deleted"}

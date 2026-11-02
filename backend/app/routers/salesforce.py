@@ -120,10 +120,10 @@ def check(db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep),
 @router.delete("/connection", status_code=204)
 def disconnect(delete_results: bool = Query(False, alias="deleteResults"), me_: Principal = Depends(require_admin),
                db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep)):
-    """Disconnect the active org. Its past checks are kept unless `deleteResults=true` (permanent)."""
+    """Disconnect the active org and permanently delete everything saved about it (`deleteResults` is ignored)."""
     row = service.get_row(db)
     if row is not None and row.org_id:
-        org_data.disconnect_org(db, http, row.org_id, delete_results=delete_results, actor=me_)
+        org_data.disconnect_org(db, http, row.org_id, actor=me_)
     elif row is not None:
         service.disconnect(db, http)
     return Response(status_code=204)

@@ -171,12 +171,12 @@ def saved(org_id: str, _: Principal = Depends(require_admin), db: Session = Depe
 @router.delete("/salesforce/connections/{org_id}", status_code=204)
 def remove(org_id: str, delete_results: bool = Query(False, alias="deleteResults"), me_: Principal = Depends(require_admin),
            db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep)):
-    """Disconnect a saved org. Its past checks are kept unless `deleteResults=true` (permanent).
-    An org that's already disconnected can still have its saved results deleted."""
+    """Disconnect a saved org and permanently delete everything saved about it (nothing outlives the connection).
+    `deleteResults` is accepted for older clients and ignored: results are always deleted."""
     ensure_org(org_id)
-    if service.row_for_org(db, org_id) is None and not (delete_results and org_data.saved_counts(db, org_id)["checks"]):
+    if service.row_for_org(db, org_id) is None and not org_data.saved_counts(db, org_id)["checks"]:
         raise HTTPException(404, "That org isn’t connected.")
-    org_data.disconnect_org(db, http, org_id, delete_results=delete_results, actor=me_)
+    org_data.disconnect_org(db, http, org_id, actor=me_)
     return Response(status_code=204)
 
 
