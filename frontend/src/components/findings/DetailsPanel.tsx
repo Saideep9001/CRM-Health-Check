@@ -397,18 +397,24 @@ function Records({
             to finish reading the records (usually under a minute), then tick that field.
           </p>
         )}
+        {/* Stuck Leads in Queue: the org's Lead queues beside the records, click one to see only its Leads */}
+        <div className={cx(byQueue && 'flex flex-col gap-3 lg:flex-row lg:items-start')}>
+        {byQueue && (
+          <QueueFilter assessmentId={measureAssessmentId!} areaId={area.id} label={indicator!.label} object={object!} value={queue} onChange={setQueue} />
+        )}
+        <div className="min-w-0 flex-1">
         <RecordsTable
           query={measureRecords}
-          title={only.length ? `${objectLabel(object!)} · ${only.map((f) => choices.find((c) => c.field === f)?.label ?? f).join(', ')}` : objectLabel(object!)}
+          title={
+            only.length
+              ? `${objectLabel(object!)} · ${only.map((f) => choices.find((c) => c.field === f)?.label ?? f).join(', ')}`
+              : queue
+                ? `${objectLabel(object!)} · ${queue}`
+                : objectLabel(object!)
+          }
           grouped={duplicates}
           csvUrl={indicatorApi.csvUrl(measureAssessmentId!, area.id, indicator!.label, object!, filters, only, period, queue)}
-          toolbar={
-            noActivity ? (
-              <ActivityPeriod key={`${object}-${indicator!.label}`} onChange={setPeriod} />
-            ) : byQueue ? (
-              <QueueFilter assessmentId={measureAssessmentId!} areaId={area.id} label={indicator!.label} object={object!} value={queue} onChange={setQueue} />
-            ) : undefined
-          }
+          toolbar={noActivity ? <ActivityPeriod key={`${object}-${indicator!.label}`} onChange={setPeriod} /> : undefined}
           filters={filters}
           onFiltersChange={setFilters}
           keyFields={missing && only.length ? only : keyFields}
@@ -418,6 +424,8 @@ function Records({
             load: (field, others, signal) => indicatorApi.values(measureAssessmentId!, area.id, indicator!.label, object!, field, others, signal, only, period, queue),
           }}
         />
+        </div>
+        </div>
         </>
         )}
         </div>

@@ -126,6 +126,8 @@ class FakeSalesOrg(FakeSalesforce):
             return [{"o": u, "c": 2} for u in USERS] + [{"o": "00G000000000001", "c": 4}]
         if q.startswith("SELECT Id, OwnerId, Owner.Name, CreatedDate"):
             return LEADS
+        if "FROM QueueSobject" in q:
+            return [{"Queue": {"Name": "Jane Doe"}}, {"Queue": {"Name": "Web Queue"}}]
         if "Username IN" in q:
             return [{"Id": "005000000000001"}] if "'ann@acme.test'" in q else []
         if "FROM Group WHERE Type = 'Queue'" in q:
@@ -242,8 +244,10 @@ def test_stuck_queue_leads_filter_by_queue(client, sf):
     base = f"{API}/assessments/{a['id']}/areas/area-3"
     params = {"label": "Stuck Leads in Queue", "object": "Lead"}
     queues = client.get(f"{base}/indicator-queues", params=params)
-    assert queues.status_code == 200 and queues.json() == [{"name": "Jane Doe", "count": 5}]
-    assert "GROUP BY Owner.Name" in sf.soql[-1] and "Owner.Type = 'Queue'" in sf.soql[-1]
+    # every Lead queue, the empty ones too (0), most stuck Leads first
+    assert queues.status_code == 200 and queues.json() == [{"name": "Jane Doe", "count": 5}, {"name": "Web Queue", "count": 0}]
+    assert any("GROUP BY Owner.Name" in q and "Owner.Type = 'Queue'" in q for q in sf.soql)
+    assert "FROM QueueSobject WHERE SobjectType = 'Lead'" in sf.soql[-1]
 
     for path in ("indicator-records", "indicator-records.csv"):
         assert client.get(f"{base}/{path}", params={**params, "queue": "Sales - Lead's"}).status_code == 200

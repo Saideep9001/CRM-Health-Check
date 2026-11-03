@@ -467,14 +467,30 @@ def indicator_queues(
     http: httpx.Client = Depends(http_dep),
     settings: Settings = Depends(settings_dep),
 ):
-    """The queues a measure's Leads sit in and how many in each (Stuck Leads in Queue), for its Queue filter."""
+    """Every queue that can own Leads, with how many of the measure's Leads sit in each (0 for the others), most first, for
+    its Queue filter (Stuck Leads in Queue)."""
     rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, object)
     if rec.get("extra") != "days_in_queue":
         raise HTTPException(422, "Only the Stuck Leads in Queue measure is listed by queue.")
     where = f" WHERE {rec['where']}" if rec.get("where") else ""
-    rows = _salesforce(db, http, settings, lambda sf: sf.query(
-        f"SELECT Owner.Name o, COUNT(Id) c FROM {rec['object']}{where} GROUP BY Owner.Name ORDER BY COUNT(Id) DESC LIMIT 200").get("records", []), org_id)
-    return [{"name": r["o"], "count": int(r.get("c") or 0)} for r in rows if r.get("o")]
+
+    def load(sf):
+        counts = {r["o"]: int(r.get("c") or 0) for r in sf.query(
+            f"SELECT Owner.Name o, COUNT(Id) c FROM {rec['object']}{where} GROUP BY Owner.Name ORDER BY COUNT(Id) DESC LIMIT 200").get("records", [])
+            if r.get("o")}
+        try:  # the org's Lead queues, so the empty ones show too
+            names = [(r.get("Queue") or {}).get("Name") for r in sf.query(
+                f"SELECT Queue.Name FROM QueueSobject WHERE SobjectType = '{rec['object']}' ORDER BY Queue.Name LIMIT 500").get("records", [])]
+        except SalesforceAuthExpired:
+            raise
+        except SalesforceError:
+            names = []
+        for n in names:
+            if n:
+                counts.setdefault(n, 0)
+        return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0].lower()))
+
+    return [{"name": n, "count": c} for n, c in _salesforce(db, http, settings, load, org_id)]
 
 
 @router.get("/assessments/{assessment_id}/areas/{area_id}/indicator-values", response_model=FieldValues)
