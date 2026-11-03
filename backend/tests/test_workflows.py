@@ -41,6 +41,14 @@ RULES_XML = """<?xml version="1.0" encoding="UTF-8"?>
   <ruleEntry><assignedTo>ann@acme.test</assignedTo><assignedToType>User</assignedToType>
    <criteriaItems><field>Lead.LeadSource</field><operation>equals</operation><value>Phone Inquiry,Phone</value></criteriaItems></ruleEntry>
  </assignmentRule></records></result></readMetadataResponse></soapenv:Body></soapenv:Envelope>"""
+CREATED_LEADS = [  # open Leads read when no rule is active: who owns each, and who created it
+    {"Id": "00Q000000000011", "OwnerId": "005000000000001", "CreatedById": "005000000000001", "Owner": {"Name": "Ann Lee"}},  # a rep's own
+    {"Id": "00Q000000000012", "OwnerId": "005000000000003", "CreatedById": "005000000000003", "Owner": {"Name": "Agentforce Agent User1"},
+     "CreatedBy": {"Name": "Agentforce Agent User1"}},  # still with a bot: needs assigning
+    {"Id": "00Q000000000013", "OwnerId": "00G000000000001", "CreatedById": "005000000000009", "Owner": {"Name": "Sales - Lead"}},  # moved to a queue
+    {"Id": "00Q000000000014", "OwnerId": "005000000000009", "CreatedById": "005000000000009", "Owner": {"Name": "Import User"},
+     "CreatedBy": {"Name": "Import User"}},  # still with an inactive import user: needs assigning
+]
 LEADS = [  # open Leads read for the rule check
     {"Id": "00Q000000000001", "OwnerId": "00G000000000001", "Owner": {"Name": "Web Queue"}, "LeadSource": "Web"},  # matches entry 1
     {"Id": "00Q000000000002", "OwnerId": "005000000000002", "Owner": {"Name": "Bob Ray"}, "LeadSource": "Partner"},  # no match: a gap
@@ -125,6 +133,8 @@ class FakeSalesOrg(FakeSalesforce):
             return [{"o": u, "c": 2} for u in USERS] + [{"o": "00G000000000001", "c": 4}]
         if q.startswith("SELECT Id, OwnerId, Owner.Name, CreatedDate"):
             return LEADS
+        if q.startswith("SELECT Id, OwnerId, Owner.Name, CreatedById"):
+            return CREATED_LEADS
         if "FROM QueueSobject" in q:  # Lead queues; "Jane Doe" isn't listed, so it's found by name
             return [{"QueueId": "00G000000000002AAA", "Queue": {"Name": "Web Queue"}}]
         if "FROM Group WHERE Type = 'Queue' AND Name IN" in q:
@@ -278,13 +288,24 @@ def test_rule_gap_leads_listed_with_their_reason(client, sf, monkeypatch):
     assert "Assignment Gap Reason" in csv.splitlines()[0] and "Matches none" in csv
 
 
-def test_no_active_rule_is_a_setting_problem(client, sf):
+def test_no_active_rule_flags_leads_left_with_system_users(client, sf, monkeypatch):
     sf.rules_xml = RULES_XML.replace("<active>true</active>", "<active>false</active>")
     connect(client)
-    _, res, findings = run(client)
+    a, res, findings = run(client)
     ind = {i["label"]: i for x in res["areas"] for i in x["indicators"]}
-    assert ind["Unassigned Leads – No Assignment Rule Match"]["score"] is None
-    assert any(f["name"] == "No active Lead Assignment Rule" and f["severity"] == "high" for f in findings)
+    gap = ind["Unassigned Leads – No Assignment Rule Match"]
+    assert gap["value"] == 2 and gap["score"] is not None  # the bot's and the import user's; Ann's own and the queue one are fine
+    left_out = dict(gap["criteria"])["Left out"]
+    assert left_out.startswith("1 moved by someone other than their creator (1 into a queue)") and "1 with the rep" in left_out
+    names = {f["name"]: f for f in findings}
+    assert names["No active Lead Assignment Rule"]["severity"] == "high"
+    assert "Agentforce Agent User1 (1)" in names["Leads that need manual assignment"]["description"]
+    page = {"object": "Lead", "columns": [{"name": "OwnerId", "label": "Owner ID", "type": "reference"}], "total_size": 1, "next_cursor": None,
+            "record_url_prefix": "https://acme.my.salesforce.com/", "records": [{"id": "00Q000000000014", "values": {}, "ref_names": {}}]}
+    monkeypatch.setattr(explorer, "records_matching", lambda *a, **k: page)
+    body = client.get(f"{API}/assessments/{a['id']}/areas/area-3/indicator-records",
+                      params={"label": "Unassigned Leads – No Assignment Rule Match", "object": "Lead"}).json()
+    assert body["records"][0]["values"]["AssignmentGapReason"].startswith("No active Lead Assignment Rule, so no rule could assign it; still with its creator Import User")
 
 
 def test_picked_fields_are_the_columns(client, sf):
