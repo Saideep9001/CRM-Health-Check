@@ -79,8 +79,8 @@ export const DIAGNOSTIC_AREAS: DiagnosticArea[] = [
     categoryId: 'workflows',
     name: 'Lead Queues & Assignment',
     description:
-      'Find Leads left in a queue without a sales user claiming them, and see which Leads are owned by people rather than a queue.',
-    indicators: ['Stuck Leads in Queue', 'Leads Not Assigned to Any Queue'],
+      'Find Leads left in a queue without a sales user claiming them, and Leads that match no Lead Assignment Rule entry and need assigning by hand.',
+    indicators: ['Stuck Leads in Queue', 'Unassigned Leads – No Assignment Rule Match'],
   },
   {
     id: 'area-4',

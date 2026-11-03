@@ -29,6 +29,25 @@ DESCRIBE = {
 }
 USERS = {"005000000000001": "Ann Lee", "005000000000002": "Bob Ray", "005000000000003": "Agentforce Agent User1"}
 
+# The active Lead Assignment Rule (Metadata API): Web leads go to the Web queue, phone enquiries to Ann.
+RULES_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns="http://soap.sforce.com/2006/04/metadata"
+ xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><soapenv:Body><readMetadataResponse><result>
+<records xsi:type="AssignmentRules"><fullName>Lead</fullName>
+ <assignmentRule><fullName>Old Rule</fullName><active>false</active><ruleEntry><assignedTo>bob@acme.test</assignedTo><assignedToType>User</assignedToType></ruleEntry></assignmentRule>
+ <assignmentRule><fullName>Standard</fullName><active>true</active>
+  <ruleEntry><assignedTo>Web_Queue</assignedTo><assignedToType>Queue</assignedToType>
+   <criteriaItems><field>Lead.LeadSource</field><operation>equals</operation><value>Web</value></criteriaItems></ruleEntry>
+  <ruleEntry><assignedTo>ann@acme.test</assignedTo><assignedToType>User</assignedToType>
+   <criteriaItems><field>Lead.LeadSource</field><operation>equals</operation><value>Phone Inquiry,Phone</value></criteriaItems></ruleEntry>
+ </assignmentRule></records></result></readMetadataResponse></soapenv:Body></soapenv:Envelope>"""
+LEADS = [  # open Leads read for the rule check
+    {"Id": "00Q000000000001", "OwnerId": "00G000000000001", "Owner": {"Name": "Web Queue"}, "LeadSource": "Web"},  # matches entry 1
+    {"Id": "00Q000000000002", "OwnerId": "005000000000002", "Owner": {"Name": "Bob Ray"}, "LeadSource": "Partner"},  # no match: a gap
+    {"Id": "00Q000000000003", "OwnerId": "005000000000001", "Owner": {"Name": "Ann Lee"}, "LeadSource": None},  # no match, but with a rule target
+    {"Id": "00Q000000000004", "OwnerId": "005000000000002", "Owner": {"Name": "Bob Ray"}, "LeadSource": "Event"},  # no match, reassigned since
+]
+
 # COUNT() answers: first rule whose substrings all appear in the query wins.
 COUNTS = [
     (("FROM Lead", "Owner.Type = 'Queue'", "LAST_N_DAYS:10"), 3),  # stuck in a queue 10+ days (Critical, with a 5-day setting)
@@ -58,11 +77,19 @@ COUNTS = [
 
 class FakeSalesOrg(FakeSalesforce):
     tooling_ok = True
+    rules_xml = RULES_XML
+
+    def __init__(self):
+        super().__init__()
+        self.soap: list[str] = []
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         url = urlparse(str(request.url))
         if request.headers.get("authorization", "").removeprefix("Bearer ") not in self.valid_access:
             return super().handler(request)
+        if url.path.startswith("/services/Soap/m/"):
+            self.soap.append(request.content.decode())
+            return httpx.Response(200, text=self.rules_xml, headers={"Content-Type": "text/xml"})
         if url.path.endswith("/sobjects"):
             return httpx.Response(200, json={"sobjects": [{"name": n, "label": n, "labelPlural": n + "s", "queryable": True, "retrieveable": True} for n in DESCRIBE]})
         if m := re.search(r"/sobjects/(\w+)/describe$", url.path):
@@ -97,6 +124,14 @@ class FakeSalesOrg(FakeSalesforce):
             if "FROM Event" in q:
                 return []
             return [{"o": u, "c": 2} for u in USERS] + [{"o": "00G000000000001", "c": 4}]
+        if q.startswith("SELECT Id, OwnerId, Owner.Name, CreatedDate"):
+            return LEADS
+        if "Username IN" in q:
+            return [{"Id": "005000000000001"}] if "'ann@acme.test'" in q else []
+        if "FROM Group WHERE Type = 'Queue'" in q:
+            return [{"Id": "00G000000000001"}] if "'Web_Queue'" in q else []
+        if "FROM LeadHistory WHERE Field = 'Owner' AND LeadId IN" in q:
+            return [{"LeadId": "00Q000000000004"}]
         if "FROM User" in q:
             return [{"Id": i, "Name": n, "UserType": "Standard", "Profile": {"Name": "Sales"}} for i, n in USERS.items()]
         if "Owner.Type = 'Queue' ORDER BY CreatedDate" in q:
@@ -143,9 +178,10 @@ def test_all_workflow_areas(client, sf):
     areas = {x["areaId"]: x for x in res["areas"]}
     assert all(areas[i]["status"] == "assessed" and areas[i]["score"] is not None for i in AREAS), areas
     ind = {i["label"]: i["value"] for x in res["areas"] for i in x["indicators"]}
-    assert set(ind) >= {"Stuck Leads in Queue", "Leads Not Assigned to Any Queue"}
-    assert ind["Stuck Leads in Queue"] == 8 and ind["Leads Not Assigned to Any Queue"] == 40
-    assert {i["label"] for i in areas["area-3"]["indicators"]} == {"Stuck Leads in Queue", "Leads Not Assigned to Any Queue"}
+    gap = "Unassigned Leads – No Assignment Rule Match"
+    assert {i["label"] for i in areas["area-3"]["indicators"]} == {"Stuck Leads in Queue", gap}
+    assert ind["Stuck Leads in Queue"] == 8 and ind[gap] == 1  # Bob's Partner lead; Ann's is with a rule target, the Event one was reassigned
+    assert "<met:type>AssignmentRules</met:type><fullNames>Lead</fullNames>" in sf.soap[0]
     assert ind["Missing Contact Roles"] == 15 and ind["Orphaned Contacts"] == 9 and ind["Missing Account relationships"] == 30
     assert ind["Account hierarchy issues"] == 2  # no parents on 100 accounts; no AccountContactRelation
     assert ind["Stuck Opportunities"] == 10 and ind["Missing Next Steps"] == 18 and ind["Missing Closed Lost reasons"] == 6
@@ -160,6 +196,7 @@ def test_all_workflow_areas(client, sf):
     assert "Placeholder or junk values" in names
     assert "Website leads have stopped arriving" in names and names["Website leads have stopped arriving"]["severity"] == "critical"
     assert "Bob Ray" in names["Reps with no logged activity"]["description"]
+    assert "Bob Ray (1)" in names["Leads that match no assignment rule entry"]["description"]
     stuck = names["Leads stuck in a queue"]
     assert stuck["severity"] == "critical" and "3 of them for more than 10 days" in stuck["description"] and "Jane Doe" in stuck["description"]
     assert "“Big Deal” (Proposal, 90,000)" in names["Stuck deals"]["description"]
@@ -197,3 +234,46 @@ def test_path_guidance_matched_by_stage_id(client, sf):
     assert ind["Sales stage guidance gaps"] == 1
     gap = next(f for f in findings if f["name"] == "Sales stages without guidance")
     assert "Proposal" in gap["description"] and "Prospecting" not in gap["description"]
+
+
+def test_stuck_queue_leads_filter_by_queue(client, sf):
+    connect(client)
+    a, res, _ = run(client)
+    base = f"{API}/assessments/{a['id']}/areas/area-3"
+    params = {"label": "Stuck Leads in Queue", "object": "Lead"}
+    queues = client.get(f"{base}/indicator-queues", params=params)
+    assert queues.status_code == 200 and queues.json() == [{"name": "Jane Doe", "count": 5}]
+    assert "GROUP BY Owner.Name" in sf.soql[-1] and "Owner.Type = 'Queue'" in sf.soql[-1]
+
+    for path in ("indicator-records", "indicator-records.csv"):
+        assert client.get(f"{base}/{path}", params={**params, "queue": "Sales - Lead's"}).status_code == 200
+        assert "AND Owner.Name = 'Sales - Lead\\'s'" in next(q for q in reversed(sf.soql) if "FROM Lead WHERE" in q and "LeadHistory WHERE Field = 'Owner' AND LeadId" not in q)
+    other = {"label": "Unassigned Leads – No Assignment Rule Match", "object": "Lead"}
+    assert client.get(f"{base}/indicator-records", params={**other, "queue": "Sales"}).status_code == 422
+    assert client.get(f"{base}/indicator-queues", params=other).status_code == 422
+
+
+def test_rule_gap_leads_listed_with_their_reason(client, sf, monkeypatch):
+    connect(client)
+    a, res, _ = run(client)
+    label = "Unassigned Leads – No Assignment Rule Match"
+    page = {"object": "Lead", "columns": [{"name": "Name", "label": "Full Name", "type": "string"}, {"name": "OwnerId", "label": "Owner ID", "type": "reference"},
+                                          {"name": "CreatedDate", "label": "Created Date", "type": "datetime"}],
+            "total_size": 1, "next_cursor": None, "record_url_prefix": "https://acme.my.salesforce.com/",
+            "records": [{"id": "00Q000000000002", "values": {"Name": "Pat"}, "ref_names": {"OwnerId": "Bob Ray"}}]}
+    monkeypatch.setattr(explorer, "records_matching", lambda *a, **k: page)
+    params = {"label": label, "object": "Lead"}
+    body = client.get(f"{API}/assessments/{a['id']}/areas/area-3/indicator-records", params=params).json()
+    assert [c["label"] for c in body["columns"]] == ["Full Name", "Current Owner", "Created Date", "Assignment Gap Reason"]
+    assert body["records"][0]["values"]["AssignmentGapReason"].startswith("Matches none of the rule’s 2 entries; left with Bob Ray")
+    csv = client.get(f"{API}/assessments/{a['id']}/areas/area-3/indicator-records.csv", params=params).text
+    assert "Assignment Gap Reason" in csv.splitlines()[0] and "Matches none" in csv
+
+
+def test_no_active_rule_is_a_setting_problem(client, sf):
+    sf.rules_xml = RULES_XML.replace("<active>true</active>", "<active>false</active>")
+    connect(client)
+    _, res, findings = run(client)
+    ind = {i["label"]: i for x in res["areas"] for i in x["indicators"]}
+    assert ind["Unassigned Leads – No Assignment Rule Match"]["score"] is None
+    assert any(f["name"] == "No active Lead Assignment Rule" and f["severity"] == "high" for f in findings)

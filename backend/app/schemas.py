@@ -135,6 +135,11 @@ class FieldValues(ApiModel):
     truncated: bool  # more than 2,000 different values
 
 
+class QueueCount(ApiModel):
+    name: str  # the queue's name
+    count: int  # Leads in it
+
+
 class DataChildRelationship(ApiModel):
     name: str  # Salesforce relationship name, e.g. "Contacts"
     object: str  # child object, e.g. "Contact"

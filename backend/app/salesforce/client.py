@@ -1,11 +1,13 @@
-"""Authenticated, read-only Salesforce client (REST, and Bulk API 2.0 for record queries) with automatic token refresh."""
+"""Authenticated, read-only Salesforce client (REST, Bulk API 2.0 for record queries, and Metadata API reads) with automatic token refresh."""
 import logging
+import re
 import threading
 import time
 from collections import OrderedDict
 from collections.abc import Callable
 from contextvars import ContextVar
 from urllib.parse import quote
+from xml.sax.saxutils import escape
 
 import httpx
 
@@ -210,6 +212,30 @@ class SalesforceClient:
         if bulk.CURSOR_RE.match(cursor):
             return bulk.next_page(self, cursor, page_size)
         return self.get(cursor, headers={"Sforce-Query-Options": f"batchSize={page_size}"})
+
+    def read_metadata(self, kind: str, names: list[str]) -> str:
+        """The Metadata API's readMetadata (read-only) for setup the REST API doesn't show, e.g. Lead Assignment Rule
+        entries. `kind` and `names` are fixed server-side strings. Returns the SOAP response XML."""
+        names_xml = "".join(f"<fullNames>{escape(n)}</fullNames>" for n in names)
+
+        def send() -> httpx.Response:
+            body = ('<?xml version="1.0" encoding="utf-8"?>'
+                    '<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:met="http://soap.sforce.com/2006/04/metadata">'
+                    f"<soapenv:Header><met:SessionHeader><met:sessionId>{escape(self._access)}</met:sessionId></met:SessionHeader></soapenv:Header>"
+                    f"<soapenv:Body><met:readMetadata><met:type>{escape(kind)}</met:type>{names_xml}</met:readMetadata></soapenv:Body>"
+                    "</soapenv:Envelope>")
+            return self.http.post(f"{self.base}/services/Soap/m/{self.settings.sf_api_version.lstrip('v')}", content=body.encode(),
+                                  headers={"Content-Type": "text/xml; charset=utf-8", "SOAPAction": '""',
+                                           "Authorization": f"Bearer {self._access}"})
+
+        resp = send()
+        if resp.status_code in (401, 500) and "INVALID_SESSION_ID" in resp.text:
+            self._refresh()
+            resp = send()
+        if resp.status_code >= 400:
+            fault = re.search(r"<faultstring>(.*?)</faultstring>", resp.text, re.S)
+            raise SalesforceError(fault.group(1).strip() if fault else f"Metadata API error {resp.status_code}", resp.status_code)
+        return resp.text
 
     def limits(self) -> dict:
         return self.get(f"/services/data/{self.settings.sf_api_version}/limits")
