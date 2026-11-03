@@ -286,3 +286,17 @@ def test_no_active_rule_is_a_setting_problem(client, sf):
     ind = {i["label"]: i for x in res["areas"] for i in x["indicators"]}
     assert ind["Unassigned Leads – No Assignment Rule Match"]["score"] is None
     assert any(f["name"] == "No active Lead Assignment Rule" and f["severity"] == "high" for f in findings)
+
+
+def test_picked_fields_are_the_columns(client, sf):
+    connect(client)
+    a, _, _ = run(client)
+    base = f"{API}/assessments/{a['id']}/areas/area-3"
+    params = {"label": "Stuck Leads in Queue", "object": "Lead", "fields": "Email,Company,NoSuchField"}
+    assert client.get(f"{base}/indicator-records", params=params).status_code == 200
+    q = next(q for q in reversed(sf.soql) if "FROM Lead WHERE" in q and "LeadHistory WHERE Field = 'Owner' AND LeadId" not in q)
+    assert q.startswith("SELECT Id, Email, Company FROM Lead")  # only the picked ones (unknown fields dropped), not topped up
+    assert client.get(f"{base}/indicator-records.csv", params=params).status_code == 200
+    too_many = ",".join(f"F{i}" for i in range(11))
+    assert client.get(f"{base}/indicator-records", params={**params, "fields": too_many}).status_code == 422
+    assert client.get(f"{base}/indicator-records", params={**params, "fields": "Email) FROM User --"}).status_code == 422

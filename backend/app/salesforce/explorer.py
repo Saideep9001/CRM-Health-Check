@@ -426,10 +426,12 @@ def field_values(sf: SalesforceClient, name: str, field: str, search: str | None
 
 
 def records_matching(sf: SalesforceClient, name: str, where: str | None, cursor: str | None = None, page_size: int = PAGE_SIZE,
-                     columns: list[str] | None = None, order: str | None = None, filters: list[dict] | None = None) -> dict:
+                     columns: list[str] | None = None, order: str | None = None, filters: list[dict] | None = None,
+                     exact: bool = False) -> dict:
     """Records of `name` matching a filter the health check engine built (never user input).
 
     `columns` (shown first) and `order` come from the engine too; any the object doesn't have are skipped.
+    `exact` = only those columns (fields the person picked), not topped up with the object's usual ones.
     `filters` are the person's column filters ({field, op, value}), checked and escaped like everywhere else.
     """
     desc = _describe(sf, name)
@@ -438,7 +440,9 @@ def records_matching(sf: SalesforceClient, name: str, where: str | None, cursor:
     order_field = (order or "").lstrip("-") or None
     by_account = order_field == "Account.Name" and "AccountId" in fields  # rows grouped by their Account (sorted_by AccountId)
     first = list(dict.fromkeys(c for c in (columns or []) if c in fields))  # each once: Salesforce refuses a field selected twice
-    cols = (first + [c for c in default_columns(desc) if c not in first])[: max(8, len(first) + 2)]
+    first = [c for c in first if fields[c]["type"] not in _NO_COLUMN] if exact else first
+    cols = (["Id", *[c for c in first if c != "Id"]] if exact
+            else (first + [c for c in default_columns(desc) if c not in first])[: max(8, len(first) + 2)])
     refs = _ref_paths(fields, cols)
     size = max(200, min(page_size, 2000))
     if cursor:

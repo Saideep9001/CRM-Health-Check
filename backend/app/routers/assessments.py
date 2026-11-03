@@ -359,12 +359,12 @@ def _with_extra(sf, rec: dict, columns: list[dict], records: list[dict]) -> list
 
 def _records_csv(db: Session, http: httpx.Client, settings: Settings, org_id: str | None, obj: str, where: str | None, title: str,
                  columns: list[str] | None = None, order: str | None = None, filters: list[dict] | None = None,
-                 notes: dict[str, dict[str, str]] | None = None, rec: dict | None = None) -> Response:
+                 notes: dict[str, dict[str, str]] | None = None, rec: dict | None = None, exact: bool = False) -> Response:
     def collect(sf):
-        page = explorer.records_matching(sf, obj, where, page_size=2000, columns=columns, order=order, filters=filters)
+        page = explorer.records_matching(sf, obj, where, page_size=2000, columns=columns, order=order, filters=filters, exact=exact)
         rows = list(page["records"])
         while page["next_cursor"] and len(rows) < CSV_LIMIT:
-            page = explorer.records_matching(sf, obj, where, page["next_cursor"], page_size=2000, columns=columns, order=order)
+            page = explorer.records_matching(sf, obj, where, page["next_cursor"], page_size=2000, columns=columns, order=order, exact=exact)
             rows += page["records"]
         rows = rows[:CSV_LIMIT]
         cols = _with_extra(sf, rec or {}, page["columns"], rows)
@@ -387,6 +387,20 @@ def _records_csv(db: Session, http: httpx.Client, settings: Settings, org_id: st
 
 
 # ---------------- the records behind one measure ("What we measure") ----------------
+
+MAX_PICKED = 10  # fields a person can pick to show as a records table's columns
+
+
+def _picked(fields: str | None, rec: dict | None = None) -> list[str] | None:
+    """Fields picked to show as the columns (checked; the object's describe drops any it doesn't have)."""
+    names = [f.strip() for f in (fields or "").split(",") if f.strip()]
+    if not names:
+        return None
+    if len(names) > MAX_PICKED or any(not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", f) for f in names):
+        raise HTTPException(422, f"Pick up to {MAX_PICKED} fields.")
+    if (rec or {}).get("extra") == "days_in_queue":  # Days in Queue counts from the Created Date when the owner never changed
+        names.append("CreatedDate")
+    return list(dict.fromkeys(names))
 
 def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str, obj: str | None,
                        only: str | None = None, period: str | None = None, queue: str | None = None) -> tuple[dict, str, str]:
@@ -444,14 +458,17 @@ def indicator_records(
     only: str | None = Query(None, max_length=1200, description="Comma-separated fields: only records with a problem in one of them"),
     period: str | None = Query(None, max_length=40, description='No Activity only: "90", "180" or "range:YYYY-MM-DD:YYYY-MM-DD"'),
     queue: str | None = Query(None, max_length=80, description="Stuck Leads in Queue only: the queue's id"),
+    fields: str | None = Query(None, max_length=1200, description="Comma-separated fields to show as the columns, instead of the measure's"),
     db: Session = Depends(get_db),
     http: httpx.Client = Depends(http_dep),
     settings: Settings = Depends(settings_dep),
 ):
     """The records a measure counted, live from Salesforce (200 per page)."""
     rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, object, only, period, queue)
+    picked = _picked(fields, rec)
     page = _salesforce(db, http, settings, lambda sf: explorer.records_matching(
-        sf, rec["object"], rec.get("where"), cursor, columns=rec.get("columns"), order=rec.get("order"), filters=_filters(filters)), org_id)
+        sf, rec["object"], rec.get("where"), cursor, columns=picked or rec.get("columns"), order=rec.get("order"), filters=_filters(filters),
+        exact=bool(picked)), org_id)
     if rec.get("extra"):
         page["columns"] = _salesforce(db, http, settings, lambda sf: _with_extra(sf, rec, page["columns"], page["records"]), org_id)
     notes = rec.get("notes") or {}  # why each value was flagged, saved by the check (e.g. Data Standardization)
@@ -530,13 +547,15 @@ def indicator_records_csv(
     only: str | None = Query(None, max_length=1200),
     period: str | None = Query(None, max_length=40, description='No Activity only: "90", "180" or "range:YYYY-MM-DD:YYYY-MM-DD"'),
     queue: str | None = Query(None, max_length=80, description="Stuck Leads in Queue only: the queue's id"),
+    fields: str | None = Query(None, max_length=1200, description="Comma-separated fields to show as the columns, instead of the measure's"),
     db: Session = Depends(get_db),
     http: httpx.Client = Depends(http_dep),
     settings: Settings = Depends(settings_dep),
 ):
     rec, org_id, title = _indicator_records(db, assessment_id, area_id, label, object, only, period, queue)
-    return _records_csv(db, http, settings, org_id, rec["object"], rec.get("where"), title, rec.get("columns"), rec.get("order"), _filters(filters),
-                        notes=rec.get("notes"), rec=rec)
+    picked = _picked(fields, rec)
+    return _records_csv(db, http, settings, org_id, rec["object"], rec.get("where"), title, picked or rec.get("columns"), rec.get("order"),
+                        _filters(filters), notes=rec.get("notes"), rec=rec, exact=bool(picked))
 
 
 @router.get("/findings/{finding_id}", response_model=Finding)

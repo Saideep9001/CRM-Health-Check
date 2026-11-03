@@ -37,6 +37,7 @@ import { ChangeBadge } from './AffectedRecords';
 import { FixPlanPanel } from './FixPlanPanel';
 import { ActivityPeriod } from './ActivityPeriod';
 import { QueueFilter, type PickedQueue } from './QueueFilter';
+import { FieldPicker } from './FieldPicker';
 import { RecordsTable } from './RecordsTable';
 import { DuplicateResults } from './DuplicateFinder';
 import { ALL } from './FieldCheck';
@@ -332,11 +333,16 @@ function Records({
   // Stuck Leads in Queue: only the Leads in one queue (undefined = every queue).
   const byQueue = indicator?.label === 'Stuck Leads in Queue';
   const [queue, setQueue] = useState<PickedQueue | undefined>();
+  // Area 3: the fields picked to show as the table's columns (null = the measure's own).
+  const pickFields = area.id === 'area-3';
+  const [shownCols, setShownCols] = useState<string[] | null>(null);
   useEffect(() => {
     setPeriod(undefined);
     setQueue(undefined);
+    setShownCols(null);
   }, [object, indicator?.label]);
-  const measureRecords = useIndicatorRecords(useMeasure ? measureAssessmentId : null, area.id, indicator?.label ?? '', object, filters, only, period, queue?.id);
+  const cols = shownCols ?? undefined;
+  const measureRecords = useIndicatorRecords(useMeasure ? measureAssessmentId : null, area.id, indicator?.label ?? '', object, filters, only, period, queue?.id, cols);
   const missing = /^missing/i.test(indicator?.label ?? '');
   // The flow follows what the person picked: the fields ticked in Check fields, and the table's column filters (its count).
   const standardization = /^data standardi/i.test(indicator?.label ?? '');
@@ -397,8 +403,17 @@ function Records({
             to finish reading the records (usually under a minute), then tick that field.
           </p>
         )}
-        {/* Stuck Leads in Queue: the org's Lead queues side by side above the records, click one to see only its Leads */}
-        <div className={cx(byQueue && 'space-y-3')}>
+        {/* Area 3: the fields shown, and (Stuck Leads in Queue) the org's Lead queues side by side, above the records */}
+        <div className={cx((byQueue || pickFields) && 'space-y-3')}>
+        {pickFields && (
+          <FieldPicker
+            key={`${object}-${indicator!.label}`}
+            object={object!}
+            current={(measureRecords.data?.pages[0]?.columns ?? []).map((c) => c.name)}
+            picked={shownCols}
+            onChange={setShownCols}
+          />
+        )}
         {byQueue && (
           <QueueFilter assessmentId={measureAssessmentId!} areaId={area.id} label={indicator!.label} object={object!} value={queue} onChange={setQueue} />
         )}
@@ -413,7 +428,7 @@ function Records({
                 : objectLabel(object!)
           }
           grouped={duplicates}
-          csvUrl={indicatorApi.csvUrl(measureAssessmentId!, area.id, indicator!.label, object!, filters, only, period, queue?.id)}
+          csvUrl={indicatorApi.csvUrl(measureAssessmentId!, area.id, indicator!.label, object!, filters, only, period, queue?.id, cols)}
           toolbar={noActivity ? <ActivityPeriod key={`${object}-${indicator!.label}`} onChange={setPeriod} /> : undefined}
           filters={filters}
           onFiltersChange={setFilters}

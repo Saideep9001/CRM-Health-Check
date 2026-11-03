@@ -212,10 +212,10 @@ const filterParam = (filters: DataFilter[]) =>
 export const indicatorApi = {
   /** `only` = fields: just the records with a problem in one of them (a flagged value, or an empty key field). */
   /** `period` (No Activity only): "90", "180" or "range:YYYY-MM-DD:YYYY-MM-DD" instead of the health check's 6 months. */
-  records: (assessmentId: string, areaId: string, label: string, object: string, cursor: string | null, signal?: AbortSignal, filters: DataFilter[] = [], only: string[] = [], period?: string, queue?: string) =>
+  records: (assessmentId: string, areaId: string, label: string, object: string, cursor: string | null, signal?: AbortSignal, filters: DataFilter[] = [], only: string[] = [], period?: string, queue?: string, fields?: string[]) =>
     http.get<FindingRecordsPage>(
       `/assessments/${encodeURIComponent(assessmentId)}/areas/${encodeURIComponent(areaId)}/indicator-records`,
-      { label, object, cursor: cursor ?? undefined, filters: filterParam(filters), only: only.length ? only.join(',') : undefined, period, queue },
+      { label, object, cursor: cursor ?? undefined, filters: filterParam(filters), only: only.length ? only.join(',') : undefined, period, queue, fields: fields?.length ? fields.join(',') : undefined },
       signal,
     ),
   /** Stuck Leads in Queue: the queues its Leads sit in, with how many in each (for the Queue filter). */
@@ -232,8 +232,8 @@ export const indicatorApi = {
       { label, object, field, filters: filterParam(filters), only: only.length ? only.join(',') : undefined, period, queue },
       signal,
     ),
-  csvUrl: (assessmentId: string, areaId: string, label: string, object: string, filters: DataFilter[] = [], only: string[] = [], period?: string, queue?: string) =>
-    `${API_BASE_URL}/assessments/${encodeURIComponent(assessmentId)}/areas/${encodeURIComponent(areaId)}/indicator-records.csv?${new URLSearchParams({ label, object, ...(filters.length ? { filters: filterParam(filters)! } : {}), ...(only.length ? { only: only.join(',') } : {}), ...(period ? { period } : {}), ...(queue ? { queue } : {}) })}`,
+  csvUrl: (assessmentId: string, areaId: string, label: string, object: string, filters: DataFilter[] = [], only: string[] = [], period?: string, queue?: string, fields?: string[]) =>
+    `${API_BASE_URL}/assessments/${encodeURIComponent(assessmentId)}/areas/${encodeURIComponent(areaId)}/indicator-records.csv?${new URLSearchParams({ label, object, ...(filters.length ? { filters: filterParam(filters)! } : {}), ...(only.length ? { only: only.join(',') } : {}), ...(period ? { period } : {}), ...(queue ? { queue } : {}), ...(fields?.length ? { fields: fields.join(',') } : {}) })}`,
 };
 
 /** Team management (admins only). */

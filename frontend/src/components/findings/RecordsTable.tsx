@@ -76,7 +76,7 @@ export function RecordsTable({
     ? [...loaded].sort((a, b) => matchKey(a.values[groupCol], groupCol).localeCompare(matchKey(b.values[groupCol], groupCol)))
     : loaded;
   // The server lists the columns that explain the result first (e.g. Name, Website for duplicates).
-  const cols = first ? first.columns.filter((c) => c.type !== 'id' && !(byAccount && c.name === 'AccountId')).slice(0, 8) : []; // the Account heads its block
+  const cols = first ? first.columns.filter((c) => c.type !== 'id' && !(byAccount && c.name === 'AccountId')).slice(0, 12) : []; // the Account heads its block
   const asField = (c: { name: string; label: string; type: string }) => c as unknown as DataField;
   // Why each flagged value was flagged, from the check (record id → field → reason), across the loaded pages.
   const notes: Record<string, Record<string, string>> = Object.assign({}, ...pages.map((p) => p.cellNotes ?? {}));
