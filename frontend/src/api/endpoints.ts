@@ -211,21 +211,22 @@ const filterParam = (filters: DataFilter[]) =>
 /** The records one measure ("What we measure") counted, live from Salesforce. */
 export const indicatorApi = {
   /** `only` = fields: just the records with a problem in one of them (a flagged value, or an empty key field). */
-  records: (assessmentId: string, areaId: string, label: string, object: string, cursor: string | null, signal?: AbortSignal, filters: DataFilter[] = [], only: string[] = []) =>
+  /** `period` (No Activity only): "90", "180" or "since:YYYY-MM-DD" instead of the health check's 6 months. */
+  records: (assessmentId: string, areaId: string, label: string, object: string, cursor: string | null, signal?: AbortSignal, filters: DataFilter[] = [], only: string[] = [], period?: string) =>
     http.get<FindingRecordsPage>(
       `/assessments/${encodeURIComponent(assessmentId)}/areas/${encodeURIComponent(areaId)}/indicator-records`,
-      { label, object, cursor: cursor ?? undefined, filters: filterParam(filters), only: only.length ? only.join(',') : undefined },
+      { label, object, cursor: cursor ?? undefined, filters: filterParam(filters), only: only.length ? only.join(',') : undefined, period },
       signal,
     ),
   /** The values of one column among a measure's records (for its filter drop-down). */
-  values: (assessmentId: string, areaId: string, label: string, object: string, field: string, filters: DataFilter[], signal?: AbortSignal, only: string[] = []) =>
+  values: (assessmentId: string, areaId: string, label: string, object: string, field: string, filters: DataFilter[], signal?: AbortSignal, only: string[] = [], period?: string) =>
     http.get<FieldValues>(
       `/assessments/${encodeURIComponent(assessmentId)}/areas/${encodeURIComponent(areaId)}/indicator-values`,
-      { label, object, field, filters: filterParam(filters), only: only.length ? only.join(',') : undefined },
+      { label, object, field, filters: filterParam(filters), only: only.length ? only.join(',') : undefined, period },
       signal,
     ),
-  csvUrl: (assessmentId: string, areaId: string, label: string, object: string, filters: DataFilter[] = [], only: string[] = []) =>
-    `${API_BASE_URL}/assessments/${encodeURIComponent(assessmentId)}/areas/${encodeURIComponent(areaId)}/indicator-records.csv?${new URLSearchParams({ label, object, ...(filters.length ? { filters: filterParam(filters)! } : {}), ...(only.length ? { only: only.join(',') } : {}) })}`,
+  csvUrl: (assessmentId: string, areaId: string, label: string, object: string, filters: DataFilter[] = [], only: string[] = [], period?: string) =>
+    `${API_BASE_URL}/assessments/${encodeURIComponent(assessmentId)}/areas/${encodeURIComponent(areaId)}/indicator-records.csv?${new URLSearchParams({ label, object, ...(filters.length ? { filters: filterParam(filters)! } : {}), ...(only.length ? { only: only.join(',') } : {}), ...(period ? { period } : {}) })}`,
 };
 
 /** Team management (admins only). */

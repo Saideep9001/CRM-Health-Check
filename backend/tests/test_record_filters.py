@@ -104,3 +104,25 @@ def test_a_measures_records_narrow_to_chosen_fields(client, sf):
     assert client.get(f"{base}/indicator-records.csv", params=params).status_code == 200
     bad = {**params, "only": "Phone) FROM User --"}
     assert client.get(f"{base}/indicator-records", params=bad).status_code == 422
+
+
+def test_no_activity_records_take_another_period(client, sf):
+    from datetime import date, timedelta
+
+    connect(client)
+    aid = start(client, areas=("area-1",), objects=["Account"]).json()["id"]
+    base = f"{API}/assessments/{aid}/areas/area-1"
+    params = {"label": "No Activity in 6 Months (Accounts)", "object": "Account"}
+    assert client.get(f"{base}/indicator-records", params={**params, "period": "90"}).status_code == 200
+    q = sf.soql[-1]
+    assert "LastModifiedDate < LAST_N_DAYS:90" in q and "LAST_N_DAYS:180" not in q  # this fake Account has no activity date
+
+    assert client.get(f"{base}/indicator-values", params={**params, "field": "Industry", "period": "since:2024-01-15"}).status_code == 200
+    assert "LastModifiedDate < 2024-01-15T00:00:00Z" in sf.soql[-1]
+    assert client.get(f"{base}/indicator-records.csv", params={**params, "period": "since:2024-01-15"}).status_code == 200
+
+    later = (date.today() + timedelta(days=3)).isoformat()
+    for bad in ("100", "since:2024-13-01", f"since:{later}", "since:2024-01-01 OR Id != null"):
+        assert client.get(f"{base}/indicator-records", params={**params, "period": bad}).status_code == 422, bad
+    other = {"label": "Missing Key Fields (Accounts)", "object": "Account", "period": "90"}
+    assert client.get(f"{base}/indicator-records", params=other).status_code == 422

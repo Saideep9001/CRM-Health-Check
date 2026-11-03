@@ -9,10 +9,10 @@ from sqlalchemy.orm import Session
 from ..config import Settings
 from ..db import get_db
 from ..deps import http_dep, settings_dep
-from ..salesforce import duplicates, empty_fields, explorer, field_check, finder, service
+from ..salesforce import activity, duplicates, empty_fields, explorer, field_check, finder, service
 from ..salesforce.client import SalesforceClient
 from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
-from ..schemas import ApiModel, FieldCheckRequest, FieldCheckResult, FieldValues, DataAnswer, DataAskRequest, DuplicateOptions, DuplicateRequest, DuplicateResult, EmptyField, EmptyRequest, EmptyResult, DataObject, DataObjectDetail, DataRecord, DataRecordPage, DataRelatedPage, DataSearchGroup
+from ..schemas import ApiModel, FindingRecordsPage, FieldCheckRequest, FieldCheckResult, FieldValues, DataAnswer, DataAskRequest, DuplicateOptions, DuplicateRequest, DuplicateResult, EmptyField, EmptyRequest, EmptyResult, DataObject, DataObjectDetail, DataRecord, DataRecordPage, DataRelatedPage, DataSearchGroup
 
 router = APIRouter(prefix="/data", tags=["data"])
 
@@ -175,6 +175,57 @@ def find_duplicates(body: DuplicateRequest, db: Session = Depends(get_db), http:
 def check_fields(body: FieldCheckRequest, db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep), settings: Settings = Depends(settings_dep)):
     """For each chosen field: empty values, duplicates and inconsistent spellings; plus duplicates on all of them (read-only)."""
     return _run(db, http, settings, lambda sf: field_check.check_fields(sf, body.object, body.fields))
+
+
+# ---------------------------------------------------------------- no activity, with a chosen period
+
+class InactivityBucket(ApiModel):
+    label: str
+    count: int
+
+
+class InactivityResult(ApiModel):
+    object: str
+    days: int
+    basis: str
+    field: str  # the date it's based on, e.g. LastActivityDate
+    field_label: str
+    total: int  # records checked (open Leads for Leads)
+    inactive: int  # no activity in `days` days, created before that
+    buckets: list[InactivityBucket]  # how long ago the last activity was
+
+
+Basis = Literal["activity", "edit"]
+
+
+@router.get("/inactive", response_model=InactivityResult)
+def inactive(object: str = Query(..., max_length=80), days: int = Query(180), basis: Basis = "activity",
+             db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep), settings: Settings = Depends(settings_dep)):
+    """How many records have had no activity (or no edit) for 3, 6, 12 or 24 months, and how long since their last one."""
+    return _run(db, http, settings, lambda sf: activity.inactivity(sf, object, days, basis))
+
+
+@router.get("/inactive/records", response_model=FindingRecordsPage)
+def inactive_records(object: str = Query(..., max_length=80), days: int = Query(180), basis: Basis = "activity",
+                     cursor: str | None = Query(None, max_length=200), filters: str | None = Query(None, max_length=12000),
+                     db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep), settings: Settings = Depends(settings_dep)):
+    """Those records, 200 per page, oldest activity first (column filters on top)."""
+    def load(sf: SalesforceClient):
+        where, f = activity.inactive_where(sf, object, days, basis)
+        return explorer.records_matching(sf, object, where, cursor, columns=[f, "OwnerId", "CreatedDate"], order=f,
+                                         filters=finder.parse_filters(filters))
+    return _run(db, http, settings, load)
+
+
+@router.get("/inactive/values", response_model=FieldValues)
+def inactive_values(object: str = Query(..., max_length=80), field: str = Query(..., max_length=120), days: int = Query(180),
+                    basis: Basis = "activity", filters: str | None = Query(None, max_length=12000),
+                    db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep), settings: Settings = Depends(settings_dep)):
+    """The values of one column among those records, for its filter drop-down."""
+    def load(sf: SalesforceClient):
+        where, _ = activity.inactive_where(sf, object, days, basis)
+        return explorer.field_values(sf, object, field, None, finder.parse_filters(filters), base_where=where)
+    return _run(db, http, settings, load)
 
 
 # ---------------------------------------------------------------- empty fields

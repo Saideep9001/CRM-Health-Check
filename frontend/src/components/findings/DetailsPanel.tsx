@@ -35,6 +35,7 @@ import { Drawer } from '../ui/Overlay';
 import { InlineError } from '../ui/States';
 import { ChangeBadge } from './AffectedRecords';
 import { FixPlanPanel } from './FixPlanPanel';
+import { ActivityPeriod } from './ActivityPeriod';
 import { RecordsTable } from './RecordsTable';
 import { DuplicateResults } from './DuplicateFinder';
 import { ALL } from './FieldCheck';
@@ -324,7 +325,11 @@ function Records({
   // from Check fields, in this one table.
   const dupPicked = /duplicate/i.test(indicator?.label ?? finding?.name ?? '') && shownFields != null && checkData ? shownFields : null;
   const dupResult = dupPicked?.length ? mergeDuplicates(checkData!, dupPicked) : null;
-  const measureRecords = useIndicatorRecords(useMeasure ? measureAssessmentId : null, area.id, indicator?.label ?? '', object, filters, only);
+  // No Activity: the period the table covers (undefined = the health check's 6 months; "90"; "since:YYYY-MM-DD").
+  const noActivity = /^no activity/i.test(indicator?.label ?? '');
+  const [period, setPeriod] = useState<string | undefined>();
+  useEffect(() => setPeriod(undefined), [object, indicator?.label]);
+  const measureRecords = useIndicatorRecords(useMeasure ? measureAssessmentId : null, area.id, indicator?.label ?? '', object, filters, only, period);
   const missing = /^missing/i.test(indicator?.label ?? '');
   // The flow follows what the person picked: the fields ticked in Check fields, and the table's column filters (its count).
   const standardization = /^data standardi/i.test(indicator?.label ?? '');
@@ -389,14 +394,15 @@ function Records({
           query={measureRecords}
           title={only.length ? `${objectLabel(object!)} · ${only.map((f) => choices.find((c) => c.field === f)?.label ?? f).join(', ')}` : objectLabel(object!)}
           grouped={duplicates}
-          csvUrl={indicatorApi.csvUrl(measureAssessmentId!, area.id, indicator!.label, object!, filters, only)}
+          csvUrl={indicatorApi.csvUrl(measureAssessmentId!, area.id, indicator!.label, object!, filters, only, period)}
+          toolbar={noActivity ? <ActivityPeriod key={`${object}-${indicator!.label}`} onChange={setPeriod} /> : undefined}
           filters={filters}
           onFiltersChange={setFilters}
           keyFields={missing && only.length ? only : keyFields}
           markOnly={only}
           valuesSource={{
-            key: ['indicator', measureAssessmentId, area.id, indicator!.label, object, only],
-            load: (field, others, signal) => indicatorApi.values(measureAssessmentId!, area.id, indicator!.label, object!, field, others, signal, only),
+            key: ['indicator', measureAssessmentId, area.id, indicator!.label, object, only, period],
+            load: (field, others, signal) => indicatorApi.values(measureAssessmentId!, area.id, indicator!.label, object!, field, others, signal, only, period),
           }}
         />
         </>

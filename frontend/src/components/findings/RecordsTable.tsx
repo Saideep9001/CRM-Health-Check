@@ -1,6 +1,6 @@
 import type { InfiniteData, UseInfiniteQueryResult } from '@tanstack/react-query';
 import { AlertTriangle, Download, ExternalLink, Search, X } from 'lucide-react';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useDataObject } from '@/api/queries';
 import { ColumnFilter, columnFilter, type ValuesSource } from '@/components/data/ColumnFilter';
 import { formatValue } from '@/components/data/format';
@@ -33,6 +33,7 @@ export function RecordsTable({
   valuesSource,
   keyFields,
   markOnly,
+  toolbar,
 }: {
   query: UseInfiniteQueryResult<InfiniteData<FindingRecordsPage, unknown>, Error>;
   csvUrl?: string;
@@ -48,6 +49,8 @@ export function RecordsTable({
   keyFields?: string[];
   /** When fields are picked in the page's selector: only their cells are marked. */
   markOnly?: string[];
+  /** Extra controls in the header, after the count (e.g. the No Activity period). */
+  toolbar?: ReactNode;
 }) {
   const ex = useExpand();
   const pages = query.data?.pages ?? [];
@@ -136,6 +139,7 @@ export function RecordsTable({
             {filters.length ? ' match' : ''}
           </span>
         )}
+        {toolbar}
         {csvUrl && (
           <a href={csvUrl} download className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-brand hover:underline" title="Download these records as a spreadsheet (up to 10,000)">
             <Download className="h-3.5 w-3.5" /> Download CSV
