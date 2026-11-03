@@ -6,7 +6,7 @@ import { cx, fmtNumber } from '@/lib/format';
 export type PickedQueue = { id: string; name: string };
 
 /** Stuck Leads in Queue: every Lead queue in the org side by side above the records, with how many stuck Leads sit in
- *  each. Clicking one shows only its Leads; clicking it again shows every queue's. */
+ *  each. Clicking one shows only its Leads; "All" (or clicking it again) shows every queue's. */
 export function QueueFilter({
   assessmentId,
   areaId,
@@ -40,7 +40,21 @@ export function QueueFilter({
       ) : !list.length ? (
         <span className="text-xs text-ink-subtle">No Lead queues found.</span>
       ) : (
-        list.map((q) => {
+        [
+          <button
+            key="all"
+            type="button"
+            aria-pressed={!value}
+            onClick={() => onChange(undefined)}
+            title="Show every queue’s Leads"
+            className={cx(
+              'inline-flex items-center rounded-full border px-2.5 py-1 text-xs transition',
+              !value ? 'border-brand bg-brand-soft font-semibold text-brand-ink' : 'border-line hover:border-brand/40 hover:text-brand',
+            )}
+          >
+            All
+          </button>,
+          ...list.map((q) => {
           const on = value?.id === q.id;
           return (
             <button
@@ -60,7 +74,8 @@ export function QueueFilter({
               {on && <X className="h-3 w-3" aria-hidden="true" />}
             </button>
           );
-        })
+          }),
+        ]
       )}
     </div>
   );
