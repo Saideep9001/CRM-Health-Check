@@ -162,10 +162,11 @@ function ColumnFilter({ label, values, kept, onChange }: { label: string; values
 }
 
 /** How records count as duplicates in the table: identical values, or the fuzzy rules the check used. */
-type MatchMode = 'exact' | 'relevant';
-const MATCH_MODES: { value: MatchMode; label: string; help: string }[] = [
-  { value: 'exact', label: 'Exact match', help: 'Deterministic: identical values on the matched fields (ignoring upper/lower case and extra spaces), e.g. “Aquarient Tech” = “aquarient tech”.' },
-  { value: 'relevant', label: 'Relevant match', help: 'Fuzzy / probabilistic: normalised values, so legal suffixes (Inc, Ltd, LLC), punctuation, abbreviations and small typos still match, e.g. “Aquarient Technologies” = “Aquarient Tech” = “Aquarient Ltd”.' },
+type MatchMode = 'all' | 'exact' | 'relevant';
+const MATCH_MODES: { value: MatchMode; label: string; option: string; help: string }[] = [
+  { value: 'all', label: 'All', option: 'All matches', help: 'Every duplicate group: exact and relevant matches together.' },
+  { value: 'exact', option: 'Exact match (deterministic)', label: 'Exact match', help: 'Deterministic: identical values on the matched fields (ignoring upper/lower case and extra spaces), e.g. “Aquarient Tech” = “aquarient tech”.' },
+  { value: 'relevant', option: 'Relevant match (fuzzy)', label: 'Relevant match', help: 'Fuzzy / probabilistic: normalised values, so legal suffixes (Inc, Ltd, LLC), punctuation, abbreviations and small typos still match, e.g. “Aquarient Technologies” = “Aquarient Tech” = “Aquarient Ltd”.' },
 ];
 /** A value compared exactly: same text apart from upper/lower case and spacing. */
 const exactKey = (v: unknown) => (show(v) === '—' ? '' : String(typeof v === 'object' ? show(v) : v).trim().toLowerCase().replace(/\s+/g, ' '));
@@ -174,7 +175,7 @@ const exactKey = (v: unknown) => (show(v) === '—' ? '' : String(typeof v === '
  *  shared values are flagged in red (the fields ticked in Check fields); null flags every compared field. */
 export function DuplicateResults({ result, fileName, flag = null }: { result: DuplicateResult; fileName: string; flag?: string[] | null }) {
   const [query, setQuery] = useState('');
-  const [mode, setMode] = useState<MatchMode>('relevant');
+  const [mode, setMode] = useState<MatchMode>('all');
   const [colFilters, setColFilters] = useState<Record<string, Set<string>>>({});
   const ex = useExpand();
   const term = query.trim().toLowerCase();
@@ -194,7 +195,10 @@ export function DuplicateResults({ result, fileName, flag = null }: { result: Du
   const groups = result.groups
     .map((g, i) => {
       const twins = exactTwins(g);
-      const inMode = g.records.map((rec, ri) => ({ rec, ri })).filter(({ ri }) => mode === 'relevant' || twins[ri] > 0);
+      // Exact: only records with an identical twin. Relevant: groups whose records differ a little (not all identical).
+      const fuzzy = twins.some((t) => t === 0);
+      const inMode =
+        mode === 'relevant' && !fuzzy ? [] : g.records.map((rec, ri) => ({ rec, ri })).filter(({ ri }) => mode !== 'exact' || twins[ri] > 0);
       return { ...g, n: i + 1, twins, cols: matchCols(g.matchedOn), count: inMode.length, shown: inMode.filter(({ rec }) => keeps(rec)) };
     })
     .filter((g) => g.count >= 2 && g.shown.length > 0 && (!term || g.records.some((rec) => Object.values(rec.values).some((v) => show(v).toLowerCase().includes(term)))));
@@ -224,13 +228,6 @@ export function DuplicateResults({ result, fileName, flag = null }: { result: Du
   return (
     <div className="space-y-3">
       <DuplicateFlow result={result} />
-      <p className="text-xs text-ink-muted">
-        Matched on: {result.rules.map((g) => g.join(' + ')).join('  ·  or  ·  ')}
-        {result.methods.length > 0 && ` (${result.methods.map((m) => `${m.field}: ${m.method}`).join('; ')})`}.
-        {result.truncated && ' Only the first 20,000 records were read.'}
-        {result.groups.length < result.totalGroups && ` Showing the ${fmtNumber(result.groups.length)} largest groups.`}
-      </p>
-
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-subtle" />
@@ -247,7 +244,7 @@ export function DuplicateResults({ result, fileName, flag = null }: { result: Du
           </InfoTip>
           <select className="input h-9 w-auto py-0 text-sm" value={mode} onChange={(e) => setMode(e.target.value as MatchMode)} aria-label="Match type">
             {MATCH_MODES.map((m) => (
-              <option key={m.value} value={m.value}>{m.value === 'exact' ? 'Exact match (deterministic)' : 'Relevant match (fuzzy)'}</option>
+              <option key={m.value} value={m.value}>{m.option}</option>
             ))}
           </select>
         </label>
@@ -257,9 +254,9 @@ export function DuplicateResults({ result, fileName, flag = null }: { result: Du
         {ex.button}
       </div>
       <p className="text-xs text-ink-muted">
-        <span className="font-semibold text-ink">{mode === 'exact' ? 'Exact match' : 'Relevant match'}:</span>{' '}
-        {fmtNumber(groups.length)} group{groups.length === 1 ? '' : 's'} · {fmtNumber(shownRecords)} records ·{' '}
-        {MATCH_MODES.find((m) => m.value === mode)!.help}
+        {fmtNumber(groups.length)} group{groups.length === 1 ? '' : 's'} · {fmtNumber(shownRecords)} records
+        {result.groups.length < result.totalGroups && ` · the ${fmtNumber(result.groups.length)} largest groups`}
+        {result.truncated && ' · from the first 20,000 records'}
       </p>
       {filtering && (
         <p className="text-xs text-ink-muted">
@@ -270,7 +267,7 @@ export function DuplicateResults({ result, fileName, flag = null }: { result: Du
 
       {groups.length === 0 ? (
         <p className="rounded-lg bg-muted/50 px-4 py-6 text-center text-sm text-ink-muted">
-          {!result.totalGroups ? 'No duplicates found.' : mode === 'exact' && !term && !filtering ? 'No exact duplicates: every match here differs a little (spelling, suffix or abbreviation). Choose Relevant match to see them.' : 'No groups match this filter.'}
+          {!result.totalGroups ? 'No duplicates found.' : mode === 'exact' && !term && !filtering ? 'No exact duplicates: every match here differs a little (spelling, suffix or abbreviation). Choose All or Relevant match to see them.' : 'No groups match this filter.'}
           {filtering && (
             <button type="button" className="ml-1 font-semibold text-brand hover:underline" onClick={() => setColFilters({})}>Clear column filters</button>
           )}
@@ -322,7 +319,7 @@ export function DuplicateResults({ result, fileName, flag = null }: { result: Du
                           ? null
                           : matched && g.twins[ri] > 0
                             ? `Exact match with ${g.twins[ri]} other record${g.twins[ri] > 1 ? 's' : ''} in this group`
-                            : matched && mode === 'relevant'
+                            : matched && mode !== 'exact'
                               ? `Relevant match with ${others} other record${others > 1 ? 's' : ''} in this group`
                               : sameIn(g.records, ri, c.name, c.label, g.matchedOn);
                       return (
