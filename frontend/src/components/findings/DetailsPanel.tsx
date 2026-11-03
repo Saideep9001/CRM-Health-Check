@@ -325,7 +325,7 @@ function Records({
   // from Check fields, in this one table.
   const dupPicked = /duplicate/i.test(indicator?.label ?? finding?.name ?? '') && shownFields != null && checkData ? shownFields : null;
   const dupResult = dupPicked?.length ? mergeDuplicates(checkData!, dupPicked) : null;
-  // No Activity: the period the table covers (undefined = the health check's 6 months; "90"; "since:YYYY-MM-DD").
+  // No Activity: the period the table covers (undefined = the health check's 6 months; "90"; "range:YYYY-MM-DD:YYYY-MM-DD").
   const noActivity = /^no activity/i.test(indicator?.label ?? '');
   const [period, setPeriod] = useState<string | undefined>();
   useEffect(() => setPeriod(undefined), [object, indicator?.label]);

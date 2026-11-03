@@ -42,23 +42,25 @@ def inactive_where(sf: SalesforceClient, obj: str, days: int, basis: str) -> tup
 
 
 def with_period(where: str, period: str) -> str:
-    """The health check's own No Activity filter (6 months) for another period: "90" / "180" days, or "since:YYYY-MM-DD"
-    (no activity since that day, created before it). Only the engine's `LAST_N_DAYS:180` cut-offs change."""
+    """The health check's own No Activity filter (6 months) for another period: "90" / "180" days (no activity in that
+    time), or "range:YYYY-MM-DD:YYYY-MM-DD" (the last activity fell between those days, both included). Only the
+    engine's `LAST_N_DAYS:180` conditions change."""
     if period.isdigit():
         if int(period) not in (90, 180):
-            raise ValueError("Pick the last 3 or 6 months, or a date.")
-        cut = lambda _f: f"LAST_N_DAYS:{period}"  # noqa: E731
-    else:
-        m = re.fullmatch(r"since:(\d{4}-\d{2}-\d{2})", period)
-        try:
-            day = date.fromisoformat(m.group(1)) if m else None
-        except ValueError:
-            day = None
-        if day is None or day > date.today() + timedelta(days=1):  # a day of slack for time zones ahead of the server
-            raise ValueError("Pick a date that isn’t in the future.")
-        # LastActivityDate is a date; the other cut-offs (LastModifiedDate, CreatedDate) are date-times.
-        cut = lambda f: day.isoformat() if f == "LastActivityDate" else f"{day.isoformat()}T00:00:00Z"  # noqa: E731
-    return re.sub(r"\b(\w+) < LAST_N_DAYS:180\b", lambda mt: f"{mt.group(1)} < {cut(mt.group(1))}", where)
+            raise ValueError("Pick the last 3 or 6 months, or dates.")
+        return where.replace("LAST_N_DAYS:180", f"LAST_N_DAYS:{period}")
+    m = re.fullmatch(r"range:(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2})", period)
+    try:
+        start, end = (date.fromisoformat(m.group(1)), date.fromisoformat(m.group(2))) if m else (None, None)
+    except ValueError:
+        start = end = None
+    if start is None or end is None or start > end or start > date.today() + timedelta(days=1):  # a day of slack for time zones
+        raise ValueError("Pick a From date on or before the To date, not in the future.")
+    after = end + timedelta(days=1)
+    # LastActivityDate is a date; LastModifiedDate and CreatedDate are date-times.
+    at = lambda f, d: d.isoformat() if f == "LastActivityDate" else f"{d.isoformat()}T00:00:00Z"  # noqa: E731
+    where = re.sub(r"\((\w+) = null OR \1 < LAST_N_DAYS:180\)", lambda mt: f"({mt.group(1)} >= {at(mt.group(1), start)} AND {mt.group(1)} < {at(mt.group(1), after)})", where)
+    return re.sub(r"\b(\w+) < LAST_N_DAYS:180\b", lambda mt: f"{mt.group(1)} < {at(mt.group(1), after)}", where)  # created by then
 
 
 def inactivity(sf: SalesforceClient, obj: str, days: int, basis: str) -> dict:

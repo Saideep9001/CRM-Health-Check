@@ -117,12 +117,13 @@ def test_no_activity_records_take_another_period(client, sf):
     q = sf.soql[-1]
     assert "LastModifiedDate < LAST_N_DAYS:90" in q and "LAST_N_DAYS:180" not in q  # this fake Account has no activity date
 
-    assert client.get(f"{base}/indicator-values", params={**params, "field": "Industry", "period": "since:2024-01-15"}).status_code == 200
-    assert "LastModifiedDate < 2024-01-15T00:00:00Z" in sf.soql[-1]
-    assert client.get(f"{base}/indicator-records.csv", params={**params, "period": "since:2024-01-15"}).status_code == 200
+    rng = "range:2024-01-15:2024-03-31"  # last activity between these days, both included
+    assert client.get(f"{base}/indicator-values", params={**params, "field": "Industry", "period": rng}).status_code == 200
+    assert "(LastModifiedDate >= 2024-01-15T00:00:00Z AND LastModifiedDate < 2024-04-01T00:00:00Z)" in sf.soql[-1]
+    assert client.get(f"{base}/indicator-records.csv", params={**params, "period": rng}).status_code == 200
 
     later = (date.today() + timedelta(days=3)).isoformat()
-    for bad in ("100", "since:2024-13-01", f"since:{later}", "since:2024-01-01 OR Id != null"):
+    for bad in ("100", "range:2024-13-01:2024-12-01", "range:2024-03-01:2024-01-01", f"range:{later}:{later}", "range:2024-01-01:2024-02-01 OR Id != null"):
         assert client.get(f"{base}/indicator-records", params={**params, "period": bad}).status_code == 422, bad
     other = {"label": "Missing Key Fields (Accounts)", "object": "Account", "period": "90"}
     assert client.get(f"{base}/indicator-records", params=other).status_code == 422

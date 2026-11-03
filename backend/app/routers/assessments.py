@@ -378,7 +378,7 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
                        only: str | None = None, period: str | None = None) -> tuple[dict, str, str]:
     """(object, where, org id, title) for one measure of one area, as saved by the health check that measured it.
     `only` = comma-separated fields: just the records with a problem in one of them (a flagged value, or for a
-    missing-fields measure an empty value). `period` (No Activity only) = "90", "180" or "since:YYYY-MM-DD" instead of
+    missing-fields measure an empty value). `period` (No Activity only) = "90", "180" or "range:YYYY-MM-DD:YYYY-MM-DD" instead of
     the health check's 6 months."""
     row = _get(db, assessment_id)
     area = next((a for a in (row.results or {}).get("areas", []) if a.get("areaId") == area_id), None)
@@ -422,7 +422,7 @@ def indicator_records(
     cursor: str | None = Query(None, max_length=200),
     filters: str | None = Query(None, max_length=12000, description='JSON list of {"field","op","value"} column filters'),
     only: str | None = Query(None, max_length=1200, description="Comma-separated fields: only records with a problem in one of them"),
-    period: str | None = Query(None, max_length=20, description='No Activity only: "90", "180" or "since:YYYY-MM-DD"'),
+    period: str | None = Query(None, max_length=40, description='No Activity only: "90", "180" or "range:YYYY-MM-DD:YYYY-MM-DD"'),
     db: Session = Depends(get_db),
     http: httpx.Client = Depends(http_dep),
     settings: Settings = Depends(settings_dep),
@@ -445,7 +445,7 @@ def indicator_values(
     object: str | None = Query(None, max_length=80),
     filters: str | None = Query(None, max_length=12000),
     only: str | None = Query(None, max_length=1200),
-    period: str | None = Query(None, max_length=20, description='No Activity only: "90", "180" or "since:YYYY-MM-DD"'),
+    period: str | None = Query(None, max_length=40, description='No Activity only: "90", "180" or "range:YYYY-MM-DD:YYYY-MM-DD"'),
     db: Session = Depends(get_db),
     http: httpx.Client = Depends(http_dep),
     settings: Settings = Depends(settings_dep),
@@ -464,7 +464,7 @@ def indicator_records_csv(
     object: str | None = Query(None, max_length=80),
     filters: str | None = Query(None, max_length=12000),
     only: str | None = Query(None, max_length=1200),
-    period: str | None = Query(None, max_length=20, description='No Activity only: "90", "180" or "since:YYYY-MM-DD"'),
+    period: str | None = Query(None, max_length=40, description='No Activity only: "90", "180" or "range:YYYY-MM-DD:YYYY-MM-DD"'),
     db: Session = Depends(get_db),
     http: httpx.Client = Depends(http_dep),
     settings: Settings = Depends(settings_dep),

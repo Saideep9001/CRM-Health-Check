@@ -211,7 +211,7 @@ const filterParam = (filters: DataFilter[]) =>
 /** The records one measure ("What we measure") counted, live from Salesforce. */
 export const indicatorApi = {
   /** `only` = fields: just the records with a problem in one of them (a flagged value, or an empty key field). */
-  /** `period` (No Activity only): "90", "180" or "since:YYYY-MM-DD" instead of the health check's 6 months. */
+  /** `period` (No Activity only): "90", "180" or "range:YYYY-MM-DD:YYYY-MM-DD" instead of the health check's 6 months. */
   records: (assessmentId: string, areaId: string, label: string, object: string, cursor: string | null, signal?: AbortSignal, filters: DataFilter[] = [], only: string[] = [], period?: string) =>
     http.get<FindingRecordsPage>(
       `/assessments/${encodeURIComponent(assessmentId)}/areas/${encodeURIComponent(areaId)}/indicator-records`,
