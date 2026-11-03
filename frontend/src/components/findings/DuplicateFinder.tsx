@@ -5,6 +5,7 @@ import { objectLabel } from '@/components/category/DiagnosticAreaCard';
 import { cx, fmtDate, fmtNumber } from '@/lib/format';
 import type { DuplicateResult } from '@/types';
 import { Button } from '../ui/Button';
+import { InfoTip } from '../ui/HelpTip';
 import { useExpand } from '@/components/ui/Expand';
 import { FlowSteps } from './MeasureFlow';
 
@@ -160,18 +161,44 @@ function ColumnFilter({ label, values, kept, onChange }: { label: string; values
   );
 }
 
-/** Duplicate groups: the numbered flow, a filter, group size, CSV and the grouped table. `flag` = the fields whose
+/** How records count as duplicates in the table: identical values, or the fuzzy rules the check used. */
+type MatchMode = 'exact' | 'relevant';
+const MATCH_MODES: { value: MatchMode; label: string; help: string }[] = [
+  { value: 'exact', label: 'Exact match', help: 'Deterministic: identical values on the matched fields (ignoring upper/lower case and extra spaces), e.g. “Aquarient Tech” = “aquarient tech”.' },
+  { value: 'relevant', label: 'Relevant match', help: 'Fuzzy / probabilistic: normalised values, so legal suffixes (Inc, Ltd, LLC), punctuation, abbreviations and small typos still match, e.g. “Aquarient Technologies” = “Aquarient Tech” = “Aquarient Ltd”.' },
+];
+/** A value compared exactly: same text apart from upper/lower case and spacing. */
+const exactKey = (v: unknown) => (show(v) === '—' ? '' : String(typeof v === 'object' ? show(v) : v).trim().toLowerCase().replace(/\s+/g, ' '));
+
+/** Duplicate groups: the numbered flow, a filter, exact or relevant match, CSV and the grouped table. `flag` = the fields whose
  *  shared values are flagged in red (the fields ticked in Check fields); null flags every compared field. */
 export function DuplicateResults({ result, fileName, flag = null }: { result: DuplicateResult; fileName: string; flag?: string[] | null }) {
   const [query, setQuery] = useState('');
-  const [minSize, setMinSize] = useState(2);
+  const [mode, setMode] = useState<MatchMode>('relevant');
   const [colFilters, setColFilters] = useState<Record<string, Set<string>>>({});
   const ex = useExpand();
   const term = query.trim().toLowerCase();
   const keeps = (rec: { values: Record<string, unknown> }) => Object.entries(colFilters).every(([c, s]) => s.has(show(rec.values[c])));
+  // The fields a group was matched on ("Account Name + Billing City"), as columns.
+  const matchCols = (matchedOn: string) => {
+    const labels = matchedOn.split(' + ').map((l) => l.trim());
+    return result.columns.filter((c) => labels.includes(c.label)).map((c) => c.name);
+  };
+  // Exact match: how many other records in the group have identical values on every matched field.
+  const exactTwins = (g: DuplicateResult['groups'][number]) => {
+    const cols = matchCols(g.matchedOn);
+    const key = (rec: { values: Record<string, unknown> }) => (cols.length ? cols.map((c) => exactKey(rec.values[c])) : ['']).join('\u0001');
+    const keys = g.records.map(key);
+    return keys.map((k, i) => (k.replace(/\u0001/g, '') ? keys.filter((x, j) => j !== i && x === k).length : 0));
+  };
   const groups = result.groups
-    .map((g, i) => ({ ...g, n: i + 1, shown: g.records.map((rec, ri) => ({ rec, ri })).filter(({ rec }) => keeps(rec)) }))
-    .filter((g) => g.size >= minSize && g.shown.length > 0 && (!term || g.records.some((rec) => Object.values(rec.values).some((v) => show(v).toLowerCase().includes(term)))));
+    .map((g, i) => {
+      const twins = exactTwins(g);
+      const inMode = g.records.map((rec, ri) => ({ rec, ri })).filter(({ ri }) => mode === 'relevant' || twins[ri] > 0);
+      return { ...g, n: i + 1, twins, cols: matchCols(g.matchedOn), count: inMode.length, shown: inMode.filter(({ rec }) => keeps(rec)) };
+    })
+    .filter((g) => g.count >= 2 && g.shown.length > 0 && (!term || g.records.some((rec) => Object.values(rec.values).some((v) => show(v).toLowerCase().includes(term)))));
+  const shownRecords = groups.reduce((n, g) => n + g.count, 0);
   // Each column's values (with how many records have them) for its filter.
   const valuesOf = (c: string): [string, number][] => {
     const m = new Map<string, number>();
@@ -210,10 +237,17 @@ export function DuplicateResults({ result, fileName, flag = null }: { result: Du
           <input className="input h-9 pl-8 text-sm" placeholder="Filter results by any value (name, email, city…)" value={query} onChange={(e) => setQuery(e.target.value)} />
         </div>
         <label className="flex items-center gap-2 text-xs text-ink-muted">
-          Group size
-          <select className="input h-9 w-auto py-0 text-sm" value={minSize} onChange={(e) => setMinSize(Number(e.target.value))}>
-            {[2, 3, 4, 5, 10].map((n) => (
-              <option key={n} value={n}>{n === 2 ? 'Any' : `${n} or more`}</option>
+          Match type
+          <InfoTip label="Exact or relevant match">
+            {MATCH_MODES.map((m) => (
+              <span key={m.value} className="mb-1 block last:mb-0">
+                <span className="font-semibold">{m.label}:</span> {m.help}
+              </span>
+            ))}
+          </InfoTip>
+          <select className="input h-9 w-auto py-0 text-sm" value={mode} onChange={(e) => setMode(e.target.value as MatchMode)} aria-label="Match type">
+            {MATCH_MODES.map((m) => (
+              <option key={m.value} value={m.value}>{m.value === 'exact' ? 'Exact match (deterministic)' : 'Relevant match (fuzzy)'}</option>
             ))}
           </select>
         </label>
@@ -222,6 +256,11 @@ export function DuplicateResults({ result, fileName, flag = null }: { result: Du
         </Button>
         {ex.button}
       </div>
+      <p className="text-xs text-ink-muted">
+        <span className="font-semibold text-ink">{mode === 'exact' ? 'Exact match' : 'Relevant match'}:</span>{' '}
+        {fmtNumber(groups.length)} group{groups.length === 1 ? '' : 's'} · {fmtNumber(shownRecords)} records ·{' '}
+        {MATCH_MODES.find((m) => m.value === mode)!.help}
+      </p>
       {filtering && (
         <p className="text-xs text-ink-muted">
           Column filters on: {Object.keys(colFilters).map((c) => result.columns.find((x) => x.name === c)?.label ?? c).join(', ')} ·{' '}
@@ -231,7 +270,7 @@ export function DuplicateResults({ result, fileName, flag = null }: { result: Du
 
       {groups.length === 0 ? (
         <p className="rounded-lg bg-muted/50 px-4 py-6 text-center text-sm text-ink-muted">
-          {result.totalGroups ? 'No groups match this filter.' : 'No duplicates found.'}
+          {!result.totalGroups ? 'No duplicates found.' : mode === 'exact' && !term && !filtering ? 'No exact duplicates: every match here differs a little (spelling, suffix or abbreviation). Choose Relevant match to see them.' : 'No groups match this filter.'}
           {filtering && (
             <button type="button" className="ml-1 font-semibold text-brand hover:underline" onClick={() => setColFilters({})}>Clear column filters</button>
           )}
@@ -269,13 +308,23 @@ export function DuplicateResults({ result, fileName, flag = null }: { result: Du
                     <td className="whitespace-nowrap px-3 py-2 align-top">
                       {si === 0 && (
                         <span className="inline-flex flex-col">
-                          <span className="w-fit rounded-full bg-surface px-2 py-0.5 text-[11px] font-semibold text-brand-ink ring-1 ring-brand/20">#{g.n} · {g.size}</span>
+                          <span className="w-fit rounded-full bg-surface px-2 py-0.5 text-[11px] font-semibold text-brand-ink ring-1 ring-brand/20">#{g.n} · {g.count}</span>
                           <span className="mt-1 text-[10px] text-ink-subtle">{g.matchedOn}</span>
                         </span>
                       )}
                     </td>
                     {result.columns.map((c, ci) => {
-                      const same = flag && !flag.includes(c.name) ? null : sameIn(g.records, ri, c.name, c.label, g.matchedOn);
+                      // The matched fields: red on an exact twin (Exact match) or on every record of the group (Relevant match).
+                      const matched = g.cols.includes(c.name) && show(rec.values[c.name]) !== '—';
+                      const others = g.records.length - 1;
+                      const same =
+                        flag && !flag.includes(c.name)
+                          ? null
+                          : matched && g.twins[ri] > 0
+                            ? `Exact match with ${g.twins[ri]} other record${g.twins[ri] > 1 ? 's' : ''} in this group`
+                            : matched && mode === 'relevant'
+                              ? `Relevant match with ${others} other record${others > 1 ? 's' : ''} in this group`
+                              : sameIn(g.records, ri, c.name, c.label, g.matchedOn);
                       return (
                       <td
                         key={c.name}

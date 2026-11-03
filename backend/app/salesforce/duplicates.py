@@ -47,9 +47,30 @@ def _clean(v: object) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9@. ]", " ", str(v or "").lower())).strip()
 
 
+# Common business abbreviations, spelled out before company names are compared ("Aquarient Tech" = "Aquarient Technologies").
+_COMPANY_ABBREV = {
+    "tech": "technologies", "techs": "technologies", "technology": "technologies", "intl": "international",
+    "mgmt": "management", "svc": "services", "svcs": "services", "sys": "systems", "grp": "group", "assoc": "associates",
+    "assocs": "associates", "bros": "brothers", "mfg": "manufacturing", "natl": "national", "univ": "university",
+    "dept": "department", "ent": "enterprises", "ents": "enterprises", "inds": "industries", "ind": "industries",
+    "sol": "solutions", "solns": "solutions", "eng": "engineering", "engg": "engineering", "dev": "development",
+    "hosp": "hospital", "med": "medical", "fin": "financial", "ins": "insurance", "props": "properties",
+    "constr": "construction", "dist": "distribution", "distr": "distribution", "labs": "laboratories", "lab": "laboratories",
+    "pharma": "pharmaceuticals", "comm": "communications", "comms": "communications", "telecom": "telecommunications",
+    "logistic": "logistics", "consult": "consulting", "mktg": "marketing", "hldgs": "holdings", "hldg": "holdings",
+}
+
+# Words that describe the kind of business rather than name it: a name with one of these added is the same company.
+_GENERIC_WORDS = set(_COMPANY_ABBREV.values()) | {
+    "and", "of", "global", "worldwide", "usa", "us", "america", "partners", "partnership", "ventures", "agency",
+    "studio", "studios", "trading", "capital", "investments", "foods", "software", "digital", "online", "network",
+    "networks", "inc", "llc", "ltd",
+}
+
 def norm_company(v: object) -> str:
     s = re.sub(r"[^a-z0-9 ]", " ", str(v or "").lower().replace("&", " and "))
-    return re.sub(r"\s+", " ", _COMPANY_WORDS.sub(" ", s)).strip()
+    words = _COMPANY_WORDS.sub(" ", s).split()
+    return " ".join(_COMPANY_ABBREV.get(w, w) for w in words)
 
 
 def norm_website(v: object) -> str:
@@ -139,6 +160,12 @@ def m_company(a, b) -> bool:  # Acronym, Edit Distance, Exact — threshold 70
     if not (x and y):
         return False
     if x == y or _acronym(x, y):
+        return True
+    # The same name with only a generic business word added ("Aquarient" = "Aquarient Technologies" = "Aquarient
+    # Solutions Group"), as long as the shared name itself is distinctive (4+ letters, not a generic word).
+    wx, wy = x.split(), y.split()
+    short, long_ = (wx, wy) if len(wx) <= len(wy) else (wy, wx)
+    if long_[: len(short)] == short and all(w in _GENERIC_WORDS for w in long_[len(short):]) and             len("".join(short)) >= 4 and not all(w in _GENERIC_WORDS for w in short):
         return True
     if similarity(x, y) < 0.70:
         return False
@@ -246,7 +273,7 @@ def m_exact(a, b) -> bool:
 
 
 KINDS: dict[str, tuple[str, Callable]] = {
-    "company": ("Fuzzy company name: ignores Inc, Corp, LLC, .com…; differing words must be typos of each other (Microsft = Microsoft), or an acronym", m_company),
+    "company": ("Fuzzy company name: ignores Inc, Corp, LLC, .com…; spells out abbreviations (Tech = Technologies); differing words must be typos of each other (Microsft = Microsoft), or an acronym", m_company),
     "first": ("Fuzzy first name: typos, initials and nicknames (Bob = Robert)", m_first),
     "last": ("Fuzzy last name: small typos", m_last),
     "email": ("Exact email (any case)", m_email),
