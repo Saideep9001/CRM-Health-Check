@@ -19,7 +19,7 @@ PostgreSQL; uploaded CSV/Excel files go on a volume.
 | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` (reference to the Postgres service) |
 | `TOKEN_ENCRYPTION_KEY` | A Fernet key — generate once: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Keep it: changing it makes saved Salesforce connections unreadable. |
 | `SF_CLIENT_ID` / `SF_CLIENT_SECRET` | The Connected App's Consumer Key and Secret (or enter them later on the Connect Salesforce page). |
-| `AUTH_REQUIRED` | `true` (the default) — the first visit asks you to create the admin account. |
+| `AUTH_REQUIRED` | Off by default for now (testing: no login, everyone is the admin). Set `true` to require sign-in. |
 | `DEFAULT_ADMIN_EMAIL` / `DEFAULT_ADMIN_PASSWORD` | Optional: the admin account, created at start-up while there are no users yet (instead of the first-visit setup). `DEFAULT_ADMIN_NAME` sets its name. Keep these in Railway variables only — never in the code. |
 | `FRONTEND_ORIGIN` | Optional. Defaults to `https://<the Railway domain>`. Set it if you add a custom domain, e.g. `https://health.example.com`. |
 | `SMTP_HOST`, `SMTP_FROM`, … | Optional, for alert email (see `backend/.env.example`). |

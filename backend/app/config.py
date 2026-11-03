@@ -65,7 +65,8 @@ class Settings(BaseSettings):
     smtp_starttls: bool = True
 
     # --- Sign-in. When false, everyone is treated as a local admin (single-user development only). ---
-    auth_required: bool = True
+    # Off for now while the team tests (no login screen). Turn back on with True here or AUTH_REQUIRED=true.
+    auth_required: bool = False
 
     # --- Default admin: created at start-up when there are no users yet (set these as host secrets, never in code) ---
     default_admin_email: str = ""
