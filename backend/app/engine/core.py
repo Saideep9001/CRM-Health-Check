@@ -83,7 +83,6 @@ class Scope:
     stale_lead_days: int = 30
     stuck_opportunity_days: int = 60
     objects: tuple[str, ...] = DEFAULT_OBJECTS
-    queue_lead_days: int = 3  # a Lead in a queue longer than this is stuck
 
 
 @dataclass

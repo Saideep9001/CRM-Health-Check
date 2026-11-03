@@ -90,33 +90,34 @@ def _in_queue_for(ctx: Ctx) -> tuple[Callable[[int], tuple[str, ...]], str]:
                 "the Created Date (Lead Owner changes aren’t tracked in Lead History)")
 
 
+QUEUE_CRITICAL_DAYS = 7  # a Lead waiting in a queue longer than this makes the problem Critical
+
+
 def stuck_queue_leads(ctx: Ctx) -> None:
-    """Open Leads owned by a queue for longer than the check's queue days (3 by default): nobody has claimed them."""
-    days = int(ctx.scope.queue_lead_days)
-    worst = max(7, 2 * days)  # waiting this long makes it Critical
+    """Every open Lead owned by a queue (nobody has claimed it yet), with how long it has waited there."""
+    worst = QUEUE_CRITICAL_DAYS
     total = ctx.count("Lead", OPEN_LEADS)
     ctx.totals["Lead"] = total
     since, source = _in_queue_for(ctx)
-    conds = (OPEN_LEADS, QUEUED, *since(days))
+    conds = (OPEN_LEADS, QUEUED)
     n = ctx.count("Lead", *conds) if total else 0
-    long = ctx.count("Lead", OPEN_LEADS, QUEUED, *since(worst)) if n else 0
-    queued = ctx.count("Lead", OPEN_LEADS, QUEUED) if total else 0
+    long = ctx.count("Lead", *conds, *since(worst)) if n else 0
     score = rate_score(n / total, 0.2) if total else 100
     ctx.metric(
         "Stuck Leads in Queue", n, "count", "lower-better", score,
-        how=f"Open Leads that have sat in a queue for more than {days} days without a sales user claiming them, out of {total:,} open Leads.",
-        rule="100 when no open Leads are stuck in a queue, falling evenly to 0 when 20% of open Leads are. "
-        f"A problem is raised for any stuck Lead: Critical when some have waited more than {worst} days, otherwise High.",
+        how=f"Open Leads that sit in a queue without a sales user claiming them, out of {total:,} open Leads.",
+        rule="100 when no open Leads sit in a queue, falling evenly to 0 when 20% of open Leads do. "
+        f"A problem is raised for any Lead in a queue: Critical when some have waited more than {worst} days, otherwise High.",
         columns=["Name", "Company", "OwnerId", "CreatedDate"],
         order="CreatedDate",
         extra="days_in_queue",
         criteria=[
-            ("Records checked", f"{total:,} open Leads (not converted); {queued:,} of them are owned by a queue"),
+            ("Records checked", f"{total:,} open Leads (not converted)"),
             ("Owner", "The Lead Owner is a queue, not a person"),
             ("Time in queue", f"Counted from {source}"),
-            ("Stuck", f"In the queue for more than {days} days (Critical after {worst} days)"),
-            ("What's counted", f"{n:,} of {total:,} open Leads ({pct(n, total):.0f}%) are stuck in a queue; {long:,} for more than {worst} days"),
-            ("Records listed", "Every stuck Lead with its queue and days in the queue, longest waiting first"),
+            ("Urgency", f"Critical when a Lead has waited more than {worst} days, otherwise High"),
+            ("What's counted", f"{n:,} of {total:,} open Leads ({pct(n, total):.0f}%) are in a queue; {long:,} for more than {worst} days"),
+            ("Records listed", "Every open Lead in a queue with its queue and days in the queue, longest waiting first"),
         ],
         records=("Lead", *conds),
         recent=False,
@@ -129,10 +130,10 @@ def stuck_queue_leads(ctx: Ctx) -> None:
             recent=False,
             fix="/lightning/setup/LeadRules/home",
             score=score,
-            min_score=101,  # raised for any stuck Lead; how urgent comes from how long they've waited
+            min_score=101,  # raised for any Lead in a queue; how urgent comes from how long they've waited
             severity="critical" if long else "high",
             affected=n,
-            description=f"{n:,} open Leads have sat in a queue for more than {days} days without anyone claiming them"
+            description=f"{n:,} open Leads sit in a queue without anyone claiming them"
             + (f", {long:,} of them for more than {worst} days" if long else "") + "."
             + (f" Most are in: {_owners(queues)}." if queues else ""),
             why="Leads cool off fast. Nobody feels responsible for a lead that sits in a queue.",

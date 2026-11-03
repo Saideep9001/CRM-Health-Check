@@ -304,7 +304,6 @@ class AssessmentScope(ApiModel):
     objects: list[Annotated[str, Field(pattern=_OBJECT_NAME)]] | None = Field(default=None, max_length=15)
     lookback_days: int | None = Field(default=None, ge=1, le=3650)
     stale_lead_days: int = Field(default=30, ge=1, le=730)
-    queue_lead_days: int = Field(default=3, ge=1, le=90)
     stuck_opportunity_days: int = Field(default=60, ge=1, le=730)
 
 

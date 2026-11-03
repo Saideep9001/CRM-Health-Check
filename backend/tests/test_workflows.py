@@ -50,8 +50,7 @@ LEADS = [  # open Leads read for the rule check
 
 # COUNT() answers: first rule whose substrings all appear in the query wins.
 COUNTS = [
-    (("FROM Lead", "Owner.Type = 'Queue'", "LAST_N_DAYS:10"), 3),  # stuck in a queue 10+ days (Critical, with a 5-day setting)
-    (("FROM Lead", "Owner.Type = 'Queue'", "LAST_N_DAYS:5"), 8),  # stuck in a queue 5+ days
+    (("FROM Lead", "Owner.Type = 'Queue'", "LAST_N_DAYS:7"), 3),  # in a queue more than 7 days (Critical)
     (("FROM Lead", "Owner.Type = 'Queue'"), 12),
     (("FROM Lead", "Owner.Type = 'User'"), 40),
     (("FROM Lead", "LeadSource IN", "LAST_N_DAYS:90"), 25),
@@ -167,7 +166,7 @@ def sf():
 
 def run(client, **scope):
     conn = client.get(f"{API}/salesforce/connection").json()
-    body = {"categoryIds": ["workflows"], "areaIds": list(AREAS), "staleLeadDays": 14, "stuckOpportunityDays": 45, "queueLeadDays": 5, **scope}
+    body = {"categoryIds": ["workflows"], "areaIds": list(AREAS), "staleLeadDays": 14, "stuckOpportunityDays": 45, **scope}
     aid = client.post(f"{API}/assessments", json={"name": "Workflows", "connectionId": conn["id"], "scope": body}).json()["id"]
     a = client.get(f"{API}/assessments/{aid}").json()
     res = client.get(f"{API}/assessments/{aid}/results").json()
@@ -184,7 +183,7 @@ def test_all_workflow_areas(client, sf):
     ind = {i["label"]: i["value"] for x in res["areas"] for i in x["indicators"]}
     gap = "Unassigned Leads – No Assignment Rule Match"
     assert {i["label"] for i in areas["area-3"]["indicators"]} == {"Stuck Leads in Queue", gap}
-    assert ind["Stuck Leads in Queue"] == 8 and ind[gap] == 1  # Bob's Partner lead; Ann's is with a rule target, the Event one was reassigned
+    assert ind["Stuck Leads in Queue"] == 12 and ind[gap] == 1  # Bob's Partner lead; Ann's is with a rule target, the Event one was reassigned
     assert "<met:type>AssignmentRules</met:type><fullNames>Lead</fullNames>" in sf.soap[0]
     assert ind["Missing Contact Roles"] == 15 and ind["Orphaned Contacts"] == 9 and ind["Missing Account relationships"] == 30
     assert ind["Account hierarchy issues"] == 2  # no parents on 100 accounts; no AccountContactRelation
@@ -202,13 +201,13 @@ def test_all_workflow_areas(client, sf):
     assert "Bob Ray" in names["Reps with no logged activity"]["description"]
     assert "Bob Ray (1)" in names["Leads that match no assignment rule entry"]["description"]
     stuck = names["Leads stuck in a queue"]
-    assert stuck["severity"] == "critical" and "3 of them for more than 10 days" in stuck["description"] and "Jane Doe" in stuck["description"]
+    assert stuck["severity"] == "critical" and "3 of them for more than 7 days" in stuck["description"] and "Jane Doe" in stuck["description"]
     assert "“Big Deal” (Proposal, 90,000)" in names["Stuck deals"]["description"]
     assert "Loss Reason" in names["Lost deals with no reason"]["description"]
     assert "Unclear validation error messages" in names
     assert names["Open deals with no contact roles"]["objectName"] == "Opportunity"
     assert all(q.lstrip().upper().startswith("SELECT") for q in sf.soql)
-    assert any("LAST_N_DAYS:5" in q and "Owner.Type = 'Queue'" in q and "LeadHistory WHERE Field = 'Owner'" in q for q in sf.soql)  # queue setting used
+    assert any("LAST_N_DAYS:7" in q and "Owner.Type = 'Queue'" in q and "LeadHistory WHERE Field = 'Owner'" in q for q in sf.soql)  # waited 7+ days
     assert any("LAST_N_DAYS:45" in q and "LastStageChangeDate" in q for q in sf.soql)  # stuck-deal setting used
 
 
