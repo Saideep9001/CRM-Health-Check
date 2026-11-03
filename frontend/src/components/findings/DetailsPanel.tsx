@@ -38,7 +38,7 @@ import { FixPlanPanel } from './FixPlanPanel';
 import { RecordsTable } from './RecordsTable';
 import { DuplicateResults } from './DuplicateFinder';
 import { ALL } from './FieldCheck';
-import { FlowSteps, fieldFlowFor, fieldFlowForRecordType, flowFor, liveFlowFor, type FlowStep } from './MeasureFlow';
+import { FlowSteps, fieldFlowFor, fieldFlowForRecordType, flowFor, liveFlowFor, zeroFlow, type FlowStep } from './MeasureFlow';
 import { FieldListTable } from './FieldListTable';
 import { FieldScoreChart, chartKindFor } from './FieldScoreChart';
 
@@ -354,9 +354,10 @@ function Records({
           </div>
         )}
         <div id="records-table" className="scroll-mt-20">
-        {flow && !dupResult && !(dupPicked && !dupResult) && (
+        {flow && !dupResult && (
           <div className="mb-3">
-            <FlowSteps steps={liveFlow ?? flow} />
+            {/* Nothing ticked in Check fields: the same steps, counting 0. */}
+            <FlowSteps steps={noneTicked || dupPicked ? zeroFlow(liveFlow ?? flow) : liveFlow ?? flow} />
           </div>
         )}
         {dupPicked && !dupResult ? (

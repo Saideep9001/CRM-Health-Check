@@ -67,6 +67,13 @@ export function FlowSteps({ steps }: { steps: FlowStep[] }) {
   );
 }
 
+/** The steps with no fields ticked in Check fields: the records read stay, every count after them is 0. */
+export function zeroFlow(steps: FlowStep[]): FlowStep[] {
+  return steps.map((st, i) =>
+    i === 0 && / checked$/.test(st.label) && !/^(Fields|Key fields|Values)/.test(st.label) ? st : { ...st, value: 0, hint: 'No fields ticked in Check fields' },
+  );
+}
+
 const num = (s: string | undefined | null) => (s ? Number((s.match(/[\d,]+(\.\d+)?/)?.[0] ?? '').replace(/,/g, '')) || 0 : 0);
 const pctOf = (n: number, of: number) => (of ? `${Math.round((100 * n) / of)}%` : '—');
 

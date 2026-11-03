@@ -191,7 +191,6 @@ export function FieldCheck({
   /** Every run's result (also the one that runs on its own), for the page's records table (duplicate groups). */
   onLiveResult?: (result: FieldCheckResult | null) => void;
 }) {
-  const ex = useExpand();
   // On a duplicates / missing / spelling page, only that page's column is shown.
   const shows = (k: FinderKind) => !focus || focus === k;
   const choices = useMemo(() => Array.from(new Set([...(initialObject ? [initialObject] : []), ...objects])), [objects, initialObject]);
@@ -382,8 +381,7 @@ export function FieldCheck({
 
         {result && (
           <div className="space-y-4">
-            {ex.wrap(
-            <div className={cx('space-y-3', ex.boxClass)}>
+            <div className="space-y-3">
             <div className="flex flex-wrap items-start gap-2">
             <p className="min-w-0 flex-1 text-sm">
               <span className="font-semibold tabular-nums">{fmtNumber(result.scanned)}</span> {what} checked
@@ -400,9 +398,8 @@ export function FieldCheck({
                 </span>
               )}
             </p>
-            {ex.button}
             </div>
-            <div className={cx(ex.scrollClass(''), 'rounded-xl border border-line')}>
+            <div className="scrollbar-thin overflow-auto rounded-xl border border-line">
               <table className={cx('w-full text-left text-sm', !focus && 'min-w-[640px]')}>
                 <thead className="bg-muted/50 text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">
                   <tr>
@@ -472,8 +469,7 @@ export function FieldCheck({
                 </tbody>
               </table>
             </div>
-            </div>,
-            )}
+            </div>
 
             {pick && !inRecords(pick.field, pick.kind) && (
               <div className="rounded-xl border border-line p-4">
