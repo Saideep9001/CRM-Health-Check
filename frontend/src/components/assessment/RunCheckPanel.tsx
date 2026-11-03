@@ -24,6 +24,8 @@ import { cx, fmtDate } from '@/lib/format';
 type DayOption = '7' | '14' | '30' | '60' | '90';
 const dayOptions = (prefix: string): { value: DayOption; label: string }[] =>
   (['7', '14', '30', '60', '90'] as DayOption[]).map((d) => ({ value: d, label: `${prefix} ${d} days` }));
+type QueueOption = '1' | '2' | '3' | '5' | '7' | '14';
+const queueOptions = (['1', '2', '3', '5', '7', '14'] as QueueOption[]).map((d) => ({ value: d, label: `Stuck after ${d} day${d === '1' ? '' : 's'}` }));
 
 /** Objects Data Quality checks by default; users can pick others (any object in their org). */
 export const DEFAULT_DQ_OBJECTS = ['Account', 'Contact', 'Lead', 'Opportunity'];
@@ -80,7 +82,7 @@ export function RunCheckPanel({
   const create = useCreateAssessment();
   const cancel = useCancelAssessment();
   const { notify } = useToast();
-  const [staleDays, setStaleDays] = useState<DayOption>('30');
+  const [queueDays, setQueueDays] = useState<QueueOption>('3');
   const [stuckDays, setStuckDays] = useState<DayOption>('60');
   const [startedId, setStartedId] = useState<string | null>(null);
   const [chosen, setObjects] = useState<string[]>(loadObjects);
@@ -131,7 +133,7 @@ export function RunCheckPanel({
 
   const connected = conn.data?.status === 'connected';
   const checksObjects = runnable.some((id) => DQ_AREAS.has(id));
-  const usesStale = runnable.includes('area-3');
+  const usesQueue = runnable.includes('area-3');
   const usesStuck = runnable.includes('area-5') || runnable.includes('area-10');
   const orgObjects = useDataObjects(connected && objectPicker && checksObjects);
   const labels = useMemo(() => new Map((orgObjects.data ?? []).map((o) => [o.name, o.labelPlural])), [orgObjects.data]);
@@ -157,7 +159,8 @@ export function RunCheckPanel({
           categoryIds,
           areaIds: runnable,
           lookbackDays: null, // every record is checked
-          staleLeadDays: Number(staleDays),
+          staleLeadDays: 30,
+          queueLeadDays: Number(queueDays),
           stuckOpportunityDays: Number(stuckDays),
           objects: checksObjects ? objects : undefined,
         },
@@ -225,8 +228,8 @@ export function RunCheckPanel({
   const failed = watched.data?.id === startedId && watched.data?.status === 'failed' ? watched.data : null;
   const controls = (
     <div className="flex flex-wrap items-center gap-2">
-      {usesStale && (
-        <Select<DayOption> label="When is a lead stale?" value={staleDays} onChange={setStaleDays} options={dayOptions('Stale lead after')} className="w-full sm:w-48" />
+      {usesQueue && (
+        <Select<QueueOption> label="When is a lead stuck in a queue?" value={queueDays} onChange={setQueueDays} options={queueOptions} className="w-full sm:w-48" />
       )}
       {usesStuck && (
         <Select<DayOption> label="When is a deal stuck?" value={stuckDays} onChange={setStuckDays} options={dayOptions('Stuck deal after')} className="w-full sm:w-48" />

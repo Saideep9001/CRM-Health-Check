@@ -65,7 +65,7 @@ The Connected App's callback URL must be `https://<frontend-host>/connection/cal
 | GET | `/assessments/{id}/results` | — | `AssessmentResults` — scores, `categories[]`, `areas[]` with `indicators[]` |
 | GET | `/assessments/{id}/findings?page=&pageSize=` | — | `Paginated<Finding>` |
 
-`scope` = `{ categoryIds[], areaIds[], lookbackDays | null, staleLeadDays, stuckOpportunityDays, objects?: string[] | null }`.
+`scope` = `{ categoryIds[], areaIds[], lookbackDays | null, staleLeadDays, stuckOpportunityDays, queueLeadDays? (default 3), objects?: string[] | null }`.
 `objects` (Data Quality only): Salesforce object API names to check, up to 15. Omitted = Account, Contact, Lead, Opportunity.
 Other objects get generic checks (duplicates by name, key-field completeness, unused custom fields).
 `AssessmentResults.objects[]` = `{ name, label, records, completeness, duplicates, problems }` per checked object, and

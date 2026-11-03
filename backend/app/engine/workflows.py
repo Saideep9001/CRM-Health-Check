@@ -40,9 +40,6 @@ def _days_since(iso: str | None) -> int | None:
 
 # Where in Salesforce each setup problem is fixed.
 SETTING_FIX = {
-    'No active Lead Assignment Rule': '/lightning/setup/LeadRules/home',
-    'No automation or escalation on Leads': '/lightning/setup/Flows/home',
-    'No rules guide how deals move through stages': '/lightning/setup/ObjectManager/Opportunity/ValidationRules/view',
     'Contacts can’t be related to multiple Accounts': '/lightning/setup/AccountSettings/home',
     'Sales Path isn’t turned on for Opportunities': '/lightning/setup/PathAssistantSetupHome/home',
     'Sales stages without guidance': '/lightning/setup/PathAssistantSetupHome/home',
@@ -72,227 +69,100 @@ def _setting(ctx: Ctx, name: str, description: str, action: str, severity: str =
     ))
 
 
-# ---------------------------------------------------------------- area 3: lead assignment, escalation, progression
+# ---------------------------------------------------------------- area 3: Leads in queues
 
-def unassigned_leads(ctx: Ctx) -> None:
+QUEUED = "Owner.Type = 'Queue'"
+
+
+def _in_queue_for(ctx: Ctx) -> tuple[Callable[[int], tuple[str, ...]], str]:
+    """How "in a queue for more than N days" is told: no owner change in N days (Lead History, when Lead Owner changes
+    are tracked) and created before then; or else only created before then."""
+    try:
+        ctx.count("Lead", "Id IN (SELECT LeadId FROM LeadHistory WHERE Field = 'Owner')", recent=False)
+        return ((lambda n: (f"CreatedDate < LAST_N_DAYS:{n}",
+                            f"Id NOT IN (SELECT LeadId FROM LeadHistory WHERE Field = 'Owner' AND CreatedDate = LAST_N_DAYS:{n})")),
+                "the last Lead Owner change in Lead History (or the Created Date, if the owner never changed)")
+    except SalesforceAuthExpired:
+        raise
+    except SalesforceError:
+        return ((lambda n: (f"CreatedDate < LAST_N_DAYS:{n}",)),
+                "the Created Date (Lead Owner changes aren’t tracked in Lead History)")
+
+
+def stuck_queue_leads(ctx: Ctx) -> None:
+    """Open Leads owned by a queue for longer than the check's queue days (3 by default): nobody has claimed them."""
+    days = int(ctx.scope.queue_lead_days)
+    worst = max(7, 2 * days)  # waiting this long makes it Critical
     total = ctx.count("Lead", OPEN_LEADS)
     ctx.totals["Lead"] = total
-    n = ctx.count("Lead", OPEN_LEADS, "Owner.Type = 'Queue'") if total else 0
+    since, source = _in_queue_for(ctx)
+    conds = (OPEN_LEADS, QUEUED, *since(days))
+    n = ctx.count("Lead", *conds) if total else 0
+    long = ctx.count("Lead", OPEN_LEADS, QUEUED, *since(worst)) if n else 0
+    queued = ctx.count("Lead", OPEN_LEADS, QUEUED) if total else 0
     score = rate_score(n / total, 0.2) if total else 100
     ctx.metric(
-        "Unassigned Leads", n, "count", "lower-better", score,
-        how="Open Leads (not yet converted) that are still owned by a queue instead of a person.",
-        rule="100 when no open Leads sit in a queue, falling evenly to 0 when 20% of open Leads do.",
-        columns=["Name", "Company", "OwnerId", "Status", "CreatedDate", "LeadSource"],
+        "Stuck Leads in Queue", n, "count", "lower-better", score,
+        how=f"Open Leads that have sat in a queue for more than {days} days without a sales user claiming them, out of {total:,} open Leads.",
+        rule="100 when no open Leads are stuck in a queue, falling evenly to 0 when 20% of open Leads are. "
+        f"A problem is raised for any stuck Lead: Critical when some have waited more than {worst} days, otherwise High.",
+        columns=["Name", "Company", "OwnerId", "CreatedDate"],
         order="CreatedDate",
+        extra="days_in_queue",
         criteria=[
-            ("Records checked", f"{total:,} open Leads (not converted)"),
-            ("Field checked", "Lead Owner"),
-            ("Unassigned", "The Lead is owned by a queue, not by a person"),
-            ("What's counted", f"{n:,} of {total:,} open Leads ({pct(n, total):.0f}%) are owned by a queue"),
-            ("Records listed", "Every open Lead owned by a queue, oldest first"),
+            ("Records checked", f"{total:,} open Leads (not converted); {queued:,} of them are owned by a queue"),
+            ("Owner", "The Lead Owner is a queue, not a person"),
+            ("Time in queue", f"Counted from {source}"),
+            ("Stuck", f"In the queue for more than {days} days (Critical after {worst} days)"),
+            ("What's counted", f"{n:,} of {total:,} open Leads ({pct(n, total):.0f}%) are stuck in a queue; {long:,} for more than {worst} days"),
+            ("Records listed", "Every stuck Lead with its queue and days in the queue, longest waiting first"),
         ],
-        records=("Lead", OPEN_LEADS, "Owner.Type = 'Queue'"),
+        records=("Lead", *conds),
+        recent=False,
     )
     if n:
-        oldest = ctx.rows("SELECT Name, Company, CreatedDate FROM Lead WHERE IsConverted = false AND Owner.Type = 'Queue' ORDER BY CreatedDate ASC LIMIT 3", 3)
-        waits = [f"{r.get('Name')} ({d} days)" for r in oldest if (d := _days_since(r.get("CreatedDate"))) is not None]
+        queues = ctx.by_owner("Lead", *conds)
         ctx.finding(
-            name="Leads waiting in a queue",
-            records=("Lead", OPEN_LEADS, "Owner.Type = 'Queue'"),
+            name="Leads stuck in a queue",
+            records=("Lead", *conds),
+            recent=False,
             fix="/lightning/setup/LeadRules/home",
             score=score,
+            min_score=101,  # raised for any stuck Lead; how urgent comes from how long they've waited
+            severity="critical" if long else "high",
             affected=n,
-            description=f"{n:,} of {total:,} open Leads ({pct(n, total):.0f}%) are still owned by a queue, not a person."
-            + (f" Longest waiting: {', '.join(waits)}." if waits else ""),
+            description=f"{n:,} open Leads have sat in a queue for more than {days} days without anyone claiming them"
+            + (f", {long:,} of them for more than {worst} days" if long else "") + "."
+            + (f" Most are in: {_owners(queues)}." if queues else ""),
             why="Leads cool off fast. Nobody feels responsible for a lead that sits in a queue.",
-            impact="Slower first contact and lost deals to faster competitors.",
-            action="Turn on an active Lead Assignment Rule that routes leads to people (round-robin or by territory), and alert managers when a lead sits in a queue for more than a few hours.",
+            impact="Slower first contact and deals lost to faster competitors.",
+            action="Have the queue members claim these leads today, route leads to people with an active Lead Assignment Rule "
+            "(round-robin or by territory), and alert managers when a lead sits in a queue for more than a day.",
             obj="Lead",
             url=ctx.list_url("Lead"),
         )
 
 
-def _stuck(ctx: Ctx) -> tuple[Callable[[int], tuple[str, ...]], str, str]:
-    """How "stuck for N days" is told: the Status hasn't changed (Lead History, when Status changes are tracked), or else
-    the Lead hasn't been edited and has no logged activity."""
-    try:
-        ctx.count("Lead", "Id IN (SELECT LeadId FROM LeadHistory WHERE Field = 'Status')", recent=False)
-        return ((lambda n: (f"Id NOT IN (SELECT LeadId FROM LeadHistory WHERE Field = 'Status' AND CreatedDate = LAST_N_DAYS:{n})",)),
-                "Lead History (Status changes)", "the Status hasn’t changed")
-    except SalesforceAuthExpired:
-        raise
-    except SalesforceError:
-        return ((lambda n: (f"LastModifiedDate < LAST_N_DAYS:{n}", f"(LastActivityDate = null OR LastActivityDate < LAST_N_DAYS:{n})")),
-                "Last Modified Date and Last Activity Date (Status changes aren’t tracked in Lead History)",
-                "nobody has edited them and no activity is logged")
-
-
-def stale_leads(ctx: Ctx) -> None:
-    """Open Leads stuck in the same status for the check's stale-lead days (30 by default), created before then."""
-    days = int(ctx.scope.stale_lead_days)
+def leads_not_in_queue(ctx: Ctx) -> None:
+    """Open Leads owned by a person rather than a queue (shown for information, not scored)."""
     total = ctx.count("Lead", OPEN_LEADS)
-    stuck, source, means = _stuck(ctx)
-    conds = (OPEN_LEADS, f"CreatedDate < LAST_N_DAYS:{days}", *stuck(days))
-    n = ctx.count("Lead", *conds) if total else 0
-    by_age = [(d, ctx.count("Lead", OPEN_LEADS, f"CreatedDate < LAST_N_DAYS:{d}", *stuck(d))) for d in (30, 60, 90)] if total else []
-    score = rate_score(n / total, 0.5) if total else 100
+    n = ctx.count("Lead", OPEN_LEADS, "Owner.Type = 'User'") if total else 0
+    owners = ctx.by_owner("Lead", OPEN_LEADS, "Owner.Type = 'User'") if n else []
     ctx.metric(
-        "Stale Leads", n, "count", "lower-better", score,
-        how=f"Open Leads stuck in the same status for {days}+ days ({means}), out of {total:,} open Leads.",
-        rule="100 when no open Leads are stale, falling evenly to 0 when 50% of open Leads are.",
-        columns=["Name", "Company", "Status", "LastModifiedDate", "LastActivityDate", "OwnerId", "CreatedDate"],
-        order="LastModifiedDate",
+        "Leads Not Assigned to Any Queue", n, "count", "lower-better", None,
+        how=f"Open Leads owned by a person rather than a queue: {n:,} of {total:,} open Leads.",
+        rule="Shown for information, not scored: Leads owned by a person are usually being worked.",
+        columns=["Name", "Company", "OwnerId", "Status", "CreatedDate"],
+        order="CreatedDate",
         criteria=[
             ("Records checked", f"{total:,} open Leads (not converted)"),
-            ("Told from", source),
-            ("Stale", f"In the same status for {days} days or more ({means}), on Leads created before then"),
-            ("By how long", "; ".join(f"{d}+ days: {c:,}" for d, c in by_age) or "—"),
-            ("What's counted", f"{n:,} of {total:,} open Leads ({pct(n, total):.0f}%) are stale"),
-            ("Records listed", "Every stale open Lead, least recently edited first"),
+            ("Owner", "The Lead Owner is a Salesforce user, not a queue"),
+            ("What's counted", f"{n:,} of {total:,} open Leads ({pct(n, total):.0f}%)"
+             + (f"; most belong to {_owners(owners)}" if owners else "")),
+            ("Records listed", "Every open Lead owned by a person, oldest first"),
         ],
-        records=("Lead", *conds),
-    )
-    owners = ctx.by_owner("Lead", *conds) if n else []
-    ctx.finding(
-        name="Stale open Leads",
-        records=("Lead", *conds),
-        score=score,
-        affected=n,
-        description=f"{n:,} of {total:,} open Leads ({pct(n, total):.0f}%) have been stuck in the same status for {days}+ days."
-        + (f" Most belong to: {_owners(owners)}." if owners else ""),
-        why="Old, untouched leads hide the ones worth working and make the pipeline look bigger than it is.",
-        impact="Missed follow-ups and misleading lead reports.",
-        action="Ask owners to work or disqualify these leads. Add a reminder or escalation (e.g. a scheduled Flow) for leads untouched after a few days.",
-        obj="Lead",
-        url=ctx.list_url("Lead"),
-    )
-
-
-def overdue_opportunities(ctx: Ctx) -> None:
-    total = ctx.count("Opportunity", OPEN_OPPS)
-    ctx.totals["Opportunity"] = total
-    n = ctx.count("Opportunity", OPEN_OPPS, "CloseDate < TODAY") if total else 0
-    score = rate_score(n / total, 0.3) if total else 100
-    ctx.metric(
-        "Overdue Opportunities", n, "count", "lower-better", score,
-        how="Open Opportunities whose close date is already in the past.",
-        rule="100 when no open deals are overdue, falling evenly to 0 when 30% of open deals are.",
-        columns=["Name", "CloseDate", "StageName", "Amount", "NextStep", "OwnerId"],
-        order="CloseDate",
-        criteria=[
-            ("Records checked", f"{total:,} open Opportunities (not Closed Won or Closed Lost)"),
-            ("Field checked", "Close Date"),
-            ("Overdue", "The Close Date is before today"),
-            ("What's counted", f"{n:,} of {total:,} open Opportunities ({pct(n, total):.0f}%) are overdue"),
-            ("Records listed", "Every overdue open Opportunity, oldest close date first"),
-        ],
-        records=("Opportunity", OPEN_OPPS, "CloseDate < TODAY"),
-    )
-    if n:
-        value = ctx.amount("Opportunity", OPEN_OPPS, "CloseDate < TODAY")
-        owners = ctx.by_owner("Opportunity", OPEN_OPPS, "CloseDate < TODAY")
-        ctx.finding(
-            name="Open deals past their close date",
-            records=("Opportunity", OPEN_OPPS, "CloseDate < TODAY"),
-            value=value,
-            score=score,
-            affected=n,
-            description=f"{n:,} of {total:,} open Opportunities ({pct(n, total):.0f}%) have a close date in the past{_worth(value)}."
-            + (f" Most belong to: {_owners(owners)}." if owners else ""),
-            why="Past-due close dates make the forecast wrong and hide deals that are really stalled or lost.",
-            impact="Forecasts you can’t trust and pipeline reviews that miss real risk.",
-            action="Have owners update each deal’s close date and stage, or close it as lost. Review overdue deals in every pipeline meeting.",
-            obj="Opportunity",
-            url=ctx.list_url("Opportunity"),
-        )
-
-
-def escalation_processes(ctx: Ctx) -> None:
-    missing: list[str] = []
-    rules = ctx.setup("SELECT Id, Name, Active FROM AssignmentRule WHERE SobjectType = 'Lead'", tooling=False)
-    if not any(r.get("Active") for r in rules):
-        missing.append("lead assignment rule")
-        _setting(
-            ctx,
-            "No active Lead Assignment Rule",
-            "New leads aren’t routed to anyone automatically" + (f" ({len(rules)} rule(s) exist but none is active)." if rules else "."),
-            "In Setup → Lead Assignment Rules, create and activate a rule that sends leads to the right person or queue.",
-            severity="high",
-            obj="Lead",
-        )
-    try:
-        flows = ctx.setup("SELECT ApiName, Label, ProcessType, TriggerType, TriggerObjectOrEventLabel FROM FlowDefinitionView WHERE IsActive = true", tooling=False)
-        on_lead = [f for f in flows if (f.get("TriggerObjectOrEventLabel") or "") in ("Lead", "Leads")]
-        if not on_lead:
-            missing.append("lead automation")
-            _setting(
-                ctx,
-                "No automation or escalation on Leads",
-                "There are no active Flows or Processes that run on Leads, so nothing reminds or escalates when a lead isn’t worked.",
-                "Add a record-triggered Flow with a scheduled path that alerts the owner (and then their manager) when a new lead isn’t touched in time.",
-                obj="Lead",
-            )
-    except Unavailable:
-        pass  # older orgs or limited access: assignment rules alone still tell us something
-    ctx.metric(
-        "Missing escalation processes", len(missing), "count", "lower-better", [100, 50, 15][min(len(missing), 2)],
-        how="We check two things: is there an active lead assignment rule, and does any active flow or process run on Leads? The number is how many of these are missing.",
-        rule="100 when both are in place, 50 when one is missing, and 15 when both are missing.",
-        criteria=[
-            ("Assignment rules", f"Lead Assignment Rules in Setup: {len(rules)} found, "
-             + ("at least one is active" if any(r.get("Active") for r in rules) else "none is active")),
-            ("Lead automation", "Active Flows or Processes whose trigger object is Lead: "
-             + ("none found" if "lead automation" in missing else "at least one found (or this couldn't be checked with this user)")),
-            ("What's counted", f"{len(missing)} of 2 missing" + (f": {', '.join(missing)}" if missing else "")),
-        ],
-    )
-
-
-def sales_progression(ctx: Ctx) -> None:
-    total = ctx.count("Opportunity", OPEN_OPPS)
-    no_amount = ctx.count("Opportunity", OPEN_OPPS, "Amount = null") if total and ctx.has_field("Opportunity", "Amount") else 0
-    score = rate_score(no_amount / total, 0.3) if total else 100
-    try:
-        rules = ctx.setup("SELECT Id, ValidationName, Active, ErrorMessage FROM ValidationRule WHERE EntityDefinition.QualifiedApiName = 'Opportunity'")
-        if not any(r.get("Active") for r in rules):
-            score = min(score, 70)
-            _setting(
-                ctx,
-                "No rules guide how deals move through stages",
-                "Opportunities have no active validation rules, so deals can jump to late stages without key details like Amount or Next Step.",
-                "Add validation rules for stage gates, e.g. “Amount is required from Proposal onward”, with clear, friendly error messages.",
-                obj="Opportunity",
-            )
-    except Unavailable:
-        pass
-    ctx.metric(
-        "Sales progression issues", no_amount, "count", "lower-better", score,
-        how="Open Opportunities with no Amount. We also check whether Opportunities have any active validation rules guiding how deals move through stages.",
-        rule="100 when every open deal has an Amount, falling evenly to 0 when 30% have none. If Opportunities have no active validation rules, the score can't go above 70.",
-        columns=["Name", "Amount", "StageName", "CloseDate", "NextStep", "OwnerId"],
-        order="CloseDate",
-        criteria=[
-            ("Records checked", f"{total:,} open Opportunities"),
-            ("Field checked", "Amount"),
-            ("Missing", "Amount is empty"),
-            ("Stage rules", "Active validation rules on Opportunity in Setup. With none, the score is capped at 70"),
-            ("What's counted", f"{no_amount:,} of {total:,} open Opportunities ({pct(no_amount, total):.0f}%) have no Amount"),
-            ("Records listed", "Every open Opportunity with no Amount, by close date"),
-        ],
-        records=("Opportunity", OPEN_OPPS, "Amount = null"),
-    )
-    ctx.finding(
-        name="Open deals with no Amount",
-        records=("Opportunity", OPEN_OPPS, "Amount = null"),
-        score=rate_score(no_amount / total, 0.3) if total else 100,
-        affected=no_amount,
-        description=f"{no_amount:,} of {total:,} open Opportunities ({pct(no_amount, total):.0f}%) have no Amount.",
-        why="Deals without an amount can’t be forecast or prioritised.",
-        impact="Pipeline value is understated and managers can’t see what matters most.",
-        action="Fill in amounts (or add products), and require Amount once a deal reaches a qualified stage.",
-        obj="Opportunity",
-        url=ctx.list_url("Opportunity"),
+        records=("Lead", OPEN_LEADS, "Owner.Type = 'User'"),
+        recent=False,
     )
 
 
@@ -1046,7 +916,7 @@ def layout_usability(ctx: Ctx) -> None:
 
 
 AREAS = {
-    "area-3": [unassigned_leads, stale_leads, overdue_opportunities, escalation_processes, sales_progression],
+    "area-3": [stuck_queue_leads, leads_not_in_queue],
     "area-4": [account_relationships, orphaned_contacts, missing_contact_roles, account_hierarchy],
     "area-5": [stuck_opportunities, missing_next_steps, closed_lost_reasons, stage_guidance],
     "area-6": [missing_sales_activities, web_to_lead, email_templates, activity_capture],
@@ -1054,11 +924,8 @@ AREAS = {
 }
 
 STEP_LABELS = {
-    unassigned_leads: "Finding Leads waiting in queues",
-    stale_leads: "Finding stale Leads",
-    overdue_opportunities: "Finding overdue deals",
-    escalation_processes: "Checking lead assignment and escalation",
-    sales_progression: "Checking how deals move through stages",
+    stuck_queue_leads: "Finding Leads stuck in queues",
+    leads_not_in_queue: "Counting Leads owned by people",
     account_relationships: "Checking Account relationships",
     orphaned_contacts: "Finding Contacts without an Account",
     missing_contact_roles: "Checking contact roles on deals",

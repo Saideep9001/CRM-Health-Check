@@ -83,6 +83,7 @@ class Scope:
     stale_lead_days: int = 30
     stuck_opportunity_days: int = 60
     objects: tuple[str, ...] = DEFAULT_OBJECTS
+    queue_lead_days: int = 3  # a Lead in a queue longer than this is stuck
 
 
 @dataclass
@@ -265,18 +266,20 @@ class Ctx:
     def metric(self, label: str, value: float, unit: Unit, direction: Direction, score: float | None, *,
                how: str | None = None, rule: str | None = None,
                records: tuple[str, ...] | list[tuple[str, ...]] | None = None, recent: bool = True,
-               criteria: list[tuple[str, str]] | None = None, columns: list[str] | None = None, order: str | None = None) -> Metric:
+               criteria: list[tuple[str, str]] | None = None, columns: list[str] | None = None, order: str | None = None,
+               extra: str | None = None) -> Metric:
         """Record a measure.
 
         `how` = what we count; `rule` = how it's scored; `criteria` = the exact rules as (name, detail) table rows.
         `records` = (object, *conditions), or a list of them, selecting exactly the records counted, so people can open
         and export them; `columns` = fields that show why each record was flagged (shown first, when the object has them);
         `order` = field to sort by (ascending; "-Amount" = descending), e.g. "Name" so duplicates sit next to each other.
+        `extra` = a column worked out live when the records are listed ("days_in_queue").
         """
         recs = None
         if records:
             recs = [{"object": r[0], "where": self._where(r[0], tuple(r[1:]), recent).removeprefix(" WHERE ") or None,
-                     "columns": list(columns or []), "order": order}
+                     "columns": list(columns or []), "order": order, **({"extra": extra} if extra else {})}
                     for r in ([records] if isinstance(records, tuple) else records) if r]
         crit = [[str(k), str(v)] for k, v in (criteria or []) if k and v] or None
         m = Metric(label, round(value, 1), unit, direction, None if score is None else round(score, 1), how, rule, recs or None, crit)
@@ -286,11 +289,12 @@ class Ctx:
     def finding(self, *, name: str, score: float, affected: int, description: str, why: str, impact: str, action: str,
                 obj: str | None, url: str | None = None, min_score: float = 95,
                 records: tuple[str, ...] | None = None, recent: bool = True, value: float | None = None, fix: str | None = None,
-                measure: str | None = None) -> None:
+                measure: str | None = None, severity: Severity | None = None) -> None:
         """Record a problem when it's big enough to matter (score below `min_score`).
 
         `records` = (object, *conditions) selecting exactly the affected records, so people can see and export them.
         `measure` = the card that raised it, when a step makes several cards for one object.
+        `severity` = set by the check itself instead of from the score.
         """
         if affected <= 0 or score >= min_score:
             return
@@ -299,7 +303,7 @@ class Ctx:
             rec_obj = records[0]
             rec_where = self._where(rec_obj, tuple(records[1:]), recent).removeprefix(" WHERE ") or None
         self.findings.append(FindingDraft(
-            self.area_id, name, severity_for(score), affected, description, why, impact, action, url, obj,
+            self.area_id, name, severity or severity_for(score), affected, description, why, impact, action, url, obj,
             records_object=rec_obj, records_where=rec_where, value_at_risk=value, fix_url=self.setup_url(fix) if fix else None,
             measure=measure,
         ))

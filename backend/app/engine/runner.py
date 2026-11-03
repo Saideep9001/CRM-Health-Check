@@ -158,7 +158,8 @@ def _run(db, http: httpx.Client, row: AssessmentRow) -> None:
     _check_api_budget(sf)
     scope = row.scope or {}
     objects = tuple(dict.fromkeys(scope.get("objects") or DEFAULT_OBJECTS))  # keep order, drop repeats
-    ctx = Ctx(sf, Scope(scope.get("lookbackDays"), scope.get("staleLeadDays", 30), scope.get("stuckOpportunityDays", 60), objects))
+    ctx = Ctx(sf, Scope(scope.get("lookbackDays"), scope.get("staleLeadDays", 30), scope.get("stuckOpportunityDays", 60), objects,
+                        scope.get("queueLeadDays", 3)))
     area_ids = [a for a in scope.get("areaIds", []) if a in AREAS]
     steps = [(a, check) for a in area_ids for check in AREAS[a][1]]
     # Each step's share of the progress bar: none for the per-object steps whose object wasn't chosen (they're skipped at once).

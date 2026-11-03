@@ -19,7 +19,7 @@ from ..engine.combine import combined_view
 from ..engine import jobs
 from ..engine.runner import EXECUTABLE_AREA_IDS
 from ..models import AssessmentRow, FindingRow
-from ..salesforce import activity, explorer, finder, service
+from ..salesforce import activity, explorer, finder, queues, service
 from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
 from ..schemas import (
     FieldValues,
@@ -347,14 +347,16 @@ def finding_records_csv(
 
 def _records_csv(db: Session, http: httpx.Client, settings: Settings, org_id: str | None, obj: str, where: str | None, title: str,
                  columns: list[str] | None = None, order: str | None = None, filters: list[dict] | None = None,
-                 notes: dict[str, dict[str, str]] | None = None) -> Response:
+                 notes: dict[str, dict[str, str]] | None = None, extra: str | None = None) -> Response:
     def collect(sf):
         page = explorer.records_matching(sf, obj, where, page_size=2000, columns=columns, order=order, filters=filters)
         rows = list(page["records"])
         while page["next_cursor"] and len(rows) < CSV_LIMIT:
             page = explorer.records_matching(sf, obj, where, page["next_cursor"], page_size=2000, columns=columns, order=order)
             rows += page["records"]
-        return page["columns"], rows[:CSV_LIMIT], page["record_url_prefix"]
+        rows = rows[:CSV_LIMIT]
+        cols = queues.add_days_in_queue(sf, page["columns"], rows) if extra == "days_in_queue" else page["columns"]
+        return cols, rows, page["record_url_prefix"]
 
     columns, rows, prefix = _salesforce(db, http, settings, collect, org_id)
     out = io.StringIO()
@@ -431,6 +433,8 @@ def indicator_records(
     rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, object, only, period)
     page = _salesforce(db, http, settings, lambda sf: explorer.records_matching(
         sf, rec["object"], rec.get("where"), cursor, columns=rec.get("columns"), order=rec.get("order"), filters=_filters(filters)), org_id)
+    if rec.get("extra") == "days_in_queue":  # worked out live, so it's always current
+        page["columns"] = _salesforce(db, http, settings, lambda sf: queues.add_days_in_queue(sf, page["columns"], page["records"]), org_id)
     notes = rec.get("notes") or {}  # why each value was flagged, saved by the check (e.g. Data Standardization)
     page["cell_notes"] = {r["id"]: notes[r["id"]] for r in page["records"] if r.get("id") in notes}
     return page
@@ -471,7 +475,7 @@ def indicator_records_csv(
 ):
     rec, org_id, title = _indicator_records(db, assessment_id, area_id, label, object, only, period)
     return _records_csv(db, http, settings, org_id, rec["object"], rec.get("where"), title, rec.get("columns"), rec.get("order"), _filters(filters),
-                        notes=rec.get("notes"))
+                        notes=rec.get("notes"), extra=rec.get("extra"))
 
 
 @router.get("/findings/{finding_id}", response_model=Finding)

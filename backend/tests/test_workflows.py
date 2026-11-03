@@ -31,7 +31,10 @@ USERS = {"005000000000001": "Ann Lee", "005000000000002": "Bob Ray", "0050000000
 
 # COUNT() answers: first rule whose substrings all appear in the query wins.
 COUNTS = [
+    (("FROM Lead", "Owner.Type = 'Queue'", "LAST_N_DAYS:10"), 3),  # stuck in a queue 10+ days (Critical, with a 5-day setting)
+    (("FROM Lead", "Owner.Type = 'Queue'", "LAST_N_DAYS:5"), 8),  # stuck in a queue 5+ days
     (("FROM Lead", "Owner.Type = 'Queue'"), 12),
+    (("FROM Lead", "Owner.Type = 'User'"), 40),
     (("FROM Lead", "LeadSource IN", "LAST_N_DAYS:90"), 25),
     (("FROM Lead", "LeadSource IN", "LAST_N_DAYS:14"), 0),
     (("FROM Lead", "LeadHistory WHERE Field = 'Status' AND"), 20),  # stale: no Status change (Lead History)
@@ -125,7 +128,7 @@ def sf():
 
 def run(client, **scope):
     conn = client.get(f"{API}/salesforce/connection").json()
-    body = {"categoryIds": ["workflows"], "areaIds": list(AREAS), "staleLeadDays": 14, "stuckOpportunityDays": 45, **scope}
+    body = {"categoryIds": ["workflows"], "areaIds": list(AREAS), "staleLeadDays": 14, "stuckOpportunityDays": 45, "queueLeadDays": 5, **scope}
     aid = client.post(f"{API}/assessments", json={"name": "Workflows", "connectionId": conn["id"], "scope": body}).json()["id"]
     a = client.get(f"{API}/assessments/{aid}").json()
     res = client.get(f"{API}/assessments/{aid}/results").json()
@@ -140,8 +143,9 @@ def test_all_workflow_areas(client, sf):
     areas = {x["areaId"]: x for x in res["areas"]}
     assert all(areas[i]["status"] == "assessed" and areas[i]["score"] is not None for i in AREAS), areas
     ind = {i["label"]: i["value"] for x in res["areas"] for i in x["indicators"]}
-    assert ind["Unassigned Leads"] == 12 and ind["Stale Leads"] == 20 and ind["Overdue Opportunities"] == 8
-    assert ind["Missing escalation processes"] == 2  # no active assignment rule, no lead automation
+    assert set(ind) >= {"Stuck Leads in Queue", "Leads Not Assigned to Any Queue"}
+    assert ind["Stuck Leads in Queue"] == 8 and ind["Leads Not Assigned to Any Queue"] == 40
+    assert {i["label"] for i in areas["area-3"]["indicators"]} == {"Stuck Leads in Queue", "Leads Not Assigned to Any Queue"}
     assert ind["Missing Contact Roles"] == 15 and ind["Orphaned Contacts"] == 9 and ind["Missing Account relationships"] == 30
     assert ind["Account hierarchy issues"] == 2  # no parents on 100 accounts; no AccountContactRelation
     assert ind["Stuck Opportunities"] == 10 and ind["Missing Next Steps"] == 18 and ind["Missing Closed Lost reasons"] == 6
@@ -156,14 +160,14 @@ def test_all_workflow_areas(client, sf):
     assert "Placeholder or junk values" in names
     assert "Website leads have stopped arriving" in names and names["Website leads have stopped arriving"]["severity"] == "critical"
     assert "Bob Ray" in names["Reps with no logged activity"]["description"]
-    assert "worth 50,000" in names["Open deals past their close date"]["description"] and "Jane Doe" in names["Open deals past their close date"]["description"]
-    assert "Old Lead" in names["Leads waiting in a queue"]["description"]
+    stuck = names["Leads stuck in a queue"]
+    assert stuck["severity"] == "critical" and "3 of them for more than 10 days" in stuck["description"] and "Jane Doe" in stuck["description"]
     assert "“Big Deal” (Proposal, 90,000)" in names["Stuck deals"]["description"]
     assert "Loss Reason" in names["Lost deals with no reason"]["description"]
-    assert "Unclear validation error messages" in names and "No active Lead Assignment Rule" in names
+    assert "Unclear validation error messages" in names
     assert names["Open deals with no contact roles"]["objectName"] == "Opportunity"
     assert all(q.lstrip().upper().startswith("SELECT") for q in sf.soql)
-    assert any("LAST_N_DAYS:14" in q and "FROM Lead" in q and "LeadHistory WHERE Field = 'Status'" in q for q in sf.soql)  # stale-lead setting used
+    assert any("LAST_N_DAYS:5" in q and "Owner.Type = 'Queue'" in q and "LeadHistory WHERE Field = 'Owner'" in q for q in sf.soql)  # queue setting used
     assert any("LAST_N_DAYS:45" in q and "LastStageChangeDate" in q for q in sf.soql)  # stuck-deal setting used
 
 

@@ -254,6 +254,8 @@ export interface AssessmentScope {
   /** Thresholds the engine uses (e.g. stale-lead days). */
   staleLeadDays: number;
   stuckOpportunityDays: number;
+  /** A Lead in a queue longer than this many days is stuck (area 3). */
+  queueLeadDays?: number;
   /** Salesforce objects to check (API names). Omitted = Account, Contact, Lead, Opportunity. */
   objects?: string[] | null;
 }

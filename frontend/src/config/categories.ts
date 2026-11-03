@@ -77,16 +77,10 @@ export const DIAGNOSTIC_AREAS: DiagnosticArea[] = [
     id: 'area-3',
     number: 3,
     categoryId: 'workflows',
-    name: 'Lead Assignments, Escalations & Sales Progression',
+    name: 'Lead Queues & Assignment',
     description:
-      'Assess Lead assignment processes, escalation mechanisms, and the consistency of sales stage progression.',
-    indicators: [
-      'Unassigned Leads',
-      'Stale Leads',
-      'Overdue Opportunities',
-      'Missing escalation processes',
-      'Sales progression issues',
-    ],
+      'Find Leads left in a queue without a sales user claiming them, and see which Leads are owned by people rather than a queue.',
+    indicators: ['Stuck Leads in Queue', 'Leads Not Assigned to Any Queue'],
   },
   {
     id: 'area-4',
