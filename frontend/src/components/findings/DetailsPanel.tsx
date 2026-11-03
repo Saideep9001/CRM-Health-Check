@@ -124,10 +124,28 @@ function mergeDuplicates(check: FieldCheckResult, picked: string[]): DuplicateRe
     ...(picked.includes(ALL) && check.combined ? [check.combined] : []),
   ];
   if (!parts.length) return null;
-  const all = parts.flatMap((p) => p.columns).filter((c, i, cols) => cols.findIndex((x) => x.name === c.name) === i);
-  // The table shows only the ticked fields (all of them when "All fields together" is ticked).
-  const onlyPicked = picked.includes(ALL) ? all : all.filter((c) => picked.includes(c.name));
-  const columns = onlyPicked.length ? onlyPicked : all;
+  const columns = parts.flatMap((p) => p.columns).filter((c, i, cols) => cols.findIndex((x) => x.name === c.name) === i);
+  const groups = parts.flatMap((p) => p.groups).sort((a, b) => b.size - a.size);
+  // Several fields: a record can be in a group for each field. When every group is here, count each record once and
+  // keep one record per set of linked groups, so the totals never pass the number of records.
+  let counts: Pick<DuplicateResult, 'extraCopies' | 'kept'> = { extraCopies: parts.reduce((n, p) => n + p.extraCopies, 0) };
+  if (parts.length > 1 && parts.every((p) => p.groups.length === p.totalGroups) && groups.every((g) => g.records.every((r) => r.id))) {
+    const up = new Map<string, string>();
+    const root = (x: string): string => {
+      const p = up.get(x) ?? x;
+      if (p === x) return x;
+      const r = root(p);
+      up.set(x, r);
+      return r;
+    };
+    for (const g of groups) {
+      const first = root(g.records[0].id!);
+      for (const r of g.records) up.set(root(r.id!), first);
+    }
+    const ids = [...new Set(groups.flatMap((g) => g.records.map((r) => r.id!)))];
+    const sets = new Set(ids.map(root)).size;
+    counts = { extraCopies: ids.length - sets, kept: sets };
+  }
   return {
     ...parts[0],
     rules: parts.flatMap((p) => p.rules),
@@ -135,8 +153,8 @@ function mergeDuplicates(check: FieldCheckResult, picked: string[]): DuplicateRe
     columns,
     truncated: parts.some((p) => p.truncated),
     totalGroups: parts.reduce((n, p) => n + p.totalGroups, 0),
-    extraCopies: parts.reduce((n, p) => n + p.extraCopies, 0),
-    groups: parts.flatMap((p) => p.groups).sort((a, b) => b.size - a.size),
+    ...counts,
+    groups,
   };
 }
 const URGENCY: { severity: Severity; label: string; range: string }[] = [
@@ -348,7 +366,11 @@ function Records({
         ) : dupResult ? (
           <div className="rounded-xl border border-line p-4">
             <h4 className="mb-3 text-sm font-semibold">Duplicates on {dupResult.rules.map((r) => r.join(' + ')).join(' · ')}</h4>
-            <DuplicateResults result={dupResult} fileName={`duplicate-${object!.toLowerCase()}s.csv`} />
+            <DuplicateResults
+              result={dupResult}
+              fileName={`duplicate-${object!.toLowerCase()}s.csv`}
+              flag={dupPicked!.includes(ALL) ? null : dupPicked}
+            />
           </div>
         ) : noneTicked ? (
           <p className="rounded-xl border border-dashed border-line px-4 py-8 text-center text-sm text-ink-muted">

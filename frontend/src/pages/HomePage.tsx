@@ -33,7 +33,7 @@ import { BrandMark } from '@/components/ui/Brand';
 import { InfoTip } from '@/components/ui/HelpTip';
 import { LinkButton } from '@/components/ui/Button';
 import { CategoryTile } from '@/components/ui/CategoryIcon';
-import { CATEGORIES, CATEGORY_COLORS, DIAGNOSTIC_AREAS, getAreaRelease, getAreasForCategory } from '@/config/categories';
+import { CATEGORIES, CATEGORY_COLORS, DIAGNOSTIC_AREAS, getAreasForCategory } from '@/config/categories';
 import { cx } from '@/lib/format';
 
 const NAV = [
@@ -45,12 +45,11 @@ const NAV = [
 ];
 
 const MVP_CATEGORY_COUNT = CATEGORIES.filter((c) => c.release === 'mvp').length;
-const MVP_AREA_COUNT = DIAGNOSTIC_AREAS.filter((a) => getAreaRelease(a) === 'mvp').length;
 
 const FACTS = [
   { value: String(CATEGORIES.length), label: 'Topics we check' },
   { value: String(DIAGNOSTIC_AREAS.length), label: 'Areas we check' },
-  { value: String(MVP_AREA_COUNT), label: 'Ready to check today' },
+  { value: 'Live', label: 'Read straight from Salesforce' },
   { value: 'Read-only', label: 'We never change your data' },
 ];
 

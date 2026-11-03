@@ -8,7 +8,7 @@ import { measureFor } from '@/components/findings/DetailsPanel';
 import { SEVERITY_RANK } from '@/lib/health';
 import { TopicHero } from '@/components/category/TopicHero';
 import { Button, LinkButton } from '@/components/ui/Button';
-import { SearchInput, Select } from '@/components/ui/Form';
+import { SearchInput } from '@/components/ui/Form';
 import { Notice } from '@/components/ui/Page';
 import { EmptyState, ErrorState } from '@/components/ui/States';
 import { CATEGORY_COLORS, getAreasForCategory, getCategory } from '@/config/categories';
@@ -17,16 +17,12 @@ import { findingsForArea, findingsForCategory, getAreaResult, getCategoryCoverag
 import { cx } from '@/lib/format';
 import NotFoundPage from './NotFoundPage';
 
-type AssessedFilter = 'all' | 'assessed' | 'not-assessed';
-type FindingFilter = 'all' | 'with' | 'without';
 
 export default function CategoryPage() {
   const { categoryId = '' } = useParams();
   const category = getCategory(categoryId);
   const { state, error, refetch, latest, results, findings } = useLatestAssessment();
   const [q, setQ] = useState('');
-  const [assessedFilter, setAssessedFilter] = useState<AssessedFilter>('all');
-  const [findingFilter, setFindingFilter] = useState<FindingFilter>('all');
   // A problem opened from a card's "Fix first" list, shown in a side panel on this page.
   const navigate = useNavigate();
   const openProblem = (id: string) => navigate(`/problems/${encodeURIComponent(id)}`);
@@ -48,19 +44,14 @@ export default function CategoryPage() {
   if (!category) return <NotFoundPage />;
 
   const term = q.trim().toLowerCase();
-  const filtered = areas.filter((a) => {
-    const n = findingsForArea(findings, a.id).length;
-    const done = getAreaResult(results, a.id)?.status === 'assessed';
-    return (
-      (!term ||
-        a.name.toLowerCase().includes(term) ||
-        a.description.toLowerCase().includes(term) ||
-        a.indicators.some((i) => i.toLowerCase().includes(term)) ||
-        String(a.number) === term) &&
-      (assessedFilter === 'all' || (assessedFilter === 'assessed' ? done : !done)) &&
-      (findingFilter === 'all' || (findingFilter === 'with' ? n > 0 : n === 0))
-    );
-  });
+  const filtered = areas.filter(
+    (a) =>
+      !term ||
+      a.name.toLowerCase().includes(term) ||
+      a.description.toLowerCase().includes(term) ||
+      a.indicators.some((i) => i.toLowerCase().includes(term)) ||
+      String(a.number) === term,
+  );
 
   const color = CATEGORY_COLORS[category.id];
   const score = getCategoryScore(results, category.id);
@@ -116,28 +107,6 @@ export default function CategoryPage() {
         </h2>
         <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap lg:justify-end">
           <SearchInput value={q} onChange={setQ} placeholder="Search areas…" className="sm:w-64" />
-          <Select<AssessedFilter>
-            label="Filter by status"
-            value={assessedFilter}
-            onChange={setAssessedFilter}
-            className="sm:w-44"
-            options={[
-              { value: 'all', label: 'All areas' },
-              { value: 'assessed', label: 'Checked' },
-              { value: 'not-assessed', label: 'Not checked yet' },
-            ]}
-          />
-          <Select<FindingFilter>
-            label="Filter by problems"
-            value={findingFilter}
-            onChange={setFindingFilter}
-            className="sm:w-44"
-            options={[
-              { value: 'all', label: 'With or without problems' },
-              { value: 'with', label: 'Has problems' },
-              { value: 'without', label: 'No problems' },
-            ]}
-          />
         </div>
       </div>
 
@@ -150,13 +119,9 @@ export default function CategoryPage() {
             action={
               <Button
                 size="sm"
-                onClick={() => {
-                  setQ('');
-                  setAssessedFilter('all');
-                  setFindingFilter('all');
-                }}
+                onClick={() => setQ('')}
               >
-                Clear filters
+                Clear search
               </Button>
             }
           />

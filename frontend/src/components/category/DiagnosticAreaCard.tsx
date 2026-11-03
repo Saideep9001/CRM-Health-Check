@@ -32,6 +32,9 @@ function indicatorTone(i: IndicatorValue): 'good' | 'warn' | 'bad' {
 
 const DOT = { good: 'bg-good', warn: 'bg-warn', bad: 'bg-bad' };
 
+/** What the measure counted, for the tooltip on its score (e.g. "45" or "98%"). */
+const counted = (i: IndicatorValue) => `${fmtNumber(Math.round(i.value))}${i.unit === '%' ? '%' : ''}`;
+
 /** Does a measure belong to an object ("Missing Key Fields (Accounts)", "Duplicate Accounts", "Accounts Without Contacts")? */
 export function measureOf(label: string, plural: string) {
   return label.endsWith(`(${plural})`) || label === `Duplicate ${plural}` || label === `Stale ${plural}` || label.startsWith(`${plural} Without`);
@@ -170,10 +173,16 @@ export function DiagnosticAreaCard({
                       {current ? shortName(i.label, current.label) : i.label}
                     </span>
                     {urgency && <span className={cx('shrink-0 rounded px-1.5 py-px text-[9px] font-semibold uppercase', URGENCY_CLASS[urgency])}>{urgency}</span>}
-                    <span className="font-semibold tabular-nums">
-                      {fmtNumber(Math.round(i.value))}
-                      {i.unit === '%' && '%'}
-                    </span>
+                    {i.score != null ? (
+                      <span className="flex shrink-0 items-center gap-2" title={`Score ${Math.round(i.score)}% · counted: ${counted(i)}`}>
+                        <span className="h-1.5 w-14 overflow-hidden rounded-full bg-muted">
+                          <span className={cx('block h-full rounded-full', DOT[cardTone(i.score)])} style={{ width: `${Math.max(2, Math.min(100, i.score))}%` }} />
+                        </span>
+                        <span className="w-9 text-right font-semibold tabular-nums">{Math.round(i.score)}%</span>
+                      </span>
+                    ) : (
+                      <span className="font-semibold tabular-nums" title="Shown for information; not scored">{counted(i)}</span>
+                    )}
                   </button>
                 </li>
               );

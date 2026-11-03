@@ -82,7 +82,7 @@ export function ScoreRing({
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center" style={{ height: size }}>
         <span className="font-semibold tracking-tight" style={{ fontSize: size * 0.27 }}>
-          {score === null ? '—' : <AnimatedNumber value={score} />}
+          {score === null ? '—' : <><AnimatedNumber value={score} /><span style={{ fontSize: size * 0.15 }}>%</span></>}
         </span>
         {label && <span className="text-[11px] font-medium text-ink-subtle">{label}</span>}
       </div>

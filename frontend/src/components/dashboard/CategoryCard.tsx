@@ -101,11 +101,11 @@ export function CategoryCard({
             <dd className="mt-0.5 text-sm font-semibold">{coverage === 'not-assessed' ? '—' : count}</dd>
           </div>
           <div>
-            <dt className="text-[11px] text-ink-subtle" title="Score out of 100 — higher is healthier">
+            <dt className="text-[11px] text-ink-subtle" title="Health score: 100% means no problems were found">
               Score
             </dt>
             <dd className="mt-0.5 text-sm font-semibold" style={{ color: band.color }}>
-              {score !== null ? score : '—'}
+              {score !== null ? `${score}%` : '—'}
             </dd>
           </div>
         </dl>

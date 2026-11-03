@@ -57,10 +57,11 @@ export function HealthScoreCard({
       <div className="mt-1 flex items-baseline gap-2">
         <span className="text-[28px] font-semibold leading-none tracking-tight">
           {value === null ? '—' : <AnimatedNumber value={value} format={value > 99_999 ? fmtCompact : fmtNumber} />}
+          {isScore && value !== null && '%'}
         </span>
         {isScore && value !== null && (
-          <span className="text-sm text-ink-subtle" title="A score from 0 to 100 (not a percentage): 100 means no problems were found">
-            score out of 100
+          <span className="text-sm text-ink-subtle" title="100% means no problems were found">
+            health score
           </span>
         )}
       </div>

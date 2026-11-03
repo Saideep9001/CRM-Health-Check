@@ -408,7 +408,7 @@ export function FieldCheck({
                         <span className="block text-[11px] text-ink-subtle">{f.name}</span>
                       </td>
                       <td className="px-3 py-2 tabular-nums text-ink-muted">
-                        {fmtNumber(f.filled)} <span className="text-[11px]">({result.scanned ? Math.round((100 * f.filled) / result.scanned) : 0}%)</span>
+                        {fmtNumber(f.filled)}
                       </td>
                       {shows('empty') && (
                         <Cell on={isOn(f.name, 'empty')} onClick={() => choose(f.name, 'empty')} tick={inRecords(f.name, 'empty')} value={f.empty} hint="records" tone="text-bad" />

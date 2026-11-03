@@ -145,6 +145,8 @@ export interface DuplicateResult {
   truncated: boolean;
   totalGroups: number;
   extraCopies: number;
+  /** Records to keep, when groups were merged across fields (linked groups count once); else one per group. */
+  kept?: number;
   groups: { size: number; matchedOn: string; records: { id: string | null; values: Record<string, unknown> }[] }[];
   recordUrlPrefix: string;
 }

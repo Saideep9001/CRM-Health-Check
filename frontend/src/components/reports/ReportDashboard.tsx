@@ -82,7 +82,7 @@ export function ReportDashboard({
         <Panel title={category === 'all' ? 'Overall health' : 'Topic health'} info="The score from this health check. Areas checked earlier are included.">
           <div className="relative flex h-[250px] flex-col items-center justify-center">
             <div className="absolute h-40 w-40 rounded-full blur-3xl" style={{ background: band.color, opacity: score === null ? 0 : 0.18 }} />
-            <ScoreRing score={score} size={170} stroke={14} label="out of 100" showBand={false} />
+            <ScoreRing score={score} size={170} stroke={14} label="health score" showBand={false} />
             <span className="relative mt-3 rounded-full px-3 py-1 text-xs font-semibold" style={{ color: band.color, background: `color-mix(in srgb, ${band.color} 12%, transparent)` }}>
               {band.label}
             </span>
