@@ -126,8 +126,10 @@ class FakeSalesOrg(FakeSalesforce):
             return [{"o": u, "c": 2} for u in USERS] + [{"o": "00G000000000001", "c": 4}]
         if q.startswith("SELECT Id, OwnerId, Owner.Name, CreatedDate"):
             return LEADS
-        if "FROM QueueSobject" in q:
-            return [{"Queue": {"Name": "Jane Doe"}}, {"Queue": {"Name": "Web Queue"}}]
+        if "FROM QueueSobject" in q:  # Lead queues; "Jane Doe" isn't listed, so it's found by name
+            return [{"QueueId": "00G000000000002AAA", "Queue": {"Name": "Web Queue"}}]
+        if "FROM Group WHERE Type = 'Queue' AND Name IN" in q:
+            return [{"Id": "00G000000000001AAA", "Name": "Jane Doe"}] if "'Jane Doe'" in q else []
         if "Username IN" in q:
             return [{"Id": "005000000000001"}] if "'ann@acme.test'" in q else []
         if "FROM Group WHERE Type = 'Queue'" in q:
@@ -245,15 +247,17 @@ def test_stuck_queue_leads_filter_by_queue(client, sf):
     params = {"label": "Stuck Leads in Queue", "object": "Lead"}
     queues = client.get(f"{base}/indicator-queues", params=params)
     # every Lead queue, the empty ones too (0), most stuck Leads first
-    assert queues.status_code == 200 and queues.json() == [{"name": "Jane Doe", "count": 5}, {"name": "Web Queue", "count": 0}]
+    assert queues.status_code == 200 and queues.json() == [
+        {"id": "00G000000000001AAA", "name": "Jane Doe", "count": 5}, {"id": "00G000000000002AAA", "name": "Web Queue", "count": 0}]
     assert any("GROUP BY Owner.Name" in q and "Owner.Type = 'Queue'" in q for q in sf.soql)
-    assert "FROM QueueSobject WHERE SobjectType = 'Lead'" in sf.soql[-1]
+    assert any("FROM QueueSobject WHERE SobjectType = 'Lead'" in q for q in sf.soql)
 
     for path in ("indicator-records", "indicator-records.csv"):
-        assert client.get(f"{base}/{path}", params={**params, "queue": "Sales - Lead's"}).status_code == 200
-        assert "AND Owner.Name = 'Sales - Lead\\'s'" in next(q for q in reversed(sf.soql) if "FROM Lead WHERE" in q and "LeadHistory WHERE Field = 'Owner' AND LeadId" not in q)
+        assert client.get(f"{base}/{path}", params={**params, "queue": "00G000000000001AAA"}).status_code == 200
+        assert "AND OwnerId = '00G000000000001AAA'" in next(q for q in reversed(sf.soql) if "FROM Lead WHERE" in q and "LeadHistory WHERE Field = 'Owner' AND LeadId" not in q)
+    assert client.get(f"{base}/indicator-records", params={**params, "queue": "x' OR Id != null"}).status_code == 422
     other = {"label": "Unassigned Leads – No Assignment Rule Match", "object": "Lead"}
-    assert client.get(f"{base}/indicator-records", params={**other, "queue": "Sales"}).status_code == 422
+    assert client.get(f"{base}/indicator-records", params={**other, "queue": "00G000000000001AAA"}).status_code == 422
     assert client.get(f"{base}/indicator-queues", params=other).status_code == 422
 
 

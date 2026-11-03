@@ -36,7 +36,7 @@ import { InlineError } from '../ui/States';
 import { ChangeBadge } from './AffectedRecords';
 import { FixPlanPanel } from './FixPlanPanel';
 import { ActivityPeriod } from './ActivityPeriod';
-import { QueueFilter } from './QueueFilter';
+import { QueueFilter, type PickedQueue } from './QueueFilter';
 import { RecordsTable } from './RecordsTable';
 import { DuplicateResults } from './DuplicateFinder';
 import { ALL } from './FieldCheck';
@@ -331,12 +331,12 @@ function Records({
   const [period, setPeriod] = useState<string | undefined>();
   // Stuck Leads in Queue: only the Leads in one queue (undefined = every queue).
   const byQueue = indicator?.label === 'Stuck Leads in Queue';
-  const [queue, setQueue] = useState<string | undefined>();
+  const [queue, setQueue] = useState<PickedQueue | undefined>();
   useEffect(() => {
     setPeriod(undefined);
     setQueue(undefined);
   }, [object, indicator?.label]);
-  const measureRecords = useIndicatorRecords(useMeasure ? measureAssessmentId : null, area.id, indicator?.label ?? '', object, filters, only, period, queue);
+  const measureRecords = useIndicatorRecords(useMeasure ? measureAssessmentId : null, area.id, indicator?.label ?? '', object, filters, only, period, queue?.id);
   const missing = /^missing/i.test(indicator?.label ?? '');
   // The flow follows what the person picked: the fields ticked in Check fields, and the table's column filters (its count).
   const standardization = /^data standardi/i.test(indicator?.label ?? '');
@@ -397,8 +397,8 @@ function Records({
             to finish reading the records (usually under a minute), then tick that field.
           </p>
         )}
-        {/* Stuck Leads in Queue: the org's Lead queues beside the records, click one to see only its Leads */}
-        <div className={cx(byQueue && 'flex flex-col gap-3 lg:flex-row lg:items-start')}>
+        {/* Stuck Leads in Queue: the org's Lead queues side by side above the records, click one to see only its Leads */}
+        <div className={cx(byQueue && 'space-y-3')}>
         {byQueue && (
           <QueueFilter assessmentId={measureAssessmentId!} areaId={area.id} label={indicator!.label} object={object!} value={queue} onChange={setQueue} />
         )}
@@ -409,19 +409,19 @@ function Records({
             only.length
               ? `${objectLabel(object!)} · ${only.map((f) => choices.find((c) => c.field === f)?.label ?? f).join(', ')}`
               : queue
-                ? `${objectLabel(object!)} · ${queue}`
+                ? `${objectLabel(object!)} · ${queue.name}`
                 : objectLabel(object!)
           }
           grouped={duplicates}
-          csvUrl={indicatorApi.csvUrl(measureAssessmentId!, area.id, indicator!.label, object!, filters, only, period, queue)}
+          csvUrl={indicatorApi.csvUrl(measureAssessmentId!, area.id, indicator!.label, object!, filters, only, period, queue?.id)}
           toolbar={noActivity ? <ActivityPeriod key={`${object}-${indicator!.label}`} onChange={setPeriod} /> : undefined}
           filters={filters}
           onFiltersChange={setFilters}
           keyFields={missing && only.length ? only : keyFields}
           markOnly={only}
           valuesSource={{
-            key: ['indicator', measureAssessmentId, area.id, indicator!.label, object, only, period, queue],
-            load: (field, others, signal) => indicatorApi.values(measureAssessmentId!, area.id, indicator!.label, object!, field, others, signal, only, period, queue),
+            key: ['indicator', measureAssessmentId, area.id, indicator!.label, object, only, period, queue?.id],
+            load: (field, others, signal) => indicatorApi.values(measureAssessmentId!, area.id, indicator!.label, object!, field, others, signal, only, period, queue?.id),
           }}
         />
         </div>

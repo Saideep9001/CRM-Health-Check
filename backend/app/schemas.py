@@ -136,6 +136,7 @@ class FieldValues(ApiModel):
 
 
 class QueueCount(ApiModel):
+    id: str  # the queue (a Group id), for the filter
     name: str  # the queue's name
     count: int  # Leads in it
 

@@ -17,7 +17,7 @@ from ..db import get_db
 from ..deps import http_dep, settings_dep
 from ..engine.combine import combined_view
 from ..engine import jobs
-from ..engine.core import soql_str
+from ..engine.core import in_list
 from ..engine.runner import EXECUTABLE_AREA_IDS
 from ..models import AssessmentRow, FindingRow
 from ..salesforce import activity, assignment, explorer, finder, queues, service
@@ -393,7 +393,7 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
     """(object, where, org id, title) for one measure of one area, as saved by the health check that measured it.
     `only` = comma-separated fields: just the records with a problem in one of them (a flagged value, or for a
     missing-fields measure an empty value). `period` (No Activity only) = "90", "180" or "range:YYYY-MM-DD:YYYY-MM-DD" instead of
-    the health check's 6 months. `queue` (Stuck Leads in Queue only) = just the Leads in that queue, by its name."""
+    the health check's 6 months. `queue` (Stuck Leads in Queue only) = just the Leads in that queue, by its id."""
     row = _get(db, assessment_id)
     area = next((a for a in (row.results or {}).get("areas", []) if a.get("areaId") == area_id), None)
     ind = next((i for i in (area or {}).get("indicators", []) if i.get("label") == label), None)
@@ -411,7 +411,9 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
     if queue:
         if rec.get("extra") != "days_in_queue":
             raise HTTPException(422, "Only the Stuck Leads in Queue measure takes a queue.")
-        rec = {**rec, "where": f"({rec['where']}) AND Owner.Name = {soql_str(queue)}" if rec.get("where") else f"Owner.Name = {soql_str(queue)}"}
+        if not re.fullmatch(r"00G[A-Za-z0-9]{12}([A-Za-z0-9]{3})?", queue):
+            raise HTTPException(422, "Unknown queue.")
+        rec = {**rec, "where": f"({rec['where']}) AND OwnerId = '{queue}'" if rec.get("where") else f"OwnerId = '{queue}'"}
     if only:
         fields = [f.strip() for f in only.split(",") if f.strip()][:20]
         if any(not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*(\.Name)?", f) for f in fields):  # a field, or a parent's name (Account.Name)
@@ -441,7 +443,7 @@ def indicator_records(
     filters: str | None = Query(None, max_length=12000, description='JSON list of {"field","op","value"} column filters'),
     only: str | None = Query(None, max_length=1200, description="Comma-separated fields: only records with a problem in one of them"),
     period: str | None = Query(None, max_length=40, description='No Activity only: "90", "180" or "range:YYYY-MM-DD:YYYY-MM-DD"'),
-    queue: str | None = Query(None, max_length=80, description="Stuck Leads in Queue only: the queue's name"),
+    queue: str | None = Query(None, max_length=80, description="Stuck Leads in Queue only: the queue's id"),
     db: Session = Depends(get_db),
     http: httpx.Client = Depends(http_dep),
     settings: Settings = Depends(settings_dep),
@@ -478,19 +480,23 @@ def indicator_queues(
         counts = {r["o"]: int(r.get("c") or 0) for r in sf.query(
             f"SELECT Owner.Name o, COUNT(Id) c FROM {rec['object']}{where} GROUP BY Owner.Name ORDER BY COUNT(Id) DESC LIMIT 200").get("records", [])
             if r.get("o")}
+        queues: dict[str, str] = {}  # id -> name
         try:  # the org's Lead queues, so the empty ones show too
-            names = [(r.get("Queue") or {}).get("Name") for r in sf.query(
-                f"SELECT Queue.Name FROM QueueSobject WHERE SobjectType = '{rec['object']}' ORDER BY Queue.Name LIMIT 500").get("records", [])]
+            for r in sf.query(f"SELECT QueueId, Queue.Name FROM QueueSobject WHERE SobjectType = '{rec['object']}' LIMIT 500").get("records", []):
+                if r.get("QueueId") and (r.get("Queue") or {}).get("Name"):
+                    queues[r["QueueId"]] = r["Queue"]["Name"]
         except SalesforceAuthExpired:
             raise
         except SalesforceError:
-            names = []
-        for n in names:
-            if n:
-                counts.setdefault(n, 0)
-        return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0].lower()))
+            pass
+        missing = [n for n in counts if n not in queues.values()]
+        if missing:  # counted, but not listed as a Lead queue (or the list couldn't be read): find them by name
+            for r in sf.query(f"SELECT Id, Name FROM Group WHERE Type = 'Queue' AND {in_list('Name', missing)}").get("records", []):
+                queues.setdefault(r["Id"], r["Name"])
+        out = [{"id": i, "name": n, "count": counts.get(n, 0)} for i, n in queues.items()]
+        return sorted(out, key=lambda q: (-q["count"], q["name"].lower()))
 
-    return [{"name": n, "count": c} for n, c in _salesforce(db, http, settings, load, org_id)]
+    return _salesforce(db, http, settings, load, org_id)
 
 
 @router.get("/assessments/{assessment_id}/areas/{area_id}/indicator-values", response_model=FieldValues)
@@ -503,7 +509,7 @@ def indicator_values(
     filters: str | None = Query(None, max_length=12000),
     only: str | None = Query(None, max_length=1200),
     period: str | None = Query(None, max_length=40, description='No Activity only: "90", "180" or "range:YYYY-MM-DD:YYYY-MM-DD"'),
-    queue: str | None = Query(None, max_length=80, description="Stuck Leads in Queue only: the queue's name"),
+    queue: str | None = Query(None, max_length=80, description="Stuck Leads in Queue only: the queue's id"),
     db: Session = Depends(get_db),
     http: httpx.Client = Depends(http_dep),
     settings: Settings = Depends(settings_dep),
@@ -523,7 +529,7 @@ def indicator_records_csv(
     filters: str | None = Query(None, max_length=12000),
     only: str | None = Query(None, max_length=1200),
     period: str | None = Query(None, max_length=40, description='No Activity only: "90", "180" or "range:YYYY-MM-DD:YYYY-MM-DD"'),
-    queue: str | None = Query(None, max_length=80, description="Stuck Leads in Queue only: the queue's name"),
+    queue: str | None = Query(None, max_length=80, description="Stuck Leads in Queue only: the queue's id"),
     db: Session = Depends(get_db),
     http: httpx.Client = Depends(http_dep),
     settings: Settings = Depends(settings_dep),

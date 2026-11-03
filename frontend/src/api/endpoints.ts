@@ -220,7 +220,7 @@ export const indicatorApi = {
     ),
   /** Stuck Leads in Queue: the queues its Leads sit in, with how many in each (for the Queue filter). */
   queues: (assessmentId: string, areaId: string, label: string, object: string, signal?: AbortSignal) =>
-    http.get<{ name: string; count: number }[]>(
+    http.get<{ id: string; name: string; count: number }[]>(
       `/assessments/${encodeURIComponent(assessmentId)}/areas/${encodeURIComponent(areaId)}/indicator-queues`,
       { label, object },
       signal,
