@@ -8,6 +8,7 @@ import { cx, fmtNumber } from '@/lib/format';
 import type { DataField, EmptyResult } from '@/types';
 import { Button } from '../ui/Button';
 import { LoadingState } from '../ui/States';
+import { useExpand } from '@/components/ui/Expand';
 
 /** Fields named in a check's "Fields checked" text (by label or API name), for this object only. */
 export function fieldsNamed(text: string, object: string, fields: { name: string; label: string }[], max: number): string[] {
@@ -23,6 +24,7 @@ export function fieldsNamed(text: string, object: string, fields: { name: string
 
 /** Records where the given field(s) are empty, 200 at a time, with a value filter and CSV. */
 export function EmptyRecords({ object, fields }: { object: string; fields: string[] }) {
+  const ex = useExpand();
   const [rowQuery, setRowQuery] = useState('');
   const [result, setResult] = useState<EmptyResult | null>(null);
   const [busy, setBusy] = useState(false);
@@ -72,6 +74,7 @@ export function EmptyRecords({ object, fields }: { object: string; fields: strin
         >
           <Download className="h-3.5 w-3.5" /> CSV
         </a>
+        {ex.button}
       </div>
 
       {rows.length === 0 ? (
@@ -79,7 +82,8 @@ export function EmptyRecords({ object, fields }: { object: string; fields: strin
           {emptyCount ? `No loaded records match “${rowQuery}”.` : `Every ${objectLabel(object).toLowerCase().replace(/s$/, '')} has this filled in.`}
         </p>
       ) : (
-        <div className="scrollbar-thin max-h-[32rem] overflow-auto rounded-xl border border-line">
+        ex.wrap(
+        <div className={cx(ex.scrollClass('max-h-[32rem]'), 'rounded-xl border border-line')}>
           <table className="w-full min-w-[720px] text-left text-xs">
             <thead className="sticky top-0 z-10 bg-surface shadow-[0_1px_0_rgb(var(--line))]">
               <tr>
@@ -127,7 +131,8 @@ export function EmptyRecords({ object, fields }: { object: string; fields: strin
               })}
             </tbody>
           </table>
-        </div>
+        </div>,
+        )
       )}
       {result.nextCursor && (
         <div className="text-center">

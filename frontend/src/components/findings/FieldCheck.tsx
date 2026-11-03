@@ -9,6 +9,7 @@ import { Button } from '../ui/Button';
 import { LoadingState } from '../ui/States';
 import { DuplicateResults, show, type FinderKind } from './DuplicateFinder';
 import { EmptyRecords, fieldsNamed } from './EmptyFieldsFinder';
+import { useExpand } from '@/components/ui/Expand';
 
 const MAX_FIELDS = 10;
 export const ALL = '__all__'; // the "all chosen fields together" row
@@ -17,6 +18,7 @@ type Pick = { field: string; kind: FinderKind };
 
 /** Invalid values of one field (the health check's Data Standardization rules), with why each one is flagged. */
 function SpellingResults({ field, prefix }: { field: FieldCheckField; prefix: string }) {
+  const ex = useExpand();
   const std = field.standardization!;
   const [query, setQuery] = useState('');
   const [reason, setReason] = useState<string | null>(null);
@@ -78,11 +80,15 @@ function SpellingResults({ field, prefix }: { field: FieldCheckField; prefix: st
       </div>
       {reasons.length === 0 && std.variants.length < std.valuesWithVariants && <p className="text-[11px] text-ink-subtle">Showing {std.variants.length} of {fmtNumber(std.valuesWithVariants)} values.</p>}
 
-      <div className="relative">
-        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-subtle" />
-        <input className="input h-9 pl-8 text-sm" placeholder="Filter records by any value…" value={query} onChange={(e) => setQuery(e.target.value)} />
+      <div className="flex items-center gap-2">
+        <div className="relative min-w-0 flex-1">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-subtle" />
+          <input className="input h-9 pl-8 text-sm" placeholder="Filter records by any value…" value={query} onChange={(e) => setQuery(e.target.value)} />
+        </div>
+        {ex.button}
       </div>
-      <div className="scrollbar-thin max-h-[28rem] overflow-auto rounded-xl border border-line">
+      {ex.wrap(
+      <div className={cx(ex.scrollClass('max-h-[28rem]'), 'rounded-xl border border-line')}>
         <table className="w-full min-w-[640px] text-left text-xs">
           <thead className="sticky top-0 z-10 bg-surface shadow-[0_1px_0_rgb(var(--line))]">
             <tr>
@@ -116,7 +122,8 @@ Why it’s flagged: ${r.note}` : show(r.values[c.name])}>
             ))}
           </tbody>
         </table>
-      </div>
+      </div>,
+      )}
       {reason && <p className="text-[11px] text-ink-subtle">Showing only “{reason}”.</p>}
       {std.records.length < std.oddRecords && <p className="text-[11px] text-ink-subtle">Showing the first {fmtNumber(std.records.length)} of {fmtNumber(std.oddRecords)} records.</p>}
     </div>
@@ -184,6 +191,7 @@ export function FieldCheck({
   /** Every run's result (also the one that runs on its own), for the page's records table (duplicate groups). */
   onLiveResult?: (result: FieldCheckResult | null) => void;
 }) {
+  const ex = useExpand();
   // On a duplicates / missing / spelling page, only that page's column is shown.
   const shows = (k: FinderKind) => !focus || focus === k;
   const choices = useMemo(() => Array.from(new Set([...(initialObject ? [initialObject] : []), ...objects])), [objects, initialObject]);
@@ -374,7 +382,10 @@ export function FieldCheck({
 
         {result && (
           <div className="space-y-4">
-            <p className="text-sm">
+            {ex.wrap(
+            <div className={cx('space-y-3', ex.boxClass)}>
+            <div className="flex flex-wrap items-start gap-2">
+            <p className="min-w-0 flex-1 text-sm">
               <span className="font-semibold tabular-nums">{fmtNumber(result.scanned)}</span> {what} checked
               {result.truncated && <span className="text-ink-muted"> (the first 20,000)</span>}. {onPickFields ? 'Tick a field to show its records in the table below.' : 'Click a number to see its records.'}
               {tickable.length > 1 && (
@@ -389,7 +400,9 @@ export function FieldCheck({
                 </span>
               )}
             </p>
-            <div className="overflow-x-auto rounded-xl border border-line">
+            {ex.button}
+            </div>
+            <div className={cx(ex.scrollClass(''), 'rounded-xl border border-line')}>
               <table className={cx('w-full text-left text-sm', !focus && 'min-w-[640px]')}>
                 <thead className="bg-muted/50 text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">
                   <tr>
@@ -459,6 +472,8 @@ export function FieldCheck({
                 </tbody>
               </table>
             </div>
+            </div>,
+            )}
 
             {pick && !inRecords(pick.field, pick.kind) && (
               <div className="rounded-xl border border-line p-4">

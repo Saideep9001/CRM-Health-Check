@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react';
 import { ColumnFilter, columnFilter, type ValuesSource } from '@/components/data/ColumnFilter';
 import { cx, fmtNumber } from '@/lib/format';
 import type { DataField, DataFilter, FieldListItem } from '@/types';
+import { useExpand } from '@/components/ui/Expand';
 
 /** What each column filters on (worked out from the list itself, so filtering needs no server). */
 const filledBand = (f: FieldListItem) => {
@@ -84,6 +85,7 @@ export function FieldListTable({
   linkOf?: (field: string) => string | undefined;
 }) {
   const rtsOf = recordTypesOf ?? (() => []);
+  const ex = useExpand();
   // The record types a field is on: the first two by name (each opens that record type in Setup), then "+N" with the rest
   // on hover; "Other" when it's on no record type's page layout.
   const recordTypes = (f: string) => {
@@ -237,8 +239,8 @@ export function FieldListTable({
         )}
       </td>
     );
-    return (
-      <div className="overflow-hidden rounded-xl border border-line">
+    return ex.wrap(
+      <div className={cx('overflow-hidden rounded-xl border border-line', ex.boxClass)}>
         <div className="flex flex-wrap items-center gap-2 border-b border-line bg-muted/40 px-3 py-2">
           <div className="relative min-w-[200px] flex-1 sm:max-w-xs">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-subtle" />
@@ -250,8 +252,9 @@ export function FieldListTable({
           <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-ink-muted">
             <CheckCircle2 className="h-3 w-3 text-good" /> Keep = the one to keep (hover for why): filled on more records, else the standard field, else on more record types
           </span>
+          {ex.button}
         </div>
-        <div className="scrollbar-thin max-h-[32rem] overflow-auto">
+        <div className={ex.scrollClass('max-h-[32rem]')}>
           <table className="w-full min-w-[900px] text-left text-xs">
             <thead className="sticky top-0 z-10 bg-surface text-[11px] uppercase tracking-wide text-ink-subtle shadow-[0_1px_0_rgb(var(--line))]">
               <tr>
@@ -282,11 +285,11 @@ export function FieldListTable({
             </tbody>
           </table>
         </div>
-      </div>
+      </div>,
     );
   }
-  return (
-    <div className="overflow-hidden rounded-xl border border-line">
+  return ex.wrap(
+    <div className={cx('overflow-hidden rounded-xl border border-line', ex.boxClass)}>
       <div className="flex flex-wrap items-center gap-2 border-b border-line bg-muted/40 px-3 py-2">
         <div className="relative min-w-[200px] flex-1 sm:max-w-xs">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-subtle" />
@@ -295,6 +298,7 @@ export function FieldListTable({
         <span className={cx('rounded-full px-2 text-[11px] tabular-nums', term || filters.length ? 'bg-brand-soft font-semibold text-brand-ink' : 'text-ink-muted')}>
           {term || filters.length ? `${fmtNumber(rows.length)} of ${fmtNumber(items.length)} fields` : `${fmtNumber(items.length)} fields`}
         </span>
+        <span className="ml-auto">{ex.button}</span>
       </div>
       {filters.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5 border-b border-line bg-brand-soft/30 px-3 py-1.5">
@@ -312,7 +316,7 @@ export function FieldListTable({
           </button>
         </div>
       )}
-      <div className="scrollbar-thin max-h-[32rem] overflow-auto">
+      <div className={ex.scrollClass('max-h-[32rem]')}>
         <table className="w-full min-w-[640px] text-left text-xs">
           <thead className="sticky top-0 z-10 bg-surface text-[11px] uppercase tracking-wide text-ink-subtle shadow-[0_1px_0_rgb(var(--line))]">
             <tr>
@@ -365,6 +369,6 @@ export function FieldListTable({
           </tbody>
         </table>
       </div>
-    </div>
+    </div>,
   );
 }

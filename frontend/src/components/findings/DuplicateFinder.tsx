@@ -1,12 +1,12 @@
-import { AlertTriangle, Check, Download, ExternalLink, Filter, Maximize2, Minimize2, Search } from 'lucide-react';
+import { AlertTriangle, Check, Download, ExternalLink, Filter, Search } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { objectLabel } from '@/components/category/DiagnosticAreaCard';
 import { cx, fmtDate, fmtNumber } from '@/lib/format';
 import type { DuplicateResult } from '@/types';
 import { Button } from '../ui/Button';
-import { InfoTip } from '../ui/HelpTip';
-import { AnimatedNumber } from '../ui/Visuals';
+import { useExpand } from '@/components/ui/Expand';
+import { FlowSteps } from './MeasureFlow';
 
 export type FinderKind = 'duplicates' | 'empty' | 'spelling';
 
@@ -40,8 +40,12 @@ function toCsv(r: DuplicateResult): string {
   return '﻿' + [head.map(cell).join(','), ...lines].join('\r\n');
 }
 
-/** The headline: how many duplicate groups, their sizes, and (in the info tip) what a group is and that you keep one. */
+/** The result as a sequence: checked → duplicates found → groups → extra copies (each step with an info tip). */
 function DuplicateFlow({ result }: { result: DuplicateResult }) {
+  const what = objectLabel(result.object).toLowerCase();
+  const kept = result.kept ?? result.totalGroups;
+  const found = result.extraCopies + kept;
+  const pct = (n: number) => (result.scanned ? `${Math.round((100 * n) / result.scanned)}% of all ${what}` : '');
   // How big the groups are (exact unless only the largest groups were returned).
   const sizes = result.groups.reduce<Record<string, number>>((m, g) => {
     const k = g.size >= 5 ? '5+' : String(g.size);
@@ -53,25 +57,18 @@ function DuplicateFlow({ result }: { result: DuplicateResult }) {
     .map((k) => `${fmtNumber(sizes[k])} of ${k}`)
     .join(' · ');
 
+  const several = result.kept != null && result.rules.length > 1;
   return (
-    <div className="flex w-full max-w-sm flex-col rounded-xl border border-line bg-muted/40 px-4 py-3">
-      <span className="flex items-center gap-2 text-xs font-medium text-ink-muted">
-        Duplicate groups
-        <InfoTip label="About duplicate groups">
-          A group is a set of {objectLabel(result.object).toLowerCase()} that match each other on the fields shown: one real
-          customer (or deal) entered more than once. Keep one record per group, usually the most complete or most recently
-          used one, and merge the others into it.
-        </InfoTip>
-      </span>
-      <span className="mt-1.5 text-2xl font-semibold tabular-nums tracking-tight text-ink">
-        <AnimatedNumber value={result.totalGroups} />
-      </span>
-      {sizeText && (
-        <span className="mt-0.5 text-[11px] leading-snug text-ink-muted">
-          {result.groups.length < result.totalGroups ? `Largest ${fmtNumber(result.groups.length)}` : 'Group sizes'}: {sizeText}
-        </span>
-      )}
-    </div>
+    <FlowSteps
+      steps={[
+        { label: `${objectLabel(result.object)} checked`, value: result.scanned, suffix: result.truncated ? '+' : '', hint: 'Every record read from Salesforce' },
+        { label: 'Duplicate records found', value: found, hint: `${pct(found)} match at least one other`, tone: 'warn',
+          tip: several ? 'A record that matches on more than one field is counted once.' : undefined },
+        { label: 'Duplicate groups', value: result.totalGroups,
+          hint: sizeText ? `${result.groups.length < result.totalGroups ? `Largest ${fmtNumber(result.groups.length)}` : 'Group sizes'}: ${sizeText}` : 'Sets of records that match each other' },
+        { label: 'Extra copies to merge', value: result.extraCopies, hint: `${fmtNumber(found)} found − ${fmtNumber(kept)} kept · ${pct(result.extraCopies)}`, tone: 'bad' },
+      ]}
+    />
   );
 }
 
@@ -169,18 +166,7 @@ export function DuplicateResults({ result, fileName, flag = null }: { result: Du
   const [query, setQuery] = useState('');
   const [minSize, setMinSize] = useState(2);
   const [colFilters, setColFilters] = useState<Record<string, Set<string>>>({});
-  const [big, setBig] = useState(false);
-  useEffect(() => {
-    if (!big) return;
-    const esc = (e: KeyboardEvent) => e.key === 'Escape' && setBig(false);
-    const scroll = document.body.style.overflow;
-    document.body.style.overflow = 'hidden'; // the page behind doesn't scroll
-    document.addEventListener('keydown', esc);
-    return () => {
-      document.body.style.overflow = scroll;
-      document.removeEventListener('keydown', esc);
-    };
-  }, [big]);
+  const ex = useExpand();
   const term = query.trim().toLowerCase();
   const keeps = (rec: { values: Record<string, unknown> }) => Object.entries(colFilters).every(([c, s]) => s.has(show(rec.values[c])));
   const groups = result.groups
@@ -234,9 +220,7 @@ export function DuplicateResults({ result, fileName, flag = null }: { result: Du
         <Button size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={download} disabled={!result.groups.length}>
           CSV
         </Button>
-        <Button size="sm" variant="subtle" icon={<Maximize2 className="h-3.5 w-3.5" />} onClick={() => setBig(true)} disabled={!result.groups.length}>
-          Expand
-        </Button>
+        {ex.button}
       </div>
       {filtering && (
         <p className="text-xs text-ink-muted">
@@ -253,22 +237,18 @@ export function DuplicateResults({ result, fileName, flag = null }: { result: Du
           )}
         </p>
       ) : (
-        (() => {
-        // Expanded: the table fills the whole browser window (rendered on the page itself, outside any side panel).
-        const panel = (
-        <div className={cx(big ? 'fixed inset-0 z-[80] flex flex-col bg-surface p-4 sm:p-6' : 'relative')}>
-        {big && (
+        ex.wrap(
+        <div className={cx('relative', ex.boxClass)}>
+        {ex.big && (
           <div className="mb-3 flex items-center justify-between gap-3">
             <p className="text-sm font-semibold">
               Duplicates on {result.rules.map((r) => r.join(' + ')).join(' · ')}{' '}
               <span className="font-normal text-ink-muted">· {fmtNumber(groups.length)} groups shown</span>
             </p>
-            <Button size="sm" icon={<Minimize2 className="h-3.5 w-3.5" />} onClick={() => setBig(false)}>
-              Minimize
-            </Button>
+            {ex.button}
           </div>
         )}
-        <div className={cx('scrollbar-thin overflow-auto rounded-xl border border-line', big ? 'min-h-0 flex-1' : 'max-h-[32rem]')}>
+        <div className={cx(ex.scrollClass('max-h-[32rem]'), 'rounded-xl border border-line')}>
           <table className="w-full min-w-[720px] text-left text-xs">
             <thead className="sticky top-0 z-10 bg-surface shadow-[0_1px_0_rgb(var(--line))]">
               <tr>
@@ -332,10 +312,8 @@ Why it’s flagged: ${same}` : show(rec.values[c.name])}
             </tbody>
           </table>
         </div>
-        </div>
-        );
-        return big ? createPortal(panel, document.body) : panel;
-        })()
+        </div>,
+        )
       )}
     </div>
   );

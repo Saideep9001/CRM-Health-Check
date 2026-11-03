@@ -5,12 +5,13 @@ import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { getArea, getCategory } from '@/config/categories';
 import { useSort } from '@/hooks/useSort';
-import { fmtNumber } from '@/lib/format';
+import { cx, fmtNumber } from '@/lib/format';
 import { SEVERITY_RANK } from '@/lib/health';
 import type { Finding } from '@/types';
 import { FindingStatusBadge, SeverityBadge } from '../ui/Badges';
 import { CategoryTile } from '../ui/CategoryIcon';
 import { SortableTh } from '../ui/Table';
+import { useExpand } from '@/components/ui/Expand';
 
 const PAGE_SIZE = 25;
 
@@ -44,9 +45,11 @@ export function FindingsTable({
   useEffect(() => setPage(0), [findings, sortKey, sortDir]);
   const visible = sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
-  return (
-    <div>
-      <div className="scrollbar-thin relative overflow-x-auto">
+  const ex = useExpand(!findings.length);
+  return ex.wrap(
+    <div className={ex.boxClass}>
+      <div className="flex justify-end pb-2">{ex.button}</div>
+      <div className={cx(ex.scrollClass(''), 'relative')}>
         <table className={`w-full border-collapse ${compact ? 'min-w-[760px]' : 'min-w-[1100px]'}`}>
           <thead className="border-b border-line bg-muted/50">
             <tr>
@@ -148,6 +151,6 @@ export function FindingsTable({
           </div>
         </div>
       )}
-    </div>
+    </div>,
   );
 }

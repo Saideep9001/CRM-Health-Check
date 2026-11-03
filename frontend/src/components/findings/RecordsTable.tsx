@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/Button';
 import { ErrorState, LoadingState } from '@/components/ui/States';
 import { cx, fmtNumber } from '@/lib/format';
 import type { DataField, DataFilter, FindingRecordsPage } from '@/types';
+import { useExpand } from '@/components/ui/Expand';
 
 /** The engine's own cleaning (backend/app/engine/data_quality.py → norm_company / norm_website), to band duplicate groups. */
 const COMPANY_WORDS = /\b(the|incorporated|inc|llc|llp|ltd|limited|corp|corporation|co|company|plc|gmbh|ag|pvt|private|pty|sa|srl|bv)\b/g;
@@ -48,6 +49,7 @@ export function RecordsTable({
   /** When fields are picked in the page's selector: only their cells are marked. */
   markOnly?: string[];
 }) {
+  const ex = useExpand();
   const pages = query.data?.pages ?? [];
   const first = pages[0];
   // Which columns can be filtered: from the object's field list (cached; Your Data uses the same).
@@ -120,8 +122,8 @@ export function RecordsTable({
   }
   const flagged = rows.some((r, i) => cols.some((c) => why(r, c.name, i)));
 
-  return (
-    <section className="overflow-hidden rounded-xl border border-line">
+  return ex.wrap(
+    <section className={cx('overflow-hidden rounded-xl border border-line', ex.boxClass)}>
       <header className="flex flex-wrap items-center gap-2 border-b border-line bg-muted/50 px-3 py-2">
         <span className="text-sm font-semibold">{title}</span>
         <span className="relative ml-2 min-w-0 flex-1 sm:max-w-xs">
@@ -139,6 +141,7 @@ export function RecordsTable({
             <Download className="h-3.5 w-3.5" /> Download CSV
           </a>
         )}
+        <span className={cx(!csvUrl && 'ml-auto')}>{ex.button}</span>
       </header>
       {filters.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5 border-b border-line bg-brand-soft/30 px-3 py-1.5">
@@ -166,7 +169,7 @@ export function RecordsTable({
         </p>
       ) : (
         <>
-          <div className="scrollbar-thin max-h-[26rem] overflow-auto">
+          <div className={ex.scrollClass('max-h-[26rem]')}>
             <table className="w-full min-w-[640px] text-left text-xs">
               <thead className="sticky top-0 z-10 bg-surface shadow-[0_1px_0_rgb(var(--line))]">
                 <tr>
@@ -272,6 +275,6 @@ Why it’s flagged: ${reason}` : v}
           )}
         </>
       )}
-    </section>
+    </section>,
   );
 }

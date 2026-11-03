@@ -16,7 +16,28 @@ const BOX: Record<Tone, string> = {
 };
 const NUMBER: Record<Tone, string> = { plain: 'text-ink', warn: 'text-warn', bad: 'text-bad', good: 'text-good' };
 
-/** Numbered steps from what was checked to what was found, left to right (the duplicates flow, for any card). */
+/** What a step means, for its info tip (a step can bring its own `tip`; extra detail is added after this). */
+function explain(label: string): string | null {
+  if (/ checked$/.test(label) && !/^(Fields|Key fields|Values|Custom fields)/.test(label))
+    return 'Every record of this object read live from Salesforce for this check (up to 20,000).';
+  const rules: [RegExp, string][] = [
+    [/^Duplicate records found/, 'Records that match at least one other record on the fields compared (each record counted once).'],
+    [/^Duplicate groups/, 'A group is a set of records that match each other: one real customer (or deal) entered more than once. Keep one record per group, usually the most complete or most recently used one, and merge the others into it.'],
+    [/^Extra copies to merge/, 'Duplicate records found minus the one record you keep in each group: the copies to merge away.'],
+    [/^(Key fields|Fields) checked/, 'The fields that should be filled in on every record.'],
+    [/^Values checked/, 'Every value looked at: each record’s value in each field checked.'],
+    [/^Empty values/, 'Values left blank, counted per field (a record with two empty fields counts twice here).'],
+    [/^Records missing/, 'Records with at least one of these fields empty, each record counted once.'],
+    [/^Invalid values found/, 'Values that break the standardisation rules: wrong format, odd casing, or a different spelling of a common value.'],
+    [/^Records with invalid data/, 'Records with at least one invalid value, each record counted once.'],
+    [/^Fields on the object/, 'Every field Salesforce lists for this object, standard and custom.'],
+    [/^Well used|^Look current|^Active|^With /, 'The ones that pass this check.'],
+    [/^Rarely filled|^Hardly ever filled|^Never filled in/, 'How often the field is filled in, across all the records.'],
+  ];
+  return rules.find(([re]) => re.test(label))?.[1] ?? null;
+}
+
+/** Numbered steps from what was checked to what was found, left to right, each with an info tip (every flow in the app). */
 export function FlowSteps({ steps }: { steps: FlowStep[] }) {
   const cols = ['', 'sm:grid-cols-1', 'sm:grid-cols-2', 'sm:grid-cols-3', 'sm:grid-cols-2 lg:grid-cols-4', 'sm:grid-cols-2 lg:grid-cols-5'][steps.length] ?? 'lg:grid-cols-5';
   return (
@@ -29,7 +50,7 @@ export function FlowSteps({ steps }: { steps: FlowStep[] }) {
                 <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-surface text-[11px] font-bold text-ink ring-1 ring-line">{i + 1}</span>
               )}
               {st.label}
-              {st.tip && <InfoTip label={`About ${st.label}`}>{st.tip}</InfoTip>}
+              <InfoTip label={`About ${st.label}`}>{[explain(st.label), st.tip].filter(Boolean).join(' ') || st.hint}</InfoTip>
             </span>
             <span className={cx('mt-1.5 text-2xl font-semibold tabular-nums tracking-tight', NUMBER[st.tone ?? 'plain'])}>
               <AnimatedNumber value={st.value} />
@@ -60,15 +81,14 @@ export function flowFor(v: IndicatorValue, finding?: Finding | null): FlowStep[]
   if (/^Duplicate/i.test(v.label)) {
     const m = crit("What's counted")?.match(/([\d,]+) in ([\d,]+) groups/);
     if (!m || !checked) return null;
+    const extra = num(m[1]);
     const groups = num(m[2]);
-    // Only the groups: what a group is, and keeping one record per group, are in its info tip.
+    const found = extra + groups;
     return [
-      {
-        label: 'Duplicate groups',
-        value: groups,
-        hint: 'Sets of records that match each other',
-        tip: `A group is a set of ${what} that match each other on the fields shown: one real customer (or deal) entered more than once. Keep one record per group, usually the most complete or most recently used one, and merge the others into it.`,
-      },
+      { label: `${Cap} checked`, value: checked, hint: 'Every record read from Salesforce' },
+      { label: 'Duplicate records found', value: found, hint: `${pctOf(found, checked)} of all ${what} match at least one other`, tone: 'warn' },
+      { label: 'Duplicate groups', value: groups, hint: 'Sets of records that match each other' },
+      { label: 'Extra copies to merge', value: extra, hint: `${fmtNumber(found)} found − ${fmtNumber(groups)} kept · ${pctOf(extra, checked)} of all ${what}`, tone: 'bad' },
     ];
   }
   if (/^Missing/i.test(v.label) && fs.length) {

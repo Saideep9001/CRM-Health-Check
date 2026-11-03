@@ -29,6 +29,7 @@ import { Drawer, Modal } from '@/components/ui/Overlay';
 import { PageHeader } from '@/components/ui/Page';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/States';
 import { Tabs } from '@/components/ui/Tabs';
+import { useExpand } from '@/components/ui/Expand';
 import { cx, fmtNumber } from '@/lib/format';
 import type { DataField, DataFilter, DataObjectDetail } from '@/types';
 
@@ -308,6 +309,7 @@ function RecordsTab({ detail }: { detail: DataObjectDetail }) {
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<{ field: string; dir: 'asc' | 'desc' } | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const ex = useExpand();
   // The open record lives in the URL (?record=…), so related records can link to each other and Back works.
   const [params, setParams] = useSearchParams();
   const openId = params.get('record');
@@ -389,6 +391,8 @@ function RecordsTab({ detail }: { detail: DataObjectDetail }) {
           onClear={() => setFilters(null)}
         />
       )}
+      {ex.wrap(
+      <div className={cx('flex flex-col', ex.boxClass)}>
       <div className="flex flex-wrap items-center gap-2 p-4">
         {detail.searchable ? (
           <label className="relative min-w-[200px] flex-1 sm:max-w-sm">
@@ -411,6 +415,7 @@ function RecordsTab({ detail }: { detail: DataObjectDetail }) {
         <Button size="sm" className="ml-auto" icon={<Columns3 className="h-3.5 w-3.5" />} onClick={() => setPickerOpen(true)}>
           Columns
         </Button>
+        {ex.button}
       </div>
 
       {recs.isLoading ? (
@@ -424,7 +429,7 @@ function RecordsTab({ detail }: { detail: DataObjectDetail }) {
         />
       ) : (
         <>
-          <div className="scrollbar-thin relative overflow-x-auto border-t border-line">
+          <div className={cx(ex.scrollClass(''), 'relative border-t border-line')}>
             <table className={cx('w-full border-collapse', uploaded && '[&_td]:border [&_td]:border-line [&_th]:border [&_th]:border-line')}>
               <thead className={cx('bg-muted/50', uploaded && 'sticky top-0 z-10 bg-muted')}>
                 <tr>
@@ -500,6 +505,8 @@ function RecordsTab({ detail }: { detail: DataObjectDetail }) {
           )}
         </>
       )}
+      </div>,
+      )}
 
       <ColumnPicker
         open={pickerOpen}
@@ -522,15 +529,17 @@ function FieldsTab({ detail }: { detail: DataObjectDetail }) {
   const [text, setText] = useState('');
   const t = text.trim().toLowerCase();
   const fields = detail.fields.filter((f) => !t || f.label.toLowerCase().includes(t) || f.name.toLowerCase().includes(t));
-  return (
-    <div>
-      <div className="p-4">
-        <label className="relative block sm:max-w-sm">
+  const ex = useExpand();
+  return ex.wrap(
+    <div className={cx('flex flex-col', ex.boxClass)}>
+      <div className="flex items-center gap-2 p-4">
+        <label className="relative block min-w-0 flex-1 sm:max-w-sm">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle" />
           <input className="input pl-9" placeholder="Find a field…" value={text} onChange={(e) => setText(e.target.value)} aria-label="Find a field" />
         </label>
+        <span className="ml-auto">{ex.button}</span>
       </div>
-      <div className="scrollbar-thin relative overflow-x-auto border-t border-line">
+      <div className={cx(ex.scrollClass(''), 'relative border-t border-line')}>
         <table className="w-full min-w-[640px] border-collapse">
           <thead className="bg-muted/50">
             <tr>
@@ -571,7 +580,7 @@ function FieldsTab({ detail }: { detail: DataObjectDetail }) {
         </table>
         {fields.length === 0 && <p className="px-4 py-8 text-center text-sm text-ink-subtle">No fields match.</p>}
       </div>
-    </div>
+    </div>,
   );
 }
 

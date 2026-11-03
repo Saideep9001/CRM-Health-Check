@@ -173,7 +173,7 @@ export function ColumnFilter({
             role="dialog"
             aria-label={`Filter ${field.label}`}
             style={{ top: pos.top, bottom: pos.bottom, left: pos.left, maxHeight: pos.maxHeight }}
-            className="fixed z-50 flex w-72 flex-col rounded-xl border border-line bg-surface p-3 text-sm normal-case tracking-normal text-ink shadow-pop"
+            className="fixed z-[90] flex w-72 flex-col rounded-xl border border-line bg-surface p-3 text-sm normal-case tracking-normal text-ink shadow-pop"
           >
             {onSort && field.sortable && (
               <div className="mb-2 grid grid-cols-2 gap-1.5 border-b border-line pb-2">
