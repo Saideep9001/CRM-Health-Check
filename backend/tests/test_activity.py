@@ -25,7 +25,7 @@ def test_period_and_basis_build_the_filter(client, sf):
     assert "FROM Account WHERE (LastModifiedDate = null OR LastModifiedDate < LAST_N_DAYS:90)" in q and "ORDER BY LastModifiedDate ASC" in q
 
     assert client.get(f"{API}/inactive/values", params={"object": "Account", "field": "Industry", "days": 90, "basis": "edit"}).status_code == 200
-    assert sf.soql[-1].startswith("SELECT Industry v, COUNT(Id) c FROM Account WHERE ((LastModifiedDate = null")
+    assert sf.soql[-1].startswith("SELECT Industry v, COUNT(Id) c FROM Account WHERE (LastModifiedDate = null")
 
 
 def test_only_whitelisted_periods_and_bases(client, sf):
@@ -33,3 +33,12 @@ def test_only_whitelisted_periods_and_bases(client, sf):
     assert client.get(f"{API}/inactive", params={"object": "Account", "days": 100}).status_code == 422
     assert client.get(f"{API}/inactive", params={"object": "Account", "days": 180, "basis": "Id != null"}).status_code == 422
 
+
+
+def test_filters_are_bracketed_only_for_a_top_level_or():
+    """Salesforce refuses a sub-select inside brackets ("Semi join sub-selects are only allowed at the top level")."""
+    semi = "IsConverted = false AND Owner.Type = 'Queue' AND Id NOT IN (SELECT LeadId FROM LeadHistory WHERE Field = 'Owner')"
+    assert explorer.and_part(semi) == semi
+    assert explorer.and_part("(A = null OR B = null) AND C = 1") == "(A = null OR B = null) AND C = 1"
+    assert explorer.and_part("A = null OR B = null") == "(A = null OR B = null)"
+    assert explorer.and_part("Name = 'x OR y'") == "Name = 'x OR y'"  # an OR inside a value isn't one

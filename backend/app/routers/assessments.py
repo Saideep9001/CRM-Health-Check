@@ -413,7 +413,7 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
             raise HTTPException(422, "Only the Stuck Leads in Queue measure takes a queue.")
         if not re.fullmatch(r"00G[A-Za-z0-9]{12}([A-Za-z0-9]{3})?", queue):
             raise HTTPException(422, "Unknown queue.")
-        rec = {**rec, "where": f"({rec['where']}) AND OwnerId = '{queue}'" if rec.get("where") else f"OwnerId = '{queue}'"}
+        rec = {**rec, "where": f"{explorer.and_part(rec['where'])} AND OwnerId = '{queue}'" if rec.get("where") else f"OwnerId = '{queue}'"}
     if only:
         fields = [f.strip() for f in only.split(",") if f.strip()][:20]
         if any(not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*(\.Name)?", f) for f in fields):  # a field, or a parent's name (Account.Name)
@@ -427,7 +427,7 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
         else:
             raise HTTPException(422, "This measure can’t be narrowed to fields.")
         if rec.get("where"):  # within the measure's own records (its time window, open leads only…)
-            where = f"({rec['where']}) AND ({where})"
+            where = f"{explorer.and_part(rec['where'])} AND ({where})"
         cols = rec.get("columns") or []  # the chosen fields right after the name, so they're always in view
         rec = {**rec, "where": where, "columns": list(dict.fromkeys(cols[:1] + fields + cols[1:]))}
     return rec, row.org_id, f"{label} {rec['object']}"

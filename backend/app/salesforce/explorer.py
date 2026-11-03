@@ -368,6 +368,29 @@ def _record_conditions(sf: SalesforceClient, name: str, desc: dict, search: str 
     return conds
 
 
+def and_part(where: str) -> str:
+    """A filter ready to be ANDed with others: in brackets only when it has a top-level OR. Salesforce refuses a
+    sub-select (`Id NOT IN (SELECT …)`) inside brackets, so an AND-only filter is never wrapped."""
+    depth, quoted, i = 0, False, 0
+    while i < len(where):
+        ch = where[i]
+        if quoted:
+            if ch == "\\":
+                i += 1
+            elif ch == "'":
+                quoted = False
+        elif ch == "'":
+            quoted = True
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif depth == 0 and where[i:i + 4].upper() == " OR ":
+            return f"({where})"
+        i += 1
+    return where
+
+
 MAX_VALUES = 2000  # Salesforce returns at most 2,000 groups
 
 
@@ -384,7 +407,7 @@ def field_values(sf: SalesforceClient, name: str, field: str, search: str | None
     if not f or not f.get("groupable"):
         raise ValueError(f"You can’t list the values of {field}.")
     others = [x for x in (filters or []) if x.get("field") != field]
-    conds = ([f"({base_where})"] if base_where else []) + _record_conditions(sf, name, desc, search, others)
+    conds = ([and_part(base_where)] if base_where else []) + _record_conditions(sf, name, desc, search, others)
     where = " WHERE " + " AND ".join(conds) if conds else ""
     rel = _ref_paths(fields, [field]).get(field)  # e.g. Owner.Name, to show names instead of ids
     select = f"{field} v" + (f", {rel} n" if rel else "")
@@ -431,7 +454,7 @@ def records_matching(sf: SalesforceClient, name: str, where: str | None, cursor:
             latest = next((f for f in ("LastModifiedDate", "CreatedDate") if f in fields and fields[f].get("sortable")), None)
             sort = f" ORDER BY {latest} DESC" if latest else ""
         extra = _record_conditions(sf, name, desc, None, filters)
-        conds = ([f"({where})" if extra else where] if where else []) + extra  # brackets only when combining
+        conds = ([and_part(where) if extra else where] if where else []) + extra  # brackets only when needed
         soql = f"SELECT {', '.join(cols + list(refs.values()))} FROM {name}" + (f" WHERE {' AND '.join(conds)}" if conds else "") + sort
         body = sf.query_page(soql, size)
     next_url = body.get("nextRecordsUrl")

@@ -254,7 +254,8 @@ def test_stuck_queue_leads_filter_by_queue(client, sf):
 
     for path in ("indicator-records", "indicator-records.csv"):
         assert client.get(f"{base}/{path}", params={**params, "queue": "00G000000000001AAA"}).status_code == 200
-        assert "AND OwnerId = '00G000000000001AAA'" in next(q for q in reversed(sf.soql) if "FROM Lead WHERE" in q and "LeadHistory WHERE Field = 'Owner' AND LeadId" not in q)
+        q = next(q for q in reversed(sf.soql) if "FROM Lead WHERE" in q and "LeadHistory WHERE Field = 'Owner' AND LeadId" not in q)
+        assert "FROM Lead WHERE IsConverted = false AND" in q and "AND OwnerId = '00G000000000001AAA'" in q  # sub-select not bracketed
     assert client.get(f"{base}/indicator-records", params={**params, "queue": "x' OR Id != null"}).status_code == 422
     other = {"label": "Unassigned Leads – No Assignment Rule Match", "object": "Lead"}
     assert client.get(f"{base}/indicator-records", params={**other, "queue": "00G000000000001AAA"}).status_code == 422
