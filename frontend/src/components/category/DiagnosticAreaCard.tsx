@@ -10,7 +10,7 @@ import type { AreaResult, DiagnosticArea, Finding, ObjectResult } from '@/types'
 import { Badge, ReleaseBadge } from '../ui/Badges';
 import { Button } from '../ui/Button';
 import { InfoTip } from '../ui/HelpTip';
-import { ScoreRing } from '../ui/Visuals';
+import { AnimatedNumber, ScoreRing } from '../ui/Visuals';
 import type { IndicatorValue } from '@/types';
 
 /** A card's colour from its score, in the urgency bands: green 80 or more (no problem, or Low), orange 40–79 (Medium or
@@ -31,6 +31,8 @@ function indicatorTone(i: IndicatorValue): 'good' | 'warn' | 'bad' {
 }
 
 const DOT = { good: 'bg-good', warn: 'bg-warn', bad: 'bg-bad' };
+/** A measure's score as a tinted chip (no bar): the tone shows at a glance, the number counts up. */
+const CHIP = { good: 'bg-good-soft text-good ring-good/20', warn: 'bg-warn-soft text-warn ring-warn/20', bad: 'bg-bad-soft text-bad ring-bad/20' };
 
 /** What the measure counted, for the tooltip on its score (e.g. "45" or "98%"). */
 const counted = (i: IndicatorValue) => `${fmtNumber(Math.round(i.value))}${i.unit === '%' ? '%' : ''}`;
@@ -157,10 +159,15 @@ export function DiagnosticAreaCard({
                 <InfoTip label="What the badges mean">{URGENCY_HELP}</InfoTip>
               </li>
             )}
-            {shown.map((i) => {
+            {shown.map((i, n) => {
               const urgency = urgencyOf(i.label);
               return (
-                <li key={i.label}>
+                <motion.li
+                  key={`${current?.name ?? ''}-${i.label}`} // switching object replays the entrance
+                  initial={{ opacity: 0, x: -6 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: n * 0.04, duration: 0.25, ease: 'easeOut' }}
+                >
                   <button
                     type="button"
                     disabled={!onSelectMeasure}
@@ -174,17 +181,20 @@ export function DiagnosticAreaCard({
                     </span>
                     {urgency && <span className={cx('shrink-0 rounded px-1.5 py-px text-[9px] font-semibold uppercase', URGENCY_CLASS[urgency])}>{urgency}</span>}
                     {i.score != null ? (
-                      <span className="flex shrink-0 items-center gap-2" title={`Score ${Math.round(i.score)}% · counted: ${counted(i)}`}>
-                        <span className="h-1.5 w-14 overflow-hidden rounded-full bg-muted">
-                          <span className={cx('block h-full rounded-full', DOT[cardTone(i.score)])} style={{ width: `${Math.max(2, Math.min(100, i.score))}%` }} />
-                        </span>
-                        <span className="w-9 text-right font-semibold tabular-nums">{Math.round(i.score)}%</span>
+                      <span
+                        className={cx('min-w-[3rem] shrink-0 rounded-full px-2 py-px text-center font-semibold tabular-nums ring-1 transition-transform group-enabled/m:group-hover/m:scale-105', CHIP[cardTone(i.score)])}
+                        title={`Score ${Math.round(i.score)}% · counted: ${counted(i)}`}
+                      >
+                        <AnimatedNumber value={Math.round(i.score)} duration={0.8} />%
                       </span>
                     ) : (
-                      <span className="font-semibold tabular-nums" title="Shown for information; not scored">{counted(i)}</span>
+                      <span className="min-w-[3rem] shrink-0 text-center font-semibold tabular-nums" title="Shown for information; not scored">
+                        <AnimatedNumber value={Math.round(i.value)} duration={0.8} />
+                        {i.unit === '%' ? '%' : ''}
+                      </span>
                     )}
                   </button>
-                </li>
+                </motion.li>
               );
             })}
           </ul>
