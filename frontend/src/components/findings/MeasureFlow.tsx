@@ -1,11 +1,12 @@
 import { ChevronRight } from 'lucide-react';
 import { objectLabel } from '@/components/category/DiagnosticAreaCard';
+import { InfoTip } from '@/components/ui/HelpTip';
 import { AnimatedNumber } from '@/components/ui/Visuals';
 import { cx, fmtNumber } from '@/lib/format';
 import type { FieldCheckResult, Finding, IndicatorValue } from '@/types';
 
 type Tone = 'plain' | 'warn' | 'bad' | 'good';
-export type FlowStep = { label: string; value: number; hint: string; tone?: Tone; suffix?: string };
+export type FlowStep = { label: string; value: number; hint: string; tone?: Tone; suffix?: string; tip?: string };
 
 const BOX: Record<Tone, string> = {
   plain: 'border-line bg-muted/40',
@@ -19,13 +20,16 @@ const NUMBER: Record<Tone, string> = { plain: 'text-ink', warn: 'text-warn', bad
 export function FlowSteps({ steps }: { steps: FlowStep[] }) {
   const cols = ['', 'sm:grid-cols-1', 'sm:grid-cols-2', 'sm:grid-cols-3', 'sm:grid-cols-2 lg:grid-cols-4', 'sm:grid-cols-2 lg:grid-cols-5'][steps.length] ?? 'lg:grid-cols-5';
   return (
-    <ol className={cx('grid gap-2', cols)}>
+    <ol className={cx('grid gap-2', cols, steps.length === 1 && 'max-w-sm')}>
       {steps.map((st, i) => (
         <li key={st.label} className="relative flex">
           <div className={cx('flex w-full flex-col rounded-xl border px-4 py-3', BOX[st.tone ?? 'plain'])}>
             <span className="flex items-center gap-2 text-xs font-medium text-ink-muted">
-              <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-surface text-[11px] font-bold text-ink ring-1 ring-line">{i + 1}</span>
+              {steps.length > 1 && (
+                <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-surface text-[11px] font-bold text-ink ring-1 ring-line">{i + 1}</span>
+              )}
               {st.label}
+              {st.tip && <InfoTip label={`About ${st.label}`}>{st.tip}</InfoTip>}
             </span>
             <span className={cx('mt-1.5 text-2xl font-semibold tabular-nums tracking-tight', NUMBER[st.tone ?? 'plain'])}>
               <AnimatedNumber value={st.value} />
@@ -56,15 +60,15 @@ export function flowFor(v: IndicatorValue, finding?: Finding | null): FlowStep[]
   if (/^Duplicate/i.test(v.label)) {
     const m = crit("What's counted")?.match(/([\d,]+) in ([\d,]+) groups/);
     if (!m || !checked) return null;
-    const extra = num(m[1]);
     const groups = num(m[2]);
-    const found = extra + groups;
+    // Only the groups: what a group is, and keeping one record per group, are in its info tip.
     return [
-      { label: `${Cap} checked`, value: checked, hint: 'Every record read from Salesforce' },
-      { label: 'Duplicate records found', value: found, hint: `${pctOf(found, checked)} of all ${what} match at least one other`, tone: 'warn' },
-      { label: 'Duplicate groups', value: groups, hint: 'Sets of records that match each other' },
-      { label: 'Keep one per group', value: groups, hint: 'The record you keep in each group', tone: 'good' },
-      { label: 'Extra copies to merge', value: extra, hint: `${fmtNumber(found)} found − ${fmtNumber(groups)} kept · ${pctOf(extra, checked)} of all ${what}`, tone: 'bad' },
+      {
+        label: 'Duplicate groups',
+        value: groups,
+        hint: 'Sets of records that match each other',
+        tip: `A group is a set of ${what} that match each other on the fields shown: one real customer (or deal) entered more than once. Keep one record per group, usually the most complete or most recently used one, and merge the others into it.`,
+      },
     ];
   }
   if (/^Missing/i.test(v.label) && fs.length) {
