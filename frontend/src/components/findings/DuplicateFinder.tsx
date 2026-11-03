@@ -228,6 +228,15 @@ export function DuplicateResults({ result, fileName, flag = null }: { result: Du
   return (
     <div className="space-y-3">
       <DuplicateFlow result={result} />
+      {/* Expanded, the filters, counts and table all go to the whole page together, so the filters stay in reach. */}
+      {ex.wrap(
+      <div className={cx('space-y-3', ex.big && 'flex min-h-0 flex-1 flex-col')}>
+      {ex.big && (
+        <p className="text-sm font-semibold">
+          Duplicates on {result.rules.map((r) => r.join(' + ')).join(' · ')}{' '}
+          <span className="font-normal text-ink-muted">· {fmtNumber(groups.length)} groups shown</span>
+        </p>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-subtle" />
@@ -273,17 +282,7 @@ export function DuplicateResults({ result, fileName, flag = null }: { result: Du
           )}
         </p>
       ) : (
-        ex.wrap(
         <div className={cx('relative', ex.boxClass)}>
-        {ex.big && (
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <p className="text-sm font-semibold">
-              Duplicates on {result.rules.map((r) => r.join(' + ')).join(' · ')}{' '}
-              <span className="font-normal text-ink-muted">· {fmtNumber(groups.length)} groups shown</span>
-            </p>
-            {ex.button}
-          </div>
-        )}
         <div className={cx(ex.scrollClass('max-h-[32rem]'), 'rounded-xl border border-line')}>
           <table className="w-full min-w-[720px] text-left text-xs">
             <thead className="sticky top-0 z-10 bg-surface shadow-[0_1px_0_rgb(var(--line))]">
@@ -358,8 +357,9 @@ Why it’s flagged: ${same}` : show(rec.values[c.name])}
             </tbody>
           </table>
         </div>
-        </div>,
-        )
+        </div>
+      )}
+      </div>,
       )}
     </div>
   );
