@@ -1,4 +1,4 @@
-import { AlertTriangle, Check, ChevronRight, Download, ExternalLink, Filter, Maximize2, Minimize2, Search } from 'lucide-react';
+import { AlertTriangle, Check, Download, ExternalLink, Filter, Maximize2, Minimize2, Search } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { objectLabel } from '@/components/category/DiagnosticAreaCard';
@@ -40,12 +40,8 @@ function toCsv(r: DuplicateResult): string {
   return '﻿' + [head.map(cell).join(','), ...lines].join('\r\n');
 }
 
-/** The result as a sequence: checked → duplicates found → groups → kept → extra copies. */
+/** The headline: how many duplicate groups, their sizes, and (in the info tip) what a group is and that you keep one. */
 function DuplicateFlow({ result }: { result: DuplicateResult }) {
-  const what = objectLabel(result.object).toLowerCase();
-  const kept = result.kept ?? result.totalGroups;
-  const inGroups = result.extraCopies + kept;
-  const pct = (n: number) => (result.scanned ? `${Math.round((100 * n) / result.scanned)}% of all ${what}` : '');
   // How big the groups are (exact unless only the largest groups were returned).
   const sizes = result.groups.reduce<Record<string, number>>((m, g) => {
     const k = g.size >= 5 ? '5+' : String(g.size);
@@ -57,43 +53,25 @@ function DuplicateFlow({ result }: { result: DuplicateResult }) {
     .map((k) => `${fmtNumber(sizes[k])} of ${k}`)
     .join(' · ');
 
-  const several = result.kept != null && result.rules.length > 1; // more than one field: a record can match on several
-  const steps: { n: number; label: string; value: number; plus?: boolean; tip: string; hint?: string; tone: string }[] = [
-    { n: 1, label: `${objectLabel(result.object)} checked`, value: result.scanned, plus: result.truncated, tone: 'text-ink',
-      tip: `Every ${what.replace(/s$/, '')} record read live from Salesforce${result.truncated ? ' (the first 20,000)' : ''}.` },
-    { n: 2, label: 'Duplicate records found', value: inGroups, tone: 'text-warn',
-      tip: `Records that match at least one other record: ${pct(inGroups)}.${several ? ' A record that matches on more than one field is counted once.' : ''}` },
-    { n: 3, label: 'Duplicate groups', value: result.totalGroups, tone: 'text-ink',
-      tip: 'A group is a set of records that match each other on the fields shown. Each group is one real customer (or deal) entered more than once.',
-      hint: sizeText ? `${result.groups.length < result.totalGroups ? `Largest ${fmtNumber(result.groups.length)}` : 'Group sizes'}: ${sizeText}` : 'Sets that match each other' },
-    { n: 4, label: 'Keep one per group', value: kept, tone: 'text-good',
-      tip: several ? 'One record to keep for each set of linked records (groups that share a record count as one set).' : 'In every group you keep one record, usually the most complete or most recently used one.' },
-    { n: 5, label: 'Extra copies to merge', value: result.extraCopies, tone: 'text-bad',
-      tip: `${fmtNumber(inGroups)} found − ${fmtNumber(kept)} kept = the copies to merge into the kept records (${pct(result.extraCopies)}).` },
-  ];
-
   return (
-    <ol className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-      {steps.map((st, i) => (
-        <li key={st.n} className="relative flex">
-          <div className={cx('flex w-full flex-col rounded-xl border px-4 py-3', st.n === 5 ? 'border-bad/30 bg-bad-soft/40' : st.n === 2 ? 'border-warn/30 bg-warn-soft/40' : 'border-line bg-muted/40')}>
-            <span className="flex items-center gap-2 text-xs font-medium text-ink-muted">
-              <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-surface text-[11px] font-bold text-ink ring-1 ring-line">{st.n}</span>
-              {st.label}
-              <InfoTip label={`About ${st.label}`}>{st.tip}</InfoTip>
-            </span>
-            <span className={cx('mt-1.5 text-2xl font-semibold tabular-nums tracking-tight', st.tone)}>
-              <AnimatedNumber value={st.value} />
-              {st.plus ? '+' : ''}
-            </span>
-            {st.hint && <span className="mt-0.5 text-[11px] leading-snug text-ink-muted">{st.hint}</span>}
-          </div>
-          {i < steps.length - 1 && (
-            <ChevronRight className="absolute -right-2.5 top-1/2 z-10 hidden h-5 w-5 -translate-y-1/2 rounded-full bg-surface text-ink-subtle ring-1 ring-line lg:block" aria-hidden="true" />
-          )}
-        </li>
-      ))}
-    </ol>
+    <div className="flex w-full max-w-sm flex-col rounded-xl border border-line bg-muted/40 px-4 py-3">
+      <span className="flex items-center gap-2 text-xs font-medium text-ink-muted">
+        Duplicate groups
+        <InfoTip label="About duplicate groups">
+          A group is a set of {objectLabel(result.object).toLowerCase()} that match each other on the fields shown: one real
+          customer (or deal) entered more than once. Keep one record per group, usually the most complete or most recently
+          used one, and merge the others into it.
+        </InfoTip>
+      </span>
+      <span className="mt-1.5 text-2xl font-semibold tabular-nums tracking-tight text-ink">
+        <AnimatedNumber value={result.totalGroups} />
+      </span>
+      {sizeText && (
+        <span className="mt-0.5 text-[11px] leading-snug text-ink-muted">
+          {result.groups.length < result.totalGroups ? `Largest ${fmtNumber(result.groups.length)}` : 'Group sizes'}: {sizeText}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -158,7 +136,7 @@ function ColumnFilter({ label, values, kept, onChange }: { label: string; values
       </button>
       {open &&
         createPortal(
-          <div ref={box} style={{ position: 'fixed', top: pos.top, left: pos.left }} className="z-[70] w-64 rounded-xl border border-line bg-surface p-2 text-xs normal-case tracking-normal shadow-xl">
+          <div ref={box} style={{ position: 'fixed', top: pos.top, left: pos.left }} className="z-[90] w-64 rounded-xl border border-line bg-surface p-2 text-xs normal-case tracking-normal shadow-xl">
             <input autoFocus className="input mb-2 h-8 text-xs" placeholder={`Search ${label}…`} value={find} onChange={(e) => setFind(e.target.value)} />
             <div className="mb-1 flex justify-between px-1 text-[11px]">
               <button type="button" className="font-semibold text-brand hover:underline" onClick={() => onChange(null)}>Select all</button>
@@ -195,8 +173,13 @@ export function DuplicateResults({ result, fileName, flag = null }: { result: Du
   useEffect(() => {
     if (!big) return;
     const esc = (e: KeyboardEvent) => e.key === 'Escape' && setBig(false);
+    const scroll = document.body.style.overflow;
+    document.body.style.overflow = 'hidden'; // the page behind doesn't scroll
     document.addEventListener('keydown', esc);
-    return () => document.removeEventListener('keydown', esc);
+    return () => {
+      document.body.style.overflow = scroll;
+      document.removeEventListener('keydown', esc);
+    };
   }, [big]);
   const term = query.trim().toLowerCase();
   const keeps = (rec: { values: Record<string, unknown> }) => Object.entries(colFilters).every(([c, s]) => s.has(show(rec.values[c])));
@@ -270,9 +253,10 @@ export function DuplicateResults({ result, fileName, flag = null }: { result: Du
           )}
         </p>
       ) : (
-        <>
-        {big && <div className="fixed inset-0 z-[60] bg-ink/40 backdrop-blur-[2px]" onClick={() => setBig(false)} />}
-        <div className={cx(big ? 'fixed inset-3 z-[61] flex flex-col rounded-2xl bg-surface p-4 shadow-2xl sm:inset-6' : 'relative')}>
+        (() => {
+        // Expanded: the table fills the whole browser window (rendered on the page itself, outside any side panel).
+        const panel = (
+        <div className={cx(big ? 'fixed inset-0 z-[80] flex flex-col bg-surface p-4 sm:p-6' : 'relative')}>
         {big && (
           <div className="mb-3 flex items-center justify-between gap-3">
             <p className="text-sm font-semibold">
@@ -349,7 +333,9 @@ Why it’s flagged: ${same}` : show(rec.values[c.name])}
           </table>
         </div>
         </div>
-        </>
+        );
+        return big ? createPortal(panel, document.body) : panel;
+        })()
       )}
     </div>
   );
