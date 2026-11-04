@@ -54,6 +54,8 @@ LEADS = [  # open Leads read to compare with the rules
 
 # COUNT() answers: first rule whose substrings all appear in the query wins.
 COUNTS = [
+    (("FROM Lead", "OwnerId IN ('00G000000000003AAA', '00G000000000002AAA')"), 4),  # in the inactive queues, with no active rule
+    (("FROM Lead", "OwnerId IN ('00G000000000003AAA')"), 1),  # in the inactive Partner queue
     (("FROM Lead", "Owner.Type = 'Queue'", "LAST_N_DAYS:7"), 3),  # in a queue more than 7 days (Critical)
     (("FROM Lead", "Owner.Type = 'Queue'", "LAST_N_DAYS:5"), 5),  # more than 5 days (High)
     (("FROM Lead", "Owner.Type = 'Queue'", "LAST_N_DAYS:3"), 8),  # more than 3 days (the card's threshold)
@@ -190,7 +192,7 @@ def test_all_workflow_areas(client, sf):
     ind = {i["label"]: i["value"] for x in res["areas"] for i in x["indicators"]}
     assert [i["label"] for i in areas["area-3"]["indicators"]] == ["Stuck Queue-Owned Leads", "Inactive Lead Assignment Rules", "Lead Assignment Criteria Mismatches"]
     assert ind["Stuck Queue-Owned Leads"] == 8  # in a queue more than 3 days
-    assert ind["Inactive Lead Assignment Rules"] == 2 and ind["Lead Assignment Criteria Mismatches"] == 2
+    assert ind["Inactive Lead Assignment Rules"] == 1 and ind["Lead Assignment Criteria Mismatches"] == 2  # 1 Lead in an inactive queue
     assert len(sf.soap) == 1 and "<met:type>AssignmentRules</met:type><fullNames>Lead</fullNames>" in sf.soap[0]  # read once for both cards
     assert ind["Missing Contact Roles"] == 15 and ind["Orphaned Contacts"] == 9 and ind["Missing Account relationships"] == 30
     assert ind["Account hierarchy issues"] == 2  # no parents on 100 accounts; no AccountContactRelation
@@ -351,7 +353,7 @@ def test_no_active_rule_no_lead_has_a_routing_path(client, sf):
     ind = {i["label"]: i for x in res["areas"] for i in x["indicators"]}
     gap = ind["Lead Assignment Criteria Mismatches"]
     assert gap["value"] == 4 and dict(gap["criteria"])["Active rule"] == "None is active, so no Lead has an automatic routing path"
-    assert ind["Inactive Lead Assignment Rules"]["value"] == 3
+    assert ind["Inactive Lead Assignment Rules"]["value"] == 4  # no active rule: every Lead queue is inactive
     names = {f["name"]: f for f in findings}
     assert names["No active Lead Assignment Rule"]["severity"] == "high"
     assert names["Leads with no assignment path"]["affectedRecords"] == 3  # Ann's was assigned by hand
@@ -369,3 +371,14 @@ def test_picked_fields_are_the_columns(client, sf):
     too_many = ",".join(f"F{i}" for i in range(11))
     assert client.get(f"{base}/indicator-records", params={**params, "fields": too_many}).status_code == 422
     assert client.get(f"{base}/indicator-records", params={**params, "fields": "Email) FROM User --"}).status_code == 422
+
+
+def test_inactive_queues_shown_with_no_inactive_rule(client, sf):
+    import re as re_
+    sf.rules_xml = re_.sub(r"<assignmentRule><fullName>(Old Rule|Partner Rule)</fullName>.*?</assignmentRule>", "", RULES_XML, flags=re_.S)
+    connect(client)
+    a, res, _ = run(client)
+    card = next(i for x in res["areas"] for i in x["indicators"] if i["label"] == "Inactive Lead Assignment Rules")
+    assert card["value"] == 1 and [r["name"] for r in card["ruleList"]] == ["Standard"]
+    queues = client.get(f"{API}/assessments/{a['id']}/areas/area-3/indicator-queues", params={"label": card["label"], "object": "Lead"}).json()
+    assert [q["name"] for q in queues] == ["Partner Queue"]

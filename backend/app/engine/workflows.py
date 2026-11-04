@@ -237,16 +237,6 @@ def inactive_rules(ctx: Ctx) -> None:
     rules = _lead_rules(ctx)
     inactive = [r for r in rules if not r.active]
     total = ctx.count("Lead", OPEN_LEADS)
-    if not inactive:
-        active = next((r for r in rules if r.active), None)
-        m = ctx.metric(label, 0, "count", "lower-better", None,
-                   how="Lead Assignment Rules that are turned off, and how many open Leads each would match if it were active.",
-                   rule="Shown for review, not scored.",
-                   criteria=[("Rules read", f"{len(rules)} Lead Assignment Rule{'' if len(rules) == 1 else 's'} in Setup"),
-                             ("Inactive rules", "None")])
-        if active:
-            m.rule_list = [_rule_item(ctx, active, {f: d.get("label") or f for f, d in ctx.fields("Lead").items()})]
-        return
     leads, types, labels = _rule_leads(ctx, rules) if total else ([], {}, {})
     if not labels:
         labels = {f: d.get("label") or f for f, d in ctx.fields("Lead").items()}
@@ -277,11 +267,13 @@ def inactive_rules(ctx: Ctx) -> None:
     listed = ("Lead", ctx.ids_in([ld["Id"] for ld in potential], RULE_LISTED)) if potential else None
     idle = _inactive_queues(ctx, active)
     in_idle = ("Lead", OPEN_LEADS, f"OwnerId IN ({_ids_in([q['id'] for q in idle])})") if total and idle else None
+    waiting = ctx.count(*in_idle, recent=False) if in_idle else 0
     m = ctx.metric(
-        label, len(inactive), "count", "lower-better", None,
-        how="Lead Assignment Rules that are turned off, with each entry’s criteria checked against the open Leads to show how many "
-        "Leads it would match if the rule were active. These are potential matches: an inactive rule assigns nothing, so they don’t "
-        "mean those Leads are wrongly assigned.",
+        label, waiting, "count", "lower-better", None,
+        how="Open Leads sitting in inactive Lead queues (queues the active Lead Assignment Rule never assigns to), with the Lead "
+        "Assignment Rules that are turned off: each entry’s criteria are checked against the open Leads to show how many Leads it "
+        "would match if the rule were active. These are potential matches: an inactive rule assigns nothing, so they don’t mean "
+        "those Leads are wrongly assigned.",
         rule="Shown for review, not scored: rules that would match many Leads may be worth reactivating, the others reviewing or deleting.",
         columns=["Name", "Company", "OwnerId", "CreatedDate"],
         order="-CreatedDate",
@@ -291,8 +283,8 @@ def inactive_rules(ctx: Ctx) -> None:
             ("Records checked", f"{len(leads):,} open Leads (not converted)" + (f", the newest {RULE_ROWS:,} of {total:,}" if total > len(leads) else "")),
             ("Potential match", "The first entry of an inactive rule whose criteria the Lead meets, the way Salesforce would pick it"),
             *rows,
-            ("What's counted", f"{len(inactive)} inactive rule{'' if len(inactive) == 1 else 's'}, {with_matches} of them matching open Leads; "
-             f"{len(potential):,} open Leads would potentially match one"),
+            ("What's counted", f"{waiting:,} open Leads in inactive Lead queues; {len(inactive)} inactive rule{'' if len(inactive) == 1 else 's'}, "
+             f"{with_matches} of them matching open Leads ({len(potential):,} open Leads would potentially match one)"),
             ("Inactive Lead queues", "Lead queues the active rule never assigns to: "
              + (", ".join(q["name"] for q in idle) if idle else "none, the active rule routes to every Lead queue")),
             ("Records listed", "The open Leads in the inactive Lead queues (pick a queue above the table), newest first, each with the "
