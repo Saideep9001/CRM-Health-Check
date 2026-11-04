@@ -349,7 +349,7 @@ def finding_records_csv(
 
 def _by_queue(rec: dict) -> bool:
     """Can this measure's records be narrowed to one Lead queue (Stuck Queue-Owned Leads, Inactive Lead Assignment Rules)?"""
-    return rec.get("extra") == "days_in_queue" or bool(rec.get("by_queue"))
+    return rec.get("extra") == "days_in_queue" or bool(rec.get("by_queue")) or rec.get("inactive_queues") is not None
 
 
 def _with_extra(sf, rec: dict, columns: list[dict], records: list[dict]) -> list[dict]:
@@ -442,7 +442,8 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
     if queue:
         if not _by_queue(rec):
             raise HTTPException(422, "Only the Stuck Queue-Owned Leads and Inactive Lead Assignment Rules measures take a queue.")
-        if not re.fullmatch(r"00G[A-Za-z0-9]{12}([A-Za-z0-9]{3})?", queue):
+        if not re.fullmatch(r"00G[A-Za-z0-9]{12}([A-Za-z0-9]{3})?", queue) or (
+                rec.get("inactive_queues") is not None and queue not in {q["id"] for q in rec["inactive_queues"]}):
             raise HTTPException(422, "Unknown queue.")
         rec = {**rec, "where": f"{explorer.and_part(rec['where'])} AND OwnerId = '{queue}'" if rec.get("where") else f"OwnerId = '{queue}'"}
     if only:
@@ -511,6 +512,12 @@ def indicator_queues(
     if not _by_queue(rec):
         raise HTTPException(422, "Only the Stuck Queue-Owned Leads and Inactive Lead Assignment Rules measures are listed by queue.")
     where = f" WHERE {rec['where']}" if rec.get("where") else ""
+    if rec.get("inactive_queues") is not None:  # Inactive Lead Assignment Rules: only the queues out of the active routing
+        def count(sf):
+            out = [{**q, "count": int(sf.query(f"SELECT COUNT() FROM {rec['object']}{where} AND OwnerId = '{q['id']}'").get("totalSize") or 0)}
+                   for q in rec["inactive_queues"]] if where else []
+            return sorted(out, key=lambda q: (-q["count"], q["name"].lower()))
+        return _salesforce(db, http, settings, count, org_id)
 
     def load(sf):
         counts = {r["o"]: int(r.get("c") or 0) for r in sf.query(

@@ -131,6 +131,9 @@ class FakeSalesOrg(FakeSalesforce):
             return [{"o": u, "c": 2} for u in USERS] + [{"o": "00G000000000001", "c": 4}]
         if q.startswith("SELECT Id, OwnerId, Owner.Name, CreatedById, CreatedDate, LeadSource FROM Lead"):
             return LEADS
+        if "Queue.DeveloperName FROM QueueSobject" in q:  # Lead queues with API names: the active rule routes to Web_Queue only
+            return [{"QueueId": "00G000000000002AAA", "Queue": {"Name": "Web Queue", "DeveloperName": "Web_Queue"}},
+                    {"QueueId": "00G000000000003AAA", "Queue": {"Name": "Partner Queue", "DeveloperName": "Partner_Queue"}}]
         if "FROM QueueSobject" in q:  # Lead queues; "Jane Doe" isn't listed, so it's found by name
             return [{"QueueId": "00G000000000002AAA", "Queue": {"Name": "Web Queue"}}]
         if "FROM Group WHERE Type = 'Queue' AND Name IN" in q:
@@ -324,21 +327,21 @@ def test_inactive_rules_are_potential_matches(client, sf, monkeypatch):
     assert rules[0]["url"].endswith("/lightning/setup/LeadRules/home")  # no id found: the rules list
     assert rules[1]["entries"] == [{"order": 1, "criteria": "Lead Source equals “Partner”", "assignedTo": "queue Partner_Queue", "matches": 1}]
     assert rules[2]["entries"][1]["matches"] is None
-    # the table: open Leads owned by a queue, narrowed to one queue when picked, each with its potential match
+    # the table: the open Leads in the inactive Lead queues (those the active rule never assigns to), one queue when picked
+    assert crit["Inactive Lead queues"] == "Lead queues the active rule never assigns to: Partner Queue"
     base = f"{API}/assessments/{a['id']}/areas/area-3"
     params = {"label": "Inactive Lead Assignment Rules", "object": "Lead"}
-    assert client.get(f"{base}/indicator-queues", params=params).status_code == 200
-    assert client.get(f"{base}/indicator-records", params={**params, "queue": "00G000000000002AAA"}).status_code == 200
+    queues = client.get(f"{base}/indicator-queues", params=params)
+    assert queues.status_code == 200 and [(q["id"], q["name"]) for q in queues.json()] == [("00G000000000003AAA", "Partner Queue")]
+    assert client.get(f"{base}/indicator-records", params={**params, "queue": "00G000000000003AAA"}).status_code == 200
     q = _lead_query(sf)
-    assert "FROM Lead WHERE IsConverted = false AND Owner.Type = 'Queue' AND OwnerId = '00G000000000002AAA'" in q
+    assert "FROM Lead WHERE IsConverted = false AND OwnerId IN ('00G000000000003AAA') AND OwnerId = '00G000000000003AAA'" in q
+    assert client.get(f"{base}/indicator-records", params={**params, "queue": "00G000000000002AAA"}).status_code == 422  # active routing
     assert client.get(f"{base}/indicator-records", params={**params, "days": 3}).status_code == 422  # days are card 1's
-    _page(monkeypatch, ["00Q000000000001", "00Q000000000005"])
+    _page(monkeypatch, ["00Q000000000005"])
     body = client.get(f"{base}/indicator-records", params=params).json()
     assert body["columns"][-1]["label"] == "Potential Match (inactive rule)"
-    assert [r["values"]["PotentialMatch"] for r in body["records"]] == [
-        "Potential match: “Old Rule” entry 1 → bob@acme.test",  # in the Web queue; only the catch-all Old Rule matches it
-        "No inactive rule entry matches this Lead",
-    ]
+    assert body["records"][0]["values"]["PotentialMatch"] == "No inactive rule entry matches this Lead"
 
 
 def test_no_active_rule_no_lead_has_a_routing_path(client, sf):

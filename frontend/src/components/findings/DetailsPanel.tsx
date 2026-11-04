@@ -422,7 +422,13 @@ function Records({
         )}
         {stuckQueue && <QueueDays value={queueDays} onChange={setQueueDays} />}
         {byQueue && (
-          <QueueFilter assessmentId={measureAssessmentId!} areaId={area.id} label={indicator!.label} object={object!} value={queue} days={days} onChange={setQueue} />
+          <QueueFilter assessmentId={measureAssessmentId!} areaId={area.id} label={indicator!.label} object={object!} value={queue} days={days} onChange={setQueue}
+            {...(stuckQueue ? {} : {
+              title: 'Inactive Lead queues',
+              tip: 'Lead queues the active Lead Assignment Rule never assigns to (every Lead queue when no rule is active). Salesforce has no on/off switch for a queue, so a queue out of the active routing counts as inactive. Pick one to see the open Leads in it.',
+              empty: 'No inactive Lead queues: the active rule assigns to every Lead queue.',
+            })}
+          />
         )}
         <div className="min-w-0 flex-1">
         <RecordsTable

@@ -147,7 +147,7 @@ def stuck_queue_leads(ctx: Ctx) -> None:
 
 RULE_ROWS = 20000  # open Leads read to compare with the rules
 RULE_LISTED = 500  # Leads listed under a card
-QUEUE_REASONS = 5000  # queue-owned Leads whose potential match is saved for the Inactive Lead Assignment Rules table
+QUEUE_REASONS = 5000  # Leads in inactive queues whose potential match is saved for the Inactive Lead Assignment Rules table
 
 
 def _lead_rules(ctx: Ctx) -> list[assignment.Rule]:
@@ -214,6 +214,21 @@ def _rule_item(ctx: Ctx, rule: assignment.Rule, labels: dict[str, str], matched:
     }
 
 
+def _inactive_queues(ctx: Ctx, active: assignment.Rule | None) -> list[dict]:
+    """Lead queues the active Lead Assignment Rule never assigns to (every Lead queue when no rule is active): [{"id", "name"}].
+    Salesforce has no on/off switch for a queue, so a queue out of the active routing counts as inactive."""
+    routed = {e.assigned_to for e in (active.entries if active else []) if e.assigned_to and (e.assigned_type or "").lower() == "queue"}
+    try:
+        rows = ctx.rows("SELECT QueueId, Queue.Name, Queue.DeveloperName FROM QueueSobject WHERE SobjectType = 'Lead'", 500)
+    except SalesforceAuthExpired:
+        raise
+    except SalesforceError:
+        return []
+    out = {r["QueueId"]: (r.get("Queue") or {}).get("Name") or r["QueueId"] for r in rows
+           if r.get("QueueId") and (r.get("Queue") or {}).get("DeveloperName") not in routed}
+    return sorted(({"id": i, "name": n} for i, n in out.items()), key=lambda q: q["name"].lower())
+
+
 def inactive_rules(ctx: Ctx) -> None:
     """Card 2 — Inactive Lead Assignment Rules: each inactive rule's entries checked against the open Leads, to show how many
     Leads each would match if it were active. These are potential matches only: an inactive rule assigns nothing, so they
@@ -260,6 +275,8 @@ def inactive_rules(ctx: Ctx) -> None:
     with_matches = sum(1 for s in summary if not s.endswith("(0)"))
     active = next((r for r in rules if r.active), None)
     listed = ("Lead", ctx.ids_in([ld["Id"] for ld in potential], RULE_LISTED)) if potential else None
+    idle = _inactive_queues(ctx, active)
+    in_idle = ("Lead", OPEN_LEADS, f"OwnerId IN ({_ids_in([q['id'] for q in idle])})") if total and idle else None
     m = ctx.metric(
         label, len(inactive), "count", "lower-better", None,
         how="Lead Assignment Rules that are turned off, with each entry’s criteria checked against the open Leads to show how many "
@@ -276,19 +293,22 @@ def inactive_rules(ctx: Ctx) -> None:
             *rows,
             ("What's counted", f"{len(inactive)} inactive rule{'' if len(inactive) == 1 else 's'}, {with_matches} of them matching open Leads; "
              f"{len(potential):,} open Leads would potentially match one"),
-            ("Records listed", "Open Leads owned by a queue (pick a queue above the table), newest first, each with the inactive rule "
-             "entry that would match it, if any"),
+            ("Inactive Lead queues", "Lead queues the active rule never assigns to: "
+             + (", ".join(q["name"] for q in idle) if idle else "none, the active rule routes to every Lead queue")),
+            ("Records listed", "The open Leads in the inactive Lead queues (pick a queue above the table), newest first, each with the "
+             "inactive rule entry that would match it, if any"),
         ],
-        records=("Lead", OPEN_LEADS, QUEUED) if total else None,
+        records=in_idle,
         recent=False,
     )
     m.rule_list = sorted(listing, key=lambda r: -(r["matches"] or 0)) + ([_rule_item(ctx, active, labels)] if active else [])
-    if m.records:  # the table: Leads by queue, each with its potential match (saved for the queue-owned ones)
-        in_queues = [ld for ld in potential if str(ld.get("OwnerId") or "").startswith("00G")][:QUEUE_REASONS]
+    if m.records:  # the table: the Leads in the inactive Lead queues, each with its potential match
+        ids = {q["id"] for q in idle}
+        mine = [ld for ld in potential if ld.get("OwnerId") in ids][:QUEUE_REASONS]
         m.records[0].update({
-            "reasons": {ld["Id"]: "Potential match: " + "; ".join(reasons[ld["Id"]]) for ld in in_queues},
+            "reasons": {ld["Id"]: "Potential match: " + "; ".join(reasons[ld["Id"]]) for ld in mine},
             "reason": "No inactive rule entry matches this Lead",
-            "by_queue": True,
+            "inactive_queues": idle,
         })
     if with_matches:
         ctx.finding(
