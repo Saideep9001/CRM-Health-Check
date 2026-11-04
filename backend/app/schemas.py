@@ -355,6 +355,23 @@ class FieldListItem(ApiModel):
     note: str = ""  # why it's listed, e.g. "Looks like Phone (Phone)"
 
 
+class RuleListEntry(ApiModel):
+    """One entry of a Lead Assignment Rule, in words."""
+    order: int
+    criteria: str  # e.g. "Lead Source equals “Web”"
+    assigned_to: str  # e.g. "queue Web_Queue"
+    matches: int | None = None  # open Leads it would match (inactive rules); None when not counted
+
+
+class RuleListItem(ApiModel):
+    """A Lead Assignment Rule listed under a card about the rules."""
+    name: str
+    active: bool
+    url: str | None = None  # the rule in Salesforce Setup
+    matches: int | None = None  # open Leads it would potentially match (inactive rules)
+    entries: list[RuleListEntry] = []
+
+
 class IndicatorValue(ApiModel):
     label: str
     value: float
@@ -366,6 +383,7 @@ class IndicatorValue(ApiModel):
     criteria: list[list[str]] = []  # the exact rules, as [name, detail] rows
     field_scores: list[FieldScore] | None = None  # per field: this card's count (duplicated, empty or odd)
     field_list: list[FieldListItem] | None = None  # cards about fields: the fields themselves
+    rule_list: list[RuleListItem] | None = None  # cards about Lead Assignment Rules: the rules, with their entries
     out_of: int | None = None  # what the number is out of, when not the object's records (e.g. 225 custom fields)
     out_of_label: str | None = None
 

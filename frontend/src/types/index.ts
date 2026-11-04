@@ -296,6 +296,17 @@ export interface FieldScore {
 }
 
 /** A field listed under a card about fields (unused, outdated, look-alike…). */
+/** A Lead Assignment Rule listed under a card about the rules, with its entries in words. */
+export interface RuleListItem {
+  name: string;
+  active: boolean;
+  /** The rule in Salesforce Setup. */
+  url: string | null;
+  /** Open Leads it would potentially match (inactive rules). */
+  matches: number | null;
+  entries: { order: number; criteria: string; assignedTo: string; matches: number | null }[];
+}
+
 export interface FieldListItem {
   name: string;
   label: string;
@@ -326,6 +337,8 @@ export interface IndicatorValue {
   fieldScores?: FieldScore[] | null;
   /** Cards about fields: the fields themselves. */
   fieldList?: FieldListItem[] | null;
+  /** Cards about Lead Assignment Rules: the rules, with their entries and a link to each in Setup. */
+  ruleList?: RuleListItem[] | null;
   /** What the number is out of, when not the object's records (e.g. 225 "custom fields"). */
   outOf?: number | null;
   outOfLabel?: string | null;

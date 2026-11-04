@@ -172,17 +172,19 @@ def target(entry: Entry) -> str:
     return f"queue {who}" if (entry.assigned_type or "").lower() == "queue" else who
 
 
+def criteria_text(entry: Entry, labels: dict[str, str]) -> str:
+    """"Lead Source equals “Web” or “Phone” AND Country starts with “U”" (with its filter logic, or its formula)."""
+    if entry.formula:
+        return f"formula {entry.formula}"
+    if not entry.items:
+        return "no criteria (every Lead)"
+    crit = " AND ".join(criterion(i, labels) for i in entry.items)
+    return f"{crit} (filter logic {entry.logic})" if entry.logic else crit
+
+
 def describe(entry: Entry, labels: dict[str, str]) -> str:
     """"Entry 2: Lead Source equals “Web” or “Phone” → queue Web_Queue"."""
-    if entry.formula:
-        crit = f"formula {entry.formula}"
-    elif not entry.items:
-        crit = "no criteria (every Lead)"
-    else:
-        crit = " AND ".join(criterion(i, labels) for i in entry.items)
-        if entry.logic:
-            crit = f"{crit} (filter logic {entry.logic})"
-    return f"Entry {entry.order}: {crit} → {target(entry)}"
+    return f"Entry {entry.order}: {criteria_text(entry, labels)} → {target(entry)}"
 
 
 def _shown(value: object) -> str:

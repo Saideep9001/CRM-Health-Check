@@ -234,7 +234,7 @@ def _run(db, http: httpx.Client, row: AssessmentRow) -> None:
             "status": status,
             "indicators": [{"label": m.label, "value": m.value, "unit": m.unit, "direction": m.direction, "score": m.score,
                             "how": m.how, "rule": m.rule, "records": m.records, "criteria": m.criteria,
-                            "fieldScores": m.field_scores, "fieldList": m.field_list, "outOf": m.out_of, "outOfLabel": m.out_of_label}
+                            "fieldScores": m.field_scores, "fieldList": m.field_list, "ruleList": m.rule_list, "outOf": m.out_of, "outOfLabel": m.out_of_label}
                            for m in metrics],
             "recordsEvaluated": sum(ctx.totals.values()) or None,
             "message": ("Some checks couldn’t run: " + " · ".join(notes)) if notes

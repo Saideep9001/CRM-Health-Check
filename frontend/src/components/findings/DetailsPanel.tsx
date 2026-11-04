@@ -43,6 +43,7 @@ import { DuplicateResults } from './DuplicateFinder';
 import { ALL } from './FieldCheck';
 import { FlowSteps, fieldFlowFor, fieldFlowForRecordType, flowFor, liveFlowFor, zeroFlow, type FlowStep } from './MeasureFlow';
 import { FieldListTable } from './FieldListTable';
+import { RulesBehind } from './RulesBehind';
 import { FieldScoreChart, chartKindFor } from './FieldScoreChart';
 
 /** Same thresholds the engine uses (backend/app/engine/core.py → severity_for, finding min_score). */
@@ -839,7 +840,13 @@ export function DetailsPanel({
 
           {extra}
 
-          {v?.fieldList ? (
+          {v?.ruleList && (
+            <Section icon={<ListChecks className="h-3.5 w-3.5" />} title="The rules behind this number">
+              <RulesBehind rules={v.ruleList} />
+            </Section>
+          )}
+
+          {v?.ruleList && !v.recordObjects?.length && !finding?.recordsAvailable ? null : v?.fieldList ? (
             <Section icon={<Database className="h-3.5 w-3.5" />} title="The fields behind this number">
               <FieldsBehind indicator={v} object={initialObject ?? objectOfFieldCard(v.label)} flow={fieldFlow} />
             </Section>

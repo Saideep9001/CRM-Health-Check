@@ -147,7 +147,9 @@ class FakeSalesOrg(FakeSalesforce):
             return [{"NextStep": "tbd"}, {"Description": "test"}, {"NextStep": "Call Monday", "Description": "Real notes"}]
         if m := re.search(r"SELECT (\w+) v, COUNT\(Id\) c FROM (\w+)", q):
             return {("Company", "Lead"): [{"v": "[not provided]", "c": 3}, {"v": "Acme", "c": 5}], ("Name", "Account"): [{"v": "test", "c": 1}]}.get((m[1], m[2]), [])
-        if "FROM AssignmentRule" in q or "FROM FlowDefinitionView" in q:
+        if "FROM AssignmentRule WHERE SobjectType = 'Lead'" in q:  # rule ids, for links into Setup
+            return [{"Id": "01Q000000000001AAA", "Name": "Partner Rule"}]
+        if "FROM FlowDefinitionView" in q:
             return []
         if "FROM OpportunityStage" in q:
             return [{"Id": f"01J00000000000{i}AAA", "MasterLabel": s, "ApiName": s, "IsClosed": False} for i, s in enumerate(("Prospecting", "Proposal"))] + [{"MasterLabel": "Closed Won", "IsClosed": True}]
@@ -316,6 +318,12 @@ def test_inactive_rules_are_potential_matches(client, sf, monkeypatch):
     assert card["score"] is None and crit["Rules read"] == "3 Lead Assignment Rules in Setup; active: “Standard”"
     assert crit["“Old Rule” (inactive)"] == "1 entry; 4 open Leads would potentially match — Entry 1: no criteria (every Lead) → bob@acme.test: 4"
     assert crit["“Partner Rule” (inactive)"].endswith("Entry 1: Lead Source equals “Partner” → queue Partner_Queue: 1")
+    rules = card["ruleList"]  # inactive rules (most potential matches first), then the active one; each links to Setup
+    assert [(r["name"], r["active"], r["matches"]) for r in rules] == [("Old Rule", False, 4), ("Partner Rule", False, 1), ("Standard", True, None)]
+    assert rules[1]["url"] == "https://acme.my.salesforce.com/lightning/setup/LeadRules/page?address=%2F01Q000000000001AAA"
+    assert rules[0]["url"].endswith("/lightning/setup/LeadRules/home")  # no id found: the rules list
+    assert rules[1]["entries"] == [{"order": 1, "criteria": "Lead Source equals “Partner”", "assignedTo": "queue Partner_Queue", "matches": 1}]
+    assert rules[2]["entries"][1]["matches"] is None
     _page(monkeypatch, ["00Q000000000002"])
     body = client.get(f"{API}/assessments/{a['id']}/areas/area-3/indicator-records",
                       params={"label": "Inactive Lead Assignment Rules", "object": "Lead"}).json()

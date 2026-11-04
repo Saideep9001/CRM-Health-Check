@@ -186,6 +186,33 @@ def _entries(rule: assignment.Rule) -> str:
     return f"{len(rule.entries)} entr{'y' if len(rule.entries) == 1 else 'ies'}"
 
 
+def _rule_ids(ctx: Ctx) -> dict[str, str]:
+    """Lead Assignment Rule name -> id, for links to the rule in Setup (empty when they can't be read)."""
+    if "lead_rule_ids" not in ctx.memo:
+        try:
+            ctx.memo["lead_rule_ids"] = {r["Name"]: r["Id"] for r in ctx.rows("SELECT Id, Name FROM AssignmentRule WHERE SobjectType = 'Lead'", 200)
+                                         if r.get("Name") and r.get("Id")}
+        except SalesforceAuthExpired:
+            raise
+        except SalesforceError:
+            ctx.memo["lead_rule_ids"] = {}
+    return ctx.memo["lead_rule_ids"]
+
+
+def _rule_item(ctx: Ctx, rule: assignment.Rule, labels: dict[str, str], matched: int | None = None,
+               per_entry: dict[int, int] | None = None) -> dict:
+    """A rule for the card's list: its status, entries in words, potential matches, and a link to it in Setup."""
+    rid = _rule_ids(ctx).get(rule.name)
+    return {
+        "name": rule.name,
+        "active": rule.active,
+        "url": ctx.setup_url(f"/lightning/setup/LeadRules/page?address=%2F{rid}" if rid else "/lightning/setup/LeadRules/home"),
+        "matches": matched,
+        "entries": [{"order": e.order, "criteria": assignment.criteria_text(e, labels), "assigned_to": assignment.target(e),
+                     "matches": None if per_entry is None else per_entry.get(e.order, 0)} for e in rule.entries],
+    }
+
+
 def inactive_rules(ctx: Ctx) -> None:
     """Card 2 — Inactive Lead Assignment Rules: each inactive rule's entries checked against the open Leads, to show how many
     Leads each would match if it were active. These are potential matches only: an inactive rule assigns nothing, so they
@@ -195,16 +222,22 @@ def inactive_rules(ctx: Ctx) -> None:
     inactive = [r for r in rules if not r.active]
     total = ctx.count("Lead", OPEN_LEADS)
     if not inactive:
-        ctx.metric(label, 0, "count", "lower-better", None,
+        active = next((r for r in rules if r.active), None)
+        m = ctx.metric(label, 0, "count", "lower-better", None,
                    how="Lead Assignment Rules that are turned off, and how many open Leads each would match if it were active.",
                    rule="Shown for review, not scored.",
                    criteria=[("Rules read", f"{len(rules)} Lead Assignment Rule{'' if len(rules) == 1 else 's'} in Setup"),
                              ("Inactive rules", "None")])
+        if active:
+            m.rule_list = [_rule_item(ctx, active, {f: d.get("label") or f for f, d in ctx.fields("Lead").items()})]
         return
     leads, types, labels = _rule_leads(ctx, rules) if total else ([], {}, {})
+    if not labels:
+        labels = {f: d.get("label") or f for f, d in ctx.fields("Lead").items()}
     reasons: dict[str, list[str]] = {}
     rows: list[tuple[str, str]] = []
     summary: list[str] = []
+    listing: list[dict] = []
     for rule in inactive:
         per_entry = {e.order: 0 for e in rule.entries}
         unsure = 0
@@ -216,6 +249,7 @@ def inactive_rules(ctx: Ctx) -> None:
             elif any(assignment.matches(e, lead, types) is None for e in rule.entries):
                 unsure += 1
         matched = sum(per_entry.values())
+        listing.append(_rule_item(ctx, rule, labels, matched, per_entry))
         summary.append(f"“{rule.name}” ({matched:,})")
         rows.append((f"“{rule.name}” (inactive)",
                      f"{_entries(rule)}; {matched:,} open Leads would potentially match"
@@ -247,6 +281,7 @@ def inactive_rules(ctx: Ctx) -> None:
         records=listed,
         recent=False,
     )
+    m.rule_list = sorted(listing, key=lambda r: -(r["matches"] or 0)) + ([_rule_item(ctx, active, labels)] if active else [])
     if m.records:
         m.records[0]["reasons"] = {i: "Potential match: " + "; ".join(r) for i, r in reasons.items() if i in {ld["Id"] for ld in potential[:RULE_LISTED]}}
     if with_matches:
