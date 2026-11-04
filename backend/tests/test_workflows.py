@@ -438,7 +438,9 @@ def test_multi_deal_contacts_list_their_roles(client, sf, monkeypatch):
     assert crit["Their roles"] == "Influencer: 1; Decision Maker: 1"
     _page(monkeypatch, ["003000000000001"])
     body = client.get(f"{API}/assessments/{a['id']}/areas/area-4/indicator-records", params={"label": card["label"], "object": "Contact"}).json()
-    assert [c["label"] for c in body["columns"]][:2] == ["Full Name", "Roles on Open Deals"] and body["columns"][1]["type"] == "lines"
+    roles = body["columns"][-1]  # last, frozen, one role per line
+    assert (roles["label"], roles["type"], roles["frozen"]) == ("Roles on Open Deals", "lines", True)
+    assert not any(c["frozen"] for c in body["columns"][:-1])
     assert body["records"][0]["values"]["OpenDealRoles"] == "Influencer on Acme Renewal\nDecision Maker on Globex Expansion"
 
 

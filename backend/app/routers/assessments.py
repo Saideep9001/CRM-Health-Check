@@ -352,7 +352,8 @@ def _by_queue(rec: dict) -> bool:
     return rec.get("extra") == "days_in_queue" or bool(rec.get("by_queue")) or rec.get("inactive_queues") is not None
 
 
-DEAL_ROLES_COLUMN = {"name": "OpenDealRoles", "label": "Roles on Open Deals", "type": "lines"}  # one role per line
+# one role per line, the last column, frozen so it stays in view while the table scrolls sideways
+DEAL_ROLES_COLUMN = {"name": "OpenDealRoles", "label": "Roles on Open Deals", "type": "lines", "frozen": True}
 # Contacts to Multiple Accounts: every Account a Contact is related to, one per line ("lines" = shown stacked in the table).
 RELATED_ACCOUNTS_COLUMN = {"name": "RelatedAccounts", "label": "Related Accounts", "type": "lines"}
 
@@ -398,8 +399,7 @@ def _with_extra(sf, rec: dict, columns: list[dict], records: list[dict]) -> list
             if roles and "\n" not in roles:  # saved by an older check as "2 open deals: A on X; B on Y"
                 roles = re.sub(r"^\d+ open deals: ", "", roles).replace("; ", "\n")
             r["values"][DEAL_ROLES_COLUMN["name"]] = roles
-        rest = [c for c in columns if c["name"] != DEAL_ROLES_COLUMN["name"]]
-        return [*rest[:1], DEAL_ROLES_COLUMN, *rest[1:]]  # right after the Contact's name
+        return [*(c for c in columns if c["name"] != DEAL_ROLES_COLUMN["name"]), DEAL_ROLES_COLUMN]
     return columns
 
 

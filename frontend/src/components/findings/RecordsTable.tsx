@@ -76,7 +76,12 @@ export function RecordsTable({
     ? [...loaded].sort((a, b) => matchKey(a.values[groupCol], groupCol).localeCompare(matchKey(b.values[groupCol], groupCol)))
     : loaded;
   // The server lists the columns that explain the result first (e.g. Name, Website for duplicates).
-  const cols = first ? first.columns.filter((c) => c.type !== 'id' && !(byAccount && c.name === 'AccountId')).slice(0, 12) : []; // the Account heads its block
+  const shown = first ? first.columns.filter((c) => c.type !== 'id' && !(byAccount && c.name === 'AccountId')) : []; // the Account heads its block
+  // Frozen columns (e.g. Roles on Open Deals) go last and stay in view on the right while the table scrolls sideways.
+  const frozen = shown.filter((c) => c.frozen);
+  const cols = [...shown.filter((c) => !c.frozen).slice(0, 12 - frozen.length), ...frozen];
+  const hasFrozen = frozen.length > 0;
+  const stick = 'sticky right-8 z-[1] bg-surface shadow-[-6px_0_8px_-6px_rgb(0_0_0/0.18)]';
   const asField = (c: { name: string; label: string; type: string }) => c as unknown as DataField;
   // Why each flagged value was flagged, from the check (record id → field → reason), across the loaded pages.
   const notes: Record<string, Record<string, string>> = Object.assign({}, ...pages.map((p) => p.cellNotes ?? {}));
@@ -186,6 +191,7 @@ export function RecordsTable({
                         key={c.name}
                         className={cx(
                           'whitespace-nowrap px-3 py-2 text-[11px] font-semibold uppercase tracking-wide',
+                          c.frozen && stick,
                           filtered ? 'bg-brand-soft text-brand-ink shadow-[inset_0_-2px_0_rgb(var(--brand))]' : 'text-ink-subtle',
                         )}
                       >
@@ -198,7 +204,7 @@ export function RecordsTable({
                       </th>
                     );
                   })}
-                  <th className="w-8" />
+                  <th className={cx('w-8', hasFrozen && 'sticky right-0 z-[1] bg-surface')} />
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
@@ -233,7 +239,7 @@ export function RecordsTable({
                           // several values in one cell (e.g. a Contact's Accounts): one per line, like rows within the row
                           const lines = v === '—' ? [] : v.split('\n');
                           return (
-                            <td key={c.name} className="max-w-[18rem] px-3 py-1 align-top">
+                            <td key={c.name} className={cx('max-w-[18rem] px-3 py-1 align-top', c.frozen && cx(stick, 'min-w-[16rem] group-hover:bg-muted'))}>
                               {lines.length ? (
                                 <ul className="divide-y divide-line">
                                   {lines.map((line, li) => (
@@ -269,7 +275,7 @@ Why it’s flagged: ${reason}` : v}
                           </td>
                         );
                       })}
-                      <td className="px-2">
+                      <td className={cx('px-2', hasFrozen && 'sticky right-0 z-[1] w-8 bg-surface group-hover:bg-muted')}>
                         {href && (
                           <a href={href} target="_blank" rel="noopener noreferrer" aria-label="Open in Salesforce" className="text-ink-subtle opacity-0 transition hover:text-brand group-hover:opacity-100">
                             <ExternalLink className="h-3.5 w-3.5" />

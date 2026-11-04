@@ -180,6 +180,7 @@ class DataColumn(ApiModel):
     name: str
     label: str
     type: str
+    frozen: bool = False  # kept last and in view while the table scrolls sideways
 
 
 class DataRelatedPage(ApiModel):
