@@ -33,7 +33,7 @@ def test_days_from_the_last_owner_change_else_created():
     sf = FakeSf([{"LeadId": "00Q000000000001AAA", "CreatedDate": _iso(4)}, {"LeadId": "00Q000000000001AAA", "CreatedDate": _iso(15)}])
     rows = _rows()
     cols = queues.add_days_in_queue(sf, COLS, rows)
-    assert [c["label"] for c in cols] == ["Name", "Queue Name", "Days in Queue", "Created Date"]
+    assert [c["label"] for c in cols] == ["Name", "Queue Name", "Days in Queue", "Urgency", "Created Date"]
     assert [r["values"]["DaysInQueue"] for r in rows] == [4, 9]  # latest owner change; no change → created
     assert "Field = 'Owner' AND LeadId IN ('00Q000000000001AAA', '00Q000000000002AAA')" in sf.soql[0]
 

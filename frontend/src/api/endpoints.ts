@@ -212,28 +212,28 @@ const filterParam = (filters: DataFilter[]) =>
 export const indicatorApi = {
   /** `only` = fields: just the records with a problem in one of them (a flagged value, or an empty key field). */
   /** `period` (No Activity only): "90", "180" or "range:YYYY-MM-DD:YYYY-MM-DD" instead of the health check's 6 months. */
-  records: (assessmentId: string, areaId: string, label: string, object: string, cursor: string | null, signal?: AbortSignal, filters: DataFilter[] = [], only: string[] = [], period?: string, queue?: string, fields?: string[]) =>
+  records: (assessmentId: string, areaId: string, label: string, object: string, cursor: string | null, signal?: AbortSignal, filters: DataFilter[] = [], only: string[] = [], period?: string, queue?: string, fields?: string[], days?: number) =>
     http.get<FindingRecordsPage>(
       `/assessments/${encodeURIComponent(assessmentId)}/areas/${encodeURIComponent(areaId)}/indicator-records`,
-      { label, object, cursor: cursor ?? undefined, filters: filterParam(filters), only: only.length ? only.join(',') : undefined, period, queue, fields: fields?.length ? fields.join(',') : undefined },
+      { label, object, cursor: cursor ?? undefined, filters: filterParam(filters), only: only.length ? only.join(',') : undefined, period, queue, fields: fields?.length ? fields.join(',') : undefined, days },
       signal,
     ),
-  /** Stuck Leads in Queue: the queues its Leads sit in, with how many in each (for the Queue filter). */
-  queues: (assessmentId: string, areaId: string, label: string, object: string, signal?: AbortSignal) =>
+  /** Stuck Queue-Owned Leads: every Lead queue, with how many of its Leads sit in each (for the Queue filter). */
+  queues: (assessmentId: string, areaId: string, label: string, object: string, signal?: AbortSignal, days?: number) =>
     http.get<{ id: string; name: string; count: number }[]>(
       `/assessments/${encodeURIComponent(assessmentId)}/areas/${encodeURIComponent(areaId)}/indicator-queues`,
-      { label, object },
+      { label, object, days },
       signal,
     ),
   /** The values of one column among a measure's records (for its filter drop-down). */
-  values: (assessmentId: string, areaId: string, label: string, object: string, field: string, filters: DataFilter[], signal?: AbortSignal, only: string[] = [], period?: string, queue?: string) =>
+  values: (assessmentId: string, areaId: string, label: string, object: string, field: string, filters: DataFilter[], signal?: AbortSignal, only: string[] = [], period?: string, queue?: string, days?: number) =>
     http.get<FieldValues>(
       `/assessments/${encodeURIComponent(assessmentId)}/areas/${encodeURIComponent(areaId)}/indicator-values`,
-      { label, object, field, filters: filterParam(filters), only: only.length ? only.join(',') : undefined, period, queue },
+      { label, object, field, filters: filterParam(filters), only: only.length ? only.join(',') : undefined, period, queue, days },
       signal,
     ),
-  csvUrl: (assessmentId: string, areaId: string, label: string, object: string, filters: DataFilter[] = [], only: string[] = [], period?: string, queue?: string, fields?: string[]) =>
-    `${API_BASE_URL}/assessments/${encodeURIComponent(assessmentId)}/areas/${encodeURIComponent(areaId)}/indicator-records.csv?${new URLSearchParams({ label, object, ...(filters.length ? { filters: filterParam(filters)! } : {}), ...(only.length ? { only: only.join(',') } : {}), ...(period ? { period } : {}), ...(queue ? { queue } : {}), ...(fields?.length ? { fields: fields.join(',') } : {}) })}`,
+  csvUrl: (assessmentId: string, areaId: string, label: string, object: string, filters: DataFilter[] = [], only: string[] = [], period?: string, queue?: string, fields?: string[], days?: number) =>
+    `${API_BASE_URL}/assessments/${encodeURIComponent(assessmentId)}/areas/${encodeURIComponent(areaId)}/indicator-records.csv?${new URLSearchParams({ label, object, ...(filters.length ? { filters: filterParam(filters)! } : {}), ...(only.length ? { only: only.join(',') } : {}), ...(period ? { period } : {}), ...(queue ? { queue } : {}), ...(fields?.length ? { fields: fields.join(',') } : {}), ...(days != null ? { days: String(days) } : {}) })}`,
 };
 
 /** Team management (admins only). */

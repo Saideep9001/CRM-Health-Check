@@ -1,11 +1,40 @@
 import { useQuery } from '@tanstack/react-query';
-import { Users, X } from 'lucide-react';
+import { Clock, Users, X } from 'lucide-react';
 import { indicatorApi } from '@/api/endpoints';
 import { cx, fmtNumber } from '@/lib/format';
 
 export type PickedQueue = { id: string; name: string };
 
-/** Stuck Leads in Queue: every Lead queue in the org side by side above the records, with how many stuck Leads sit in
+/** Stuck Queue-Owned Leads: how long a Lead has waited in its queue to be listed (0 = every Lead in a queue). */
+export const QUEUE_DAYS = [3, 5, 7] as const;
+
+export function QueueDays({ value, onChange }: { value: number; onChange: (days: number) => void }) {
+  const chip = (days: number, text: string) => (
+    <button
+      key={days}
+      type="button"
+      aria-pressed={value === days}
+      onClick={() => onChange(days)}
+      className={cx(
+        'inline-flex items-center rounded-full border px-2.5 py-1 text-xs transition',
+        value === days ? 'border-brand bg-brand-soft font-semibold text-brand-ink' : 'border-line hover:border-brand/40 hover:text-brand',
+      )}
+    >
+      {text}
+    </button>
+  );
+  return (
+    <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Days in queue">
+      <span className="mr-1 inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">
+        <Clock className="h-3.5 w-3.5" /> In a queue
+      </span>
+      {QUEUE_DAYS.map((d) => chip(d, `More than ${d} days`))}
+      {chip(0, 'Any time')}
+    </div>
+  );
+}
+
+/** Stuck Queue-Owned Leads: every Lead queue in the org side by side above the records, with how many stuck Leads sit in
  *  each. Clicking one shows only its Leads; "All" (or clicking it again) shows every queue's. */
 export function QueueFilter({
   assessmentId,
@@ -13,6 +42,7 @@ export function QueueFilter({
   label,
   object,
   value,
+  days,
   onChange,
 }: {
   assessmentId: string;
@@ -20,11 +50,13 @@ export function QueueFilter({
   label: string;
   object: string;
   value: PickedQueue | undefined;
+  /** The days-in-queue threshold picked (the counts follow it). */
+  days: number;
   onChange: (queue: PickedQueue | undefined) => void;
 }) {
   const queues = useQuery({
-    queryKey: ['indicator-queues', assessmentId, areaId, label, object],
-    queryFn: ({ signal }) => indicatorApi.queues(assessmentId, areaId, label, object, signal),
+    queryKey: ['indicator-queues', assessmentId, areaId, label, object, days],
+    queryFn: ({ signal }) => indicatorApi.queues(assessmentId, areaId, label, object, signal, days),
     staleTime: 60_000,
   });
   const list = queues.data ?? [];

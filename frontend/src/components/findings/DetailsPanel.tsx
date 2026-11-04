@@ -36,7 +36,7 @@ import { InlineError } from '../ui/States';
 import { ChangeBadge } from './AffectedRecords';
 import { FixPlanPanel } from './FixPlanPanel';
 import { ActivityPeriod } from './ActivityPeriod';
-import { QueueFilter, type PickedQueue } from './QueueFilter';
+import { QueueDays, QueueFilter, type PickedQueue } from './QueueFilter';
 import { FieldPicker } from './FieldPicker';
 import { RecordsTable } from './RecordsTable';
 import { DuplicateResults } from './DuplicateFinder';
@@ -330,8 +330,9 @@ function Records({
   // No Activity: the period the table covers (undefined = the health check's 6 months; "90"; "range:YYYY-MM-DD:YYYY-MM-DD").
   const noActivity = /^no activity/i.test(indicator?.label ?? '');
   const [period, setPeriod] = useState<string | undefined>();
-  // Stuck Leads in Queue: only the Leads in one queue (undefined = every queue).
-  const byQueue = indicator?.label === 'Stuck Leads in Queue';
+  // Stuck Queue-Owned Leads: the Leads in a queue more than 3, 5 or 7 days (0 = any time), and only one queue's (undefined = all).
+  const byQueue = indicator?.label === 'Stuck Queue-Owned Leads';
+  const [queueDays, setQueueDays] = useState(3);
   const [queue, setQueue] = useState<PickedQueue | undefined>();
   // Area 3: the fields picked to show as the table's columns (null = the measure's own).
   const pickFields = area.id === 'area-3';
@@ -339,10 +340,12 @@ function Records({
   useEffect(() => {
     setPeriod(undefined);
     setQueue(undefined);
+    setQueueDays(3);
     setShownCols(null);
   }, [object, indicator?.label]);
   const cols = shownCols ?? undefined;
-  const measureRecords = useIndicatorRecords(useMeasure ? measureAssessmentId : null, area.id, indicator?.label ?? '', object, filters, only, period, queue?.id, cols);
+  const days = byQueue ? queueDays : undefined;
+  const measureRecords = useIndicatorRecords(useMeasure ? measureAssessmentId : null, area.id, indicator?.label ?? '', object, filters, only, period, queue?.id, cols, days);
   const missing = /^missing/i.test(indicator?.label ?? '');
   // The flow follows what the person picked: the fields ticked in Check fields, and the table's column filters (its count).
   const standardization = /^data standardi/i.test(indicator?.label ?? '');
@@ -403,7 +406,7 @@ function Records({
             to finish reading the records (usually under a minute), then tick that field.
           </p>
         )}
-        {/* Area 3: the fields shown, and (Stuck Leads in Queue) the org's Lead queues side by side, above the records */}
+        {/* Area 3: the fields shown, and (Stuck Queue-Owned Leads) the days-in-queue threshold and the org's Lead queues, above the records */}
         <div className={cx((byQueue || pickFields) && 'space-y-3')}>
         {pickFields && (
           <FieldPicker
@@ -414,8 +417,9 @@ function Records({
             onChange={setShownCols}
           />
         )}
+        {byQueue && <QueueDays value={queueDays} onChange={setQueueDays} />}
         {byQueue && (
-          <QueueFilter assessmentId={measureAssessmentId!} areaId={area.id} label={indicator!.label} object={object!} value={queue} onChange={setQueue} />
+          <QueueFilter assessmentId={measureAssessmentId!} areaId={area.id} label={indicator!.label} object={object!} value={queue} days={queueDays} onChange={setQueue} />
         )}
         <div className="min-w-0 flex-1">
         <RecordsTable
@@ -428,15 +432,15 @@ function Records({
                 : objectLabel(object!)
           }
           grouped={duplicates}
-          csvUrl={indicatorApi.csvUrl(measureAssessmentId!, area.id, indicator!.label, object!, filters, only, period, queue?.id, cols)}
+          csvUrl={indicatorApi.csvUrl(measureAssessmentId!, area.id, indicator!.label, object!, filters, only, period, queue?.id, cols, days)}
           toolbar={noActivity ? <ActivityPeriod key={`${object}-${indicator!.label}`} onChange={setPeriod} /> : undefined}
           filters={filters}
           onFiltersChange={setFilters}
           keyFields={missing && only.length ? only : keyFields}
           markOnly={only}
           valuesSource={{
-            key: ['indicator', measureAssessmentId, area.id, indicator!.label, object, only, period, queue?.id],
-            load: (field, others, signal) => indicatorApi.values(measureAssessmentId!, area.id, indicator!.label, object!, field, others, signal, only, period, queue?.id),
+            key: ['indicator', measureAssessmentId, area.id, indicator!.label, object, only, period, queue?.id, days],
+            load: (field, others, signal) => indicatorApi.values(measureAssessmentId!, area.id, indicator!.label, object!, field, others, signal, only, period, queue?.id, days),
           }}
         />
         </div>

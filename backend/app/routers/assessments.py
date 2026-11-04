@@ -349,11 +349,13 @@ def finding_records_csv(
 
 def _with_extra(sf, rec: dict, columns: list[dict], records: list[dict]) -> list[dict]:
     """A measure's column that isn't a Salesforce field, added to the listed records: Days in Queue (worked out live, so it's
-    always current) or the Assignment Gap Reason saved by the check."""
+    always current), or the reason saved by the check (Assignment Gap Reason, Potential Match)."""
     if rec.get("extra") == "days_in_queue":
         return queues.add_days_in_queue(sf, columns, records)
     if rec.get("extra") == "assignment_gap":
         return assignment.add_gap_reason(columns, records, rec.get("reasons") or {}, rec.get("reason"))
+    if rec.get("extra") == "rule_match":
+        return assignment.add_reason(columns, records, rec.get("reasons") or {}, column=assignment.MATCH_COLUMN)
     return columns
 
 
@@ -403,11 +405,13 @@ def _picked(fields: str | None, rec: dict | None = None) -> list[str] | None:
     return list(dict.fromkeys(names))
 
 def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str, obj: str | None,
-                       only: str | None = None, period: str | None = None, queue: str | None = None) -> tuple[dict, str, str]:
+                       only: str | None = None, period: str | None = None, queue: str | None = None,
+                       days: int | None = None) -> tuple[dict, str, str]:
     """(object, where, org id, title) for one measure of one area, as saved by the health check that measured it.
     `only` = comma-separated fields: just the records with a problem in one of them (a flagged value, or for a
     missing-fields measure an empty value). `period` (No Activity only) = "90", "180" or "range:YYYY-MM-DD:YYYY-MM-DD" instead of
-    the health check's 6 months. `queue` (Stuck Leads in Queue only) = just the Leads in that queue, by its id."""
+    the health check's 6 months. `queue` (Stuck Queue-Owned Leads only) = just the Leads in that queue, by its id; `days` = the
+    Leads in a queue more than 3, 5 or 7 days (0 = every Lead in a queue; the card's own threshold when not given)."""
     row = _get(db, assessment_id)
     area = next((a for a in (row.results or {}).get("areas", []) if a.get("areaId") == area_id), None)
     ind = next((i for i in (area or {}).get("indicators", []) if i.get("label") == label), None)
@@ -422,9 +426,17 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
             rec = {**rec, "where": activity.with_period(rec["where"], period)}
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
+    if rec.get("queue_days") is not None:  # Stuck Queue-Owned Leads: the Leads past the threshold picked on the card
+        picked = rec["queue_days"] if days is None else days
+        if picked not in (0, *queues.DAYS):
+            raise HTTPException(422, "Pick more than 3, 5 or 7 days, or every Lead in a queue.")
+        if picked:
+            rec = {**rec, "where": " AND ".join([explorer.and_part(rec["where"]), *queues.longer_than(picked, bool(rec.get("history")))])}
+    elif days is not None:
+        raise HTTPException(422, "Only the Stuck Queue-Owned Leads measure takes a number of days.")
     if queue:
         if rec.get("extra") != "days_in_queue":
-            raise HTTPException(422, "Only the Stuck Leads in Queue measure takes a queue.")
+            raise HTTPException(422, "Only the Stuck Queue-Owned Leads measure takes a queue.")
         if not re.fullmatch(r"00G[A-Za-z0-9]{12}([A-Za-z0-9]{3})?", queue):
             raise HTTPException(422, "Unknown queue.")
         rec = {**rec, "where": f"{explorer.and_part(rec['where'])} AND OwnerId = '{queue}'" if rec.get("where") else f"OwnerId = '{queue}'"}
@@ -457,14 +469,15 @@ def indicator_records(
     filters: str | None = Query(None, max_length=12000, description='JSON list of {"field","op","value"} column filters'),
     only: str | None = Query(None, max_length=1200, description="Comma-separated fields: only records with a problem in one of them"),
     period: str | None = Query(None, max_length=40, description='No Activity only: "90", "180" or "range:YYYY-MM-DD:YYYY-MM-DD"'),
-    queue: str | None = Query(None, max_length=80, description="Stuck Leads in Queue only: the queue's id"),
+    queue: str | None = Query(None, max_length=80, description="Stuck Queue-Owned Leads only: the queue's id"),
+    days: int | None = Query(None, ge=0, le=7, description="Stuck Queue-Owned Leads only: in a queue more than 3, 5 or 7 days (0 = all)"),
     fields: str | None = Query(None, max_length=1200, description="Comma-separated fields to show as the columns, instead of the measure's"),
     db: Session = Depends(get_db),
     http: httpx.Client = Depends(http_dep),
     settings: Settings = Depends(settings_dep),
 ):
     """The records a measure counted, live from Salesforce (200 per page)."""
-    rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, object, only, period, queue)
+    rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, object, only, period, queue, days)
     picked = _picked(fields, rec)
     page = _salesforce(db, http, settings, lambda sf: explorer.records_matching(
         sf, rec["object"], rec.get("where"), cursor, columns=picked or rec.get("columns"), order=rec.get("order"), filters=_filters(filters),
@@ -482,15 +495,16 @@ def indicator_queues(
     area_id: str,
     label: str = Query(..., max_length=200),
     object: str | None = Query(None, max_length=80),
+    days: int | None = Query(None, ge=0, le=7),
     db: Session = Depends(get_db),
     http: httpx.Client = Depends(http_dep),
     settings: Settings = Depends(settings_dep),
 ):
     """Every queue that can own Leads, with how many of the measure's Leads sit in each (0 for the others), most first, for
-    its Queue filter (Stuck Leads in Queue)."""
-    rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, object)
+    its Queue filter (Stuck Queue-Owned Leads)."""
+    rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, object, days=days)
     if rec.get("extra") != "days_in_queue":
-        raise HTTPException(422, "Only the Stuck Leads in Queue measure is listed by queue.")
+        raise HTTPException(422, "Only the Stuck Queue-Owned Leads measure is listed by queue.")
     where = f" WHERE {rec['where']}" if rec.get("where") else ""
 
     def load(sf):
@@ -526,13 +540,14 @@ def indicator_values(
     filters: str | None = Query(None, max_length=12000),
     only: str | None = Query(None, max_length=1200),
     period: str | None = Query(None, max_length=40, description='No Activity only: "90", "180" or "range:YYYY-MM-DD:YYYY-MM-DD"'),
-    queue: str | None = Query(None, max_length=80, description="Stuck Leads in Queue only: the queue's id"),
+    queue: str | None = Query(None, max_length=80, description="Stuck Queue-Owned Leads only: the queue's id"),
+    days: int | None = Query(None, ge=0, le=7, description="Stuck Queue-Owned Leads only: in a queue more than 3, 5 or 7 days (0 = all)"),
     db: Session = Depends(get_db),
     http: httpx.Client = Depends(http_dep),
     settings: Settings = Depends(settings_dep),
 ):
     """The values of one column among a measure's records, for its filter drop-down."""
-    rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, object, only, period, queue)
+    rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, object, only, period, queue, days)
     return _salesforce(db, http, settings, lambda sf: explorer.field_values(
         sf, rec["object"], field, None, _filters(filters), base_where=rec.get("where")), org_id)
 
@@ -546,13 +561,14 @@ def indicator_records_csv(
     filters: str | None = Query(None, max_length=12000),
     only: str | None = Query(None, max_length=1200),
     period: str | None = Query(None, max_length=40, description='No Activity only: "90", "180" or "range:YYYY-MM-DD:YYYY-MM-DD"'),
-    queue: str | None = Query(None, max_length=80, description="Stuck Leads in Queue only: the queue's id"),
+    queue: str | None = Query(None, max_length=80, description="Stuck Queue-Owned Leads only: the queue's id"),
+    days: int | None = Query(None, ge=0, le=7, description="Stuck Queue-Owned Leads only: in a queue more than 3, 5 or 7 days (0 = all)"),
     fields: str | None = Query(None, max_length=1200, description="Comma-separated fields to show as the columns, instead of the measure's"),
     db: Session = Depends(get_db),
     http: httpx.Client = Depends(http_dep),
     settings: Settings = Depends(settings_dep),
 ):
-    rec, org_id, title = _indicator_records(db, assessment_id, area_id, label, object, only, period, queue)
+    rec, org_id, title = _indicator_records(db, assessment_id, area_id, label, object, only, period, queue, days)
     picked = _picked(fields, rec)
     return _records_csv(db, http, settings, org_id, rec["object"], rec.get("where"), title, picked or rec.get("columns"), rec.get("order"),
                         _filters(filters), notes=rec.get("notes"), rec=rec, exact=bool(picked))

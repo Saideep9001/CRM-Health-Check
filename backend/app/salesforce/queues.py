@@ -1,7 +1,7 @@
-"""How long each listed Lead has sat in its queue, as a column worked out live (read-only).
+"""Leads waiting in a queue: how long each has been in its current queue, and the urgency that comes with it (read-only).
 
-A Lead's time in its queue runs from its last Lead Owner change in Lead History, or from its Created Date when the owner
-never changed (or Lead Owner changes aren't tracked).
+A Lead's time in its current queue runs from its last Lead Owner change in Lead History (the moment it entered that queue),
+or from its Created Date when the owner never changed or Lead Owner changes aren't tracked.
 """
 import re
 from datetime import datetime, timezone
@@ -9,8 +9,27 @@ from datetime import datetime, timezone
 from .client import SalesforceClient
 from .errors import SalesforceAuthExpired, SalesforceError
 
+DAYS = (3, 5, 7)  # thresholds a person can pick ("in a queue for more than N days")
+DEFAULT_DAYS = 3
 COLUMN = {"name": "DaysInQueue", "label": "Days in Queue", "type": "int"}
+URGENCY = {"name": "QueueUrgency", "label": "Urgency", "type": "string"}
 _ID = re.compile(r"[A-Za-z0-9]{15,18}")
+
+
+def urgency(days: int | None) -> str:
+    """Urgency from days in the queue: Critical after 7 days, High after 5, Medium after 3, else Within 3 days."""
+    if days is None:
+        return "—"
+    return "Critical" if days > 7 else "High" if days > 5 else "Medium" if days > 3 else "Within 3 days"
+
+
+def longer_than(days: int, history: bool) -> list[str]:
+    """SOQL conditions for "in its current queue for more than `days` days": created before then and, when Lead Owner changes
+    are tracked, no owner change since (the last one is when it entered the queue)."""
+    conds = [f"CreatedDate < LAST_N_DAYS:{int(days)}"]
+    if history:
+        conds.append(f"Id NOT IN (SELECT LeadId FROM LeadHistory WHERE Field = 'Owner' AND CreatedDate = LAST_N_DAYS:{int(days)})")
+    return conds
 
 
 def _when(iso: str | None) -> datetime | None:
@@ -37,16 +56,19 @@ def _last_owner_change(sf: SalesforceClient, ids: list[str]) -> dict[str, dateti
 
 
 def add_days_in_queue(sf: SalesforceClient, columns: list[dict], records: list[dict]) -> list[dict]:
-    """Adds "Days in Queue" to each record (in place) and returns the columns with it after the owner, named as the queue."""
+    """Adds "Days in Queue" and its urgency to each record (in place) and returns the columns with them after the owner,
+    named as the queue."""
     ids = [r["id"] for r in records if r.get("id") and _ID.fullmatch(r["id"])]
     changed = _last_owner_change(sf, ids) if ids else {}
     now = datetime.now(timezone.utc)
     for r in records:
         since = changed.get(r.get("id") or "") or _when(r["values"].get("CreatedDate"))
-        r["values"][COLUMN["name"]] = max(0, (now - since).days) if since else None
+        days = max(0, (now - since).days) if since else None
+        r["values"][COLUMN["name"]] = days
+        r["values"][URGENCY["name"]] = urgency(days)
     out: list[dict] = []
     for c in columns:
         out.append({**c, "label": "Queue Name"} if c["name"] == "OwnerId" else c)
         if c["name"] == "OwnerId":
-            out.append(COLUMN)
-    return out if COLUMN in out else out + [COLUMN]
+            out += [COLUMN, URGENCY]
+    return out if COLUMN in out else out + [COLUMN, URGENCY]

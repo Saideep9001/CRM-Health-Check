@@ -305,10 +305,10 @@ export const useFindingRecords = (findingId: string | null, enabled = true, filt
     staleTime: 60_000,
   });
 
-export const useIndicatorRecords = (assessmentId: string | null, areaId: string, label: string, object: string | null, filters: DataFilter[] = [], only: string[] = [], period?: string, queue?: string, fields?: string[]) =>
+export const useIndicatorRecords = (assessmentId: string | null, areaId: string, label: string, object: string | null, filters: DataFilter[] = [], only: string[] = [], period?: string, queue?: string, fields?: string[], days?: number) =>
   useInfiniteQuery({
-    queryKey: ['indicator-records', assessmentId, areaId, label, object, filters, only, period, queue, fields],
-    queryFn: ({ signal, pageParam }) => indicatorApi.records(assessmentId!, areaId, label, object!, pageParam, signal, filters, only, period, queue, fields),
+    queryKey: ['indicator-records', assessmentId, areaId, label, object, filters, only, period, queue, fields, days],
+    queryFn: ({ signal, pageParam }) => indicatorApi.records(assessmentId!, areaId, label, object!, pageParam, signal, filters, only, period, queue, fields, days),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.nextCursor,
     enabled: !!assessmentId && !!object,
