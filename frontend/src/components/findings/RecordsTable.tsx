@@ -229,10 +229,27 @@ export function RecordsTable({
                       {cols.map((c, ci) => {
                         const v = formatValue(asField(c), r.values[c.name], r.refNames[c.name]);
                         const reason = why(r, c.name, i);
+                        if (c.type === 'lines') {
+                          // several values in one cell (e.g. a Contact's Accounts): one per line, like rows within the row
+                          const lines = v === '—' ? [] : v.split('\n');
+                          return (
+                            <td key={c.name} className="max-w-[18rem] px-3 py-1 align-top">
+                              {lines.length ? (
+                                <ul className="divide-y divide-line">
+                                  {lines.map((line, li) => (
+                                    <li key={li} className="truncate py-1" title={line}>{line}</li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <span className="text-ink-subtle">—</span>
+                              )}
+                            </td>
+                          );
+                        }
                         return (
                           <td
                             key={c.name}
-                            className={cx('max-w-[16rem] truncate px-3 py-2', reason ? 'bg-bad-soft/60' : columnFilter(filters, c.name) && 'bg-brand-soft/40')}
+                            className={cx('max-w-[16rem] truncate px-3 py-2 align-top', reason ? 'bg-bad-soft/60' : columnFilter(filters, c.name) && 'bg-brand-soft/40')}
                             title={reason ? `${v === '—' ? 'Empty' : v}
 Why it’s flagged: ${reason}` : v}
                           >

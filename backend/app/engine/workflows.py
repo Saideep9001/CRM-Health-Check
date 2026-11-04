@@ -590,14 +590,16 @@ def multiple_accounts(ctx: Ctx) -> None:
         how="Whether “Contacts to Multiple Accounts” is turned on, and how many Contacts are related to more than one Account "
         "(an indirect relationship besides their own Account).",
         rule="100 when the feature is on; 50 when it’s off. How many Contacts use it is shown for review, not scored.",
-        columns=["Name", "AccountId", "Title", "Email", "OwnerId"],
+        columns=["Name", "Email", "Title", "OwnerId"],
         order="Name",
+        extra="related_accounts",
         criteria=[
             ("Feature", "On: Contacts can be related to more than one Account"),
             ("Records checked", f"{total:,} Contacts"),
             ("Related to more than one Account", "The Contact has at least one indirect Account Contact Relationship"),
             ("What's counted", f"{n:,} Contacts ({pct(n, total):.0f}%) are related to more than one Account, through {links:,} indirect relationships"),
-            ("Records listed", "Every Contact related to more than one Account, by name"),
+            ("Records listed", "Every Contact related to more than one Account, by name, with every Account it’s related to "
+             "(its own Account first)"),
         ],
         records=("Contact", MULTI),
         recent=False,
@@ -642,7 +644,7 @@ def multi_deal_contacts(ctx: Ctx) -> None:
         extra="deal_roles",
     )
     if m.records:
-        m.records[0]["reasons"] = {c: f"{len(multi[c])} open deals: " + "; ".join(multi[c]) for c in ids[:ROLE_LISTED]}
+        m.records[0]["reasons"] = {c: "\n".join(multi[c]) for c in ids[:ROLE_LISTED]}  # one "Role on Deal" per line
 
 
 # ---------------------------------------------------------------- area 5: sales path, playbooks, feedback loops

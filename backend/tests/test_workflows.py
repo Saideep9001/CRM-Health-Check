@@ -171,6 +171,9 @@ class FakeSalesOrg(FakeSalesforce):
             return {("Company", "Lead"): [{"v": "[not provided]", "c": 3}, {"v": "Acme", "c": 5}], ("Name", "Account"): [{"v": "test", "c": 1}]}.get((m[1], m[2]), [])
         if "FROM AssignmentRule WHERE SobjectType = 'Lead'" in q:  # rule ids, for links into Setup
             return [{"Id": "01Q000000000001AAA", "Name": "Partner Rule"}]
+        if q.startswith("SELECT ContactId, Account.Name, IsDirect FROM AccountContactRelation WHERE ContactId IN"):
+            return [{"ContactId": "003000000000001AAA", "Account": {"Name": "OakStone Retail Group"}, "IsDirect": True},
+                    {"ContactId": "003000000000001AAA", "Account": {"Name": "Titan Manufacturing Corp"}, "IsDirect": False}]
         if "FROM OpportunityContactRole WHERE Opportunity.IsClosed = false" in q:
             return ROLES
         if "FROM FlowDefinitionView" in q:
@@ -435,8 +438,8 @@ def test_multi_deal_contacts_list_their_roles(client, sf, monkeypatch):
     assert crit["Their roles"] == "Influencer: 1; Decision Maker: 1"
     _page(monkeypatch, ["003000000000001"])
     body = client.get(f"{API}/assessments/{a['id']}/areas/area-4/indicator-records", params={"label": card["label"], "object": "Contact"}).json()
-    assert body["columns"][-1]["label"] == "Roles on Open Deals"
-    assert body["records"][0]["values"]["OpenDealRoles"] == "2 open deals: Influencer on Acme Renewal; Decision Maker on Globex Expansion"
+    assert [c["label"] for c in body["columns"]][:2] == ["Full Name", "Roles on Open Deals"] and body["columns"][1]["type"] == "lines"
+    assert body["records"][0]["values"]["OpenDealRoles"] == "Influencer on Acme Renewal\nDecision Maker on Globex Expansion"
 
 
 def test_contacts_to_multiple_accounts_when_on(client, sf, monkeypatch):
@@ -444,8 +447,16 @@ def test_contacts_to_multiple_accounts_when_on(client, sf, monkeypatch):
     monkeypatch.setattr(sys.modules[__name__], "COUNTS", [(("FROM Contact", "AccountContactRelation WHERE IsDirect = false"), 7),
                                                           (("FROM AccountContactRelation",), 11), *COUNTS])
     connect(client)
-    _, res, findings = run(client)
+    a, res, findings = run(client)
     card = next(i for x in res["areas"] for i in x["indicators"] if i["label"] == "Contacts to Multiple Accounts")
     assert card["value"] == 7 and card["score"] == 100
     assert dict(card["criteria"])["What's counted"] == "7 Contacts (6%) are related to more than one Account, through 11 indirect relationships"
     assert "Contacts can’t be related to multiple Accounts" not in {f["name"] for f in findings}
+    _page(monkeypatch, ["003000000000001", "003000000000002"])
+    body = client.get(f"{API}/assessments/{a['id']}/areas/area-4/indicator-records", params={"label": card["label"], "object": "Contact"}).json()
+    assert [c["label"] for c in body["columns"]][:2] == ["Full Name", "Related Accounts"]  # right after the name
+    assert body["columns"][1]["type"] == "lines"
+    assert body["records"][0]["values"]["RelatedAccounts"] == "OakStone Retail Group\nTitan Manufacturing Corp"  # its own Account first
+    assert body["records"][1]["values"]["RelatedAccounts"] is None
+    q = next(q for q in reversed(sf.soql) if "FROM AccountContactRelation WHERE ContactId IN" in q)
+    assert "ContactId IN ('003000000000001', '003000000000002')" in q

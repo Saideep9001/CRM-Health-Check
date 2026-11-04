@@ -352,7 +352,32 @@ def _by_queue(rec: dict) -> bool:
     return rec.get("extra") == "days_in_queue" or bool(rec.get("by_queue")) or rec.get("inactive_queues") is not None
 
 
-DEAL_ROLES_COLUMN = {"name": "OpenDealRoles", "label": "Roles on Open Deals", "type": "string"}
+DEAL_ROLES_COLUMN = {"name": "OpenDealRoles", "label": "Roles on Open Deals", "type": "lines"}  # one role per line
+# Contacts to Multiple Accounts: every Account a Contact is related to, one per line ("lines" = shown stacked in the table).
+RELATED_ACCOUNTS_COLUMN = {"name": "RelatedAccounts", "label": "Related Accounts", "type": "lines"}
+
+
+def _add_related_accounts(sf, columns: list[dict], records: list[dict]) -> list[dict]:
+    """Each listed Contact's Accounts (Account Contact Relationships, read live): its own Account first, then the others by
+    name, one per line. The column goes right after the Contact's name."""
+    ids = [r["id"] for r in records if re.fullmatch(r"003[A-Za-z0-9]{12}([A-Za-z0-9]{3})?", r.get("id") or "")]
+    accounts: dict[str, list[str]] = {}
+    for i in range(0, len(ids), 200):
+        chunk = ", ".join(f"'{x}'" for x in ids[i:i + 200])
+        body = sf.query(f"SELECT ContactId, Account.Name, IsDirect FROM AccountContactRelation WHERE ContactId IN ({chunk}) "
+                        "ORDER BY IsDirect DESC, Account.Name", max_rows=20000)
+        rows = list(body.get("records", []))
+        while not body.get("done", True) and body.get("nextRecordsUrl"):
+            body = sf.get(body["nextRecordsUrl"])
+            rows += body.get("records", [])
+        for row in rows:
+            name = (row.get("Account") or {}).get("Name")
+            if name:
+                accounts.setdefault(row["ContactId"][:15], []).append(name)
+    for r in records:
+        r["values"][RELATED_ACCOUNTS_COLUMN["name"]] = "\n".join(accounts.get((r.get("id") or "")[:15], [])) or None
+    rest = [c for c in columns if c["name"] != RELATED_ACCOUNTS_COLUMN["name"]]
+    return [*rest[:1], RELATED_ACCOUNTS_COLUMN, *rest[1:]]
 
 
 def _with_extra(sf, rec: dict, columns: list[dict], records: list[dict]) -> list[dict]:
@@ -364,11 +389,17 @@ def _with_extra(sf, rec: dict, columns: list[dict], records: list[dict]) -> list
         return assignment.add_gap_reason(columns, records, rec.get("reasons") or {}, rec.get("reason"))
     if rec.get("extra") == "rule_match":
         return assignment.add_reason(columns, records, rec.get("reasons") or {}, rec.get("reason"), column=assignment.MATCH_COLUMN)
+    if rec.get("extra") == "related_accounts":
+        return _add_related_accounts(sf, columns, records)
     if rec.get("extra") == "deal_roles":  # Multi-Deal Contacts: each Contact's roles on open deals, saved by the check
         reasons = rec.get("reasons") or {}
         for r in records:
-            r["values"][DEAL_ROLES_COLUMN["name"]] = reasons.get(r.get("id") or "")
-        return [*columns, DEAL_ROLES_COLUMN] if DEAL_ROLES_COLUMN not in columns else columns
+            roles = reasons.get(r.get("id") or "")
+            if roles and "\n" not in roles:  # saved by an older check as "2 open deals: A on X; B on Y"
+                roles = re.sub(r"^\d+ open deals: ", "", roles).replace("; ", "\n")
+            r["values"][DEAL_ROLES_COLUMN["name"]] = roles
+        rest = [c for c in columns if c["name"] != DEAL_ROLES_COLUMN["name"]]
+        return [*rest[:1], DEAL_ROLES_COLUMN, *rest[1:]]  # right after the Contact's name
     return columns
 
 
