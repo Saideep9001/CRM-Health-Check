@@ -589,7 +589,8 @@ def indicator_queues(
         if missing:  # counted, but not listed as a Lead queue (or the list couldn't be read): find them by name
             for r in sf.query(f"SELECT Id, Name FROM Group WHERE Type = 'Queue' AND {in_list('Name', missing)}").get("records", []):
                 queues.setdefault(r["Id"], r["Name"])
-        out = [{"id": i, "name": n, "count": counts.get(n, 0)} for i, n in queues.items()]
+        routed = rec.get("routed_queues")  # the queues the active rule assigns to, saved by the check (None = not known)
+        out = [{"id": i, "name": n, "count": counts.get(n, 0), "active": None if routed is None else i in routed} for i, n in queues.items()]
         return sorted(out, key=lambda q: (-q["count"], q["name"].lower()))
 
     return _salesforce(db, http, settings, load, org_id)

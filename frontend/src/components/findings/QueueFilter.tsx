@@ -73,7 +73,9 @@ export function QueueFilter({
     <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={title}>
       <span className="mr-1 inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">
         <Users className="h-3.5 w-3.5" /> {title}
-        {tip && <InfoTip label={`About ${title}`}>{tip}</InfoTip>}
+        <InfoTip label={`About ${title}`}>
+          {tip ?? 'Green: the active Lead Assignment Rule assigns to the queue. Red: no active rule does. Pick a queue to see only its Leads.'}
+        </InfoTip>
       </span>
       {queues.isLoading ? (
         <span className="text-xs text-ink-subtle">Loading queues…</span>
@@ -104,7 +106,8 @@ export function QueueFilter({
               type="button"
               aria-pressed={on}
               onClick={() => onChange(on ? undefined : { id: q.id, name: q.name })}
-              title={on ? 'Show every queue’s Leads' : `Show only the Leads in ${q.name}`}
+              title={(q.active ? 'The active Lead Assignment Rule assigns to this queue. ' : q.active === false ? 'No active Lead Assignment Rule assigns to this queue. ' : '')
+                + (on ? 'Show every queue’s Leads' : `Show only the Leads in ${q.name}`)}
               className={cx(
                 'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition',
                 on ? 'border-brand bg-brand-soft font-semibold text-brand-ink' : 'border-line hover:border-brand/40 hover:text-brand',
@@ -112,7 +115,8 @@ export function QueueFilter({
               )}
             >
               {q.name}
-              <span className={cx('rounded-full px-1.5 tabular-nums', on ? 'bg-surface' : q.count ? 'bg-bad-soft text-bad' : 'bg-muted')}>{fmtNumber(q.count)}</span>
+              {/* green: the active rule assigns to the queue; red: no active rule does */}
+              <span className={cx('rounded-full px-1.5 tabular-nums', on ? 'bg-surface' : q.count ? (q.active ? 'bg-good-soft text-good' : 'bg-bad-soft text-bad') : 'bg-muted')}>{fmtNumber(q.count)}</span>
               {on && <X className="h-3 w-3" aria-hidden="true" />}
             </button>
           );

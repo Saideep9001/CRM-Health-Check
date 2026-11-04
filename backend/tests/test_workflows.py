@@ -297,7 +297,8 @@ def test_stuck_queue_owned_leads_by_queue_and_days(client, sf):
     queues = client.get(f"{base}/indicator-queues", params=params)
     # every Lead queue, the empty ones too (0), most stuck Leads first; counted past the card's threshold
     assert queues.status_code == 200 and queues.json() == [
-        {"id": "00G000000000001AAA", "name": "Jane Doe", "count": 5}, {"id": "00G000000000002AAA", "name": "Web Queue", "count": 0}]
+        {"id": "00G000000000001AAA", "name": "Jane Doe", "count": 5, "active": False},  # no active rule assigns to it: red
+        {"id": "00G000000000002AAA", "name": "Web Queue", "count": 0, "active": True}]  # the active rule's Web_Queue: green
     grouped = next(q for q in sf.soql if "GROUP BY Owner.Name" in q and "Owner.Type = 'Queue'" in q and "LAST_N_DAYS:3" in q)
     assert "LeadHistory WHERE Field = 'Owner' AND CreatedDate = LAST_N_DAYS:3" in grouped
 

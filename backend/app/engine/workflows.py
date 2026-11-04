@@ -124,7 +124,7 @@ def stuck_queue_leads(ctx: Ctx) -> None:
         recent=False,
     )
     if m.records:  # the table starts at the threshold; the person can pick another (or every Lead in a queue)
-        m.records[0].update({"queue_days": days, "history": history})
+        m.records[0].update({"queue_days": days, "history": history, "routed_queues": _routed_queue_ids(ctx)})
     if n:
         stuck = ("Lead", *base, *queues.longer_than(days, history))
         top = ctx.by_owner(*stuck)
@@ -237,6 +237,18 @@ def _inactive_queues(ctx: Ctx, active: assignment.Rule | None) -> list[dict]:
     out = {r["QueueId"]: (r.get("Queue") or {}).get("Name") or r["QueueId"] for r in _lead_queues(ctx)
            if r.get("QueueId") and (r.get("Queue") or {}).get("DeveloperName") not in routed}
     return sorted(({"id": i, "name": n} for i, n in out.items()), key=lambda q: q["name"].lower())
+
+
+def _routed_queue_ids(ctx: Ctx) -> list[str] | None:
+    """Ids of the Lead queues the active Lead Assignment Rule assigns to (shown green on the queue chips; the others red),
+    or None when the rules can't be read."""
+    try:
+        rules = _lead_rules(ctx)
+    except Unavailable:
+        return None
+    active = next((r for r in rules if r.active), None)
+    routed = {e.assigned_to for e in (active.entries if active else []) if e.assigned_to and (e.assigned_type or "").lower() == "queue"}
+    return sorted(r["QueueId"] for r in _lead_queues(ctx) if r.get("QueueId") and (r.get("Queue") or {}).get("DeveloperName") in routed)
 
 
 def _rule_targets(ctx: Ctx, rules: list[assignment.Rule]) -> list[dict]:

@@ -158,6 +158,7 @@ class QueueCount(ApiModel):
     id: str  # the queue (a Group id), for the filter
     name: str  # the queue's name
     count: int  # Leads in it
+    active: bool | None = None  # Stuck Queue-Owned Leads: the active Lead Assignment Rule assigns to it (None = not known)
 
 
 class DataChildRelationship(ApiModel):
