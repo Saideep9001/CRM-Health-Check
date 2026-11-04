@@ -348,10 +348,8 @@ def finding_records_csv(
 
 
 def _by_queue(rec: dict) -> bool:
-    """Can this measure's records be narrowed to one owner: a Lead queue (Stuck Queue-Owned Leads, Inactive Lead Assignment
-    Rules) or a user (Opportunities Without Contact Roles)?"""
-    return (rec.get("extra") == "days_in_queue" or bool(rec.get("by_queue")) or bool(rec.get("by_owner"))
-            or rec.get("inactive_queues") is not None)
+    """Can this measure's records be narrowed to one Lead queue (Stuck Queue-Owned Leads, Inactive Lead Assignment Rules)?"""
+    return rec.get("extra") == "days_in_queue" or bool(rec.get("by_queue")) or rec.get("inactive_queues") is not None
 
 
 DEAL_ROLES_COLUMN = {"name": "OpenDealRoles", "label": "Roles on Open Deals", "type": "string"}
@@ -451,9 +449,8 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
         raise HTTPException(422, "Only the Stuck Queue-Owned Leads measure takes a number of days.")
     if queue:
         if not _by_queue(rec):
-            raise HTTPException(422, "This measure can’t be narrowed to one queue or owner.")
-        prefix = "00[5G]" if rec.get("by_owner") else "00G"  # an owner (a user or a queue), or a Lead queue
-        if not re.fullmatch(prefix + r"[A-Za-z0-9]{12}([A-Za-z0-9]{3})?", queue) or (
+            raise HTTPException(422, "Only the Stuck Queue-Owned Leads and Inactive Lead Assignment Rules measures take a queue.")
+        if not re.fullmatch(r"00G[A-Za-z0-9]{12}([A-Za-z0-9]{3})?", queue) or (
                 rec.get("inactive_queues") is not None and queue not in {q["id"] for q in rec["inactive_queues"]}):
             raise HTTPException(422, "Unknown queue.")
         rec = {**rec, "where": f"{explorer.and_part(rec['where'])} AND OwnerId = '{queue}'" if rec.get("where") else f"OwnerId = '{queue}'"}
@@ -486,7 +483,7 @@ def indicator_records(
     filters: str | None = Query(None, max_length=12000, description='JSON list of {"field","op","value"} column filters'),
     only: str | None = Query(None, max_length=1200, description="Comma-separated fields: only records with a problem in one of them"),
     period: str | None = Query(None, max_length=40, description='No Activity only: "90", "180" or "range:YYYY-MM-DD:YYYY-MM-DD"'),
-    queue: str | None = Query(None, max_length=80, description="A queue's id (Stuck Queue-Owned Leads, Inactive Lead Assignment Rules) or an owner's (Opportunities Without Contact Roles)"),
+    queue: str | None = Query(None, max_length=80, description="A Lead queue's id (Stuck Queue-Owned Leads, Inactive Lead Assignment Rules)"),
     days: int | None = Query(None, ge=0, le=7, description="Stuck Queue-Owned Leads only: in a queue more than 3, 5 or 7 days (0 = all)"),
     fields: str | None = Query(None, max_length=1200, description="Comma-separated fields to show as the columns, instead of the measure's"),
     db: Session = Depends(get_db),
@@ -521,15 +518,8 @@ def indicator_queues(
     its Queue filter (Stuck Queue-Owned Leads)."""
     rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, object, days=days)
     if not _by_queue(rec):
-        raise HTTPException(422, "This measure isn’t listed by queue or owner.")
+        raise HTTPException(422, "Only the Stuck Queue-Owned Leads and Inactive Lead Assignment Rules measures are listed by queue.")
     where = f" WHERE {rec['where']}" if rec.get("where") else ""
-    if rec.get("by_owner"):  # Opportunities Without Contact Roles: each owner of the measure's deals, with their total Amount
-        def owners(sf):
-            rows = sf.query(f"SELECT OwnerId i, Owner.Name n, COUNT(Id) c, SUM(Amount) a FROM {rec['object']}{where} "
-                            "GROUP BY OwnerId, Owner.Name ORDER BY COUNT(Id) DESC LIMIT 200").get("records", [])
-            return [{"id": r["i"], "name": r.get("n") or r["i"], "count": int(r.get("c") or 0),
-                     "amount": None if r.get("a") is None else float(r["a"])} for r in rows if r.get("i")]
-        return _salesforce(db, http, settings, owners, org_id)
     if rec.get("inactive_queues") is not None:  # Inactive Lead Assignment Rules: only the queues out of the active routing
         def count(sf):
             out = [{**q, "count": int(sf.query(f"SELECT COUNT() FROM {rec['object']}{where} AND OwnerId = '{q['id']}'").get("totalSize") or 0)}
@@ -570,7 +560,7 @@ def indicator_values(
     filters: str | None = Query(None, max_length=12000),
     only: str | None = Query(None, max_length=1200),
     period: str | None = Query(None, max_length=40, description='No Activity only: "90", "180" or "range:YYYY-MM-DD:YYYY-MM-DD"'),
-    queue: str | None = Query(None, max_length=80, description="A queue's id (Stuck Queue-Owned Leads, Inactive Lead Assignment Rules) or an owner's (Opportunities Without Contact Roles)"),
+    queue: str | None = Query(None, max_length=80, description="A Lead queue's id (Stuck Queue-Owned Leads, Inactive Lead Assignment Rules)"),
     days: int | None = Query(None, ge=0, le=7, description="Stuck Queue-Owned Leads only: in a queue more than 3, 5 or 7 days (0 = all)"),
     db: Session = Depends(get_db),
     http: httpx.Client = Depends(http_dep),
@@ -591,7 +581,7 @@ def indicator_records_csv(
     filters: str | None = Query(None, max_length=12000),
     only: str | None = Query(None, max_length=1200),
     period: str | None = Query(None, max_length=40, description='No Activity only: "90", "180" or "range:YYYY-MM-DD:YYYY-MM-DD"'),
-    queue: str | None = Query(None, max_length=80, description="A queue's id (Stuck Queue-Owned Leads, Inactive Lead Assignment Rules) or an owner's (Opportunities Without Contact Roles)"),
+    queue: str | None = Query(None, max_length=80, description="A Lead queue's id (Stuck Queue-Owned Leads, Inactive Lead Assignment Rules)"),
     days: int | None = Query(None, ge=0, le=7, description="Stuck Queue-Owned Leads only: in a queue more than 3, 5 or 7 days (0 = all)"),
     fields: str | None = Query(None, max_length=1200, description="Comma-separated fields to show as the columns, instead of the measure's"),
     db: Session = Depends(get_db),

@@ -173,8 +173,6 @@ class FakeSalesOrg(FakeSalesforce):
             return [{"Id": "01Q000000000001AAA", "Name": "Partner Rule"}]
         if "FROM OpportunityContactRole WHERE Opportunity.IsClosed = false" in q:
             return ROLES
-        if q.startswith("SELECT OwnerId i, Owner.Name n, COUNT(Id) c, SUM(Amount) a FROM Opportunity"):
-            return [{"i": "005000000000001", "n": "Ann Lee", "c": 9, "a": 120000}, {"i": "005000000000002", "n": "Bob Ray", "c": 6, "a": None}]
         if "FROM FlowDefinitionView" in q:
             return []
         if "FROM OpportunityStage" in q:
@@ -294,7 +292,7 @@ def test_stuck_queue_owned_leads_by_queue_and_days(client, sf):
     queues = client.get(f"{base}/indicator-queues", params=params)
     # every Lead queue, the empty ones too (0), most stuck Leads first; counted past the card's threshold
     assert queues.status_code == 200 and queues.json() == [
-        {"id": "00G000000000001AAA", "name": "Jane Doe", "count": 5, "amount": None}, {"id": "00G000000000002AAA", "name": "Web Queue", "count": 0, "amount": None}]
+        {"id": "00G000000000001AAA", "name": "Jane Doe", "count": 5}, {"id": "00G000000000002AAA", "name": "Web Queue", "count": 0}]
     grouped = next(q for q in sf.soql if "GROUP BY Owner.Name" in q and "Owner.Type = 'Queue'" in q and "LAST_N_DAYS:3" in q)
     assert "LeadHistory WHERE Field = 'Owner' AND CreatedDate = LAST_N_DAYS:3" in grouped
 
@@ -412,7 +410,7 @@ def test_inactive_queues_shown_with_no_inactive_rule(client, sf):
     assert [q["name"] for q in queues] == ["Partner Queue"]
 
 
-def test_contact_roles_by_owner_and_layouts(client, sf):
+def test_contact_roles_layouts_and_fields(client, sf):
     connect(client)
     a, res, _ = run(client)
     card = next(i for x in res["areas"] for i in x["indicators"] if i["label"] == "Opportunities Without Contact Roles")
@@ -423,17 +421,9 @@ def test_contact_roles_by_owner_and_layouts(client, sf):
     assert "<fullNames>Opportunity-Sales %28Marketing%29 Layout</fullNames>" in layout_read  # names encoded the Metadata API way
     base = f"{API}/assessments/{a['id']}/areas/area-4"
     params = {"label": "Opportunities Without Contact Roles", "object": "Opportunity"}
-    owners = client.get(f"{base}/indicator-queues", params=params)
-    assert owners.status_code == 200
-    assert owners.json() == [{"id": "005000000000001", "name": "Ann Lee", "count": 9, "amount": 120000.0},
-                             {"id": "005000000000002", "name": "Bob Ray", "count": 6, "amount": None}]
-    assert client.get(f"{base}/indicator-records", params={**params, "queue": "005000000000001"}).status_code == 200
-    q = next(q for q in reversed(sf.soql) if "FROM Opportunity WHERE" in q)
-    assert "Id NOT IN (SELECT OpportunityId FROM OpportunityContactRole) AND OwnerId = '005000000000001'" in q
-    assert client.get(f"{base}/indicator-records", params={**params, "queue": "x' OR Id != null"}).status_code == 422
-    other = {"label": "Orphaned Contacts", "object": "Contact"}
-    assert client.get(f"{base}/indicator-records", params={**other, "queue": "005000000000001"}).status_code == 422
-    assert client.get(f"{base}/indicator-queues", params=other).status_code == 422
+    assert client.get(f"{base}/indicator-queues", params=params).status_code == 422  # no owner chips
+    assert client.get(f"{base}/indicator-records", params={**params, "queue": "005000000000001"}).status_code == 422
+    assert client.get(f"{base}/indicator-records", params={**params, "fields": "Name,Amount"}).status_code == 200  # fields picked
 
 
 def test_multi_deal_contacts_list_their_roles(client, sf, monkeypatch):

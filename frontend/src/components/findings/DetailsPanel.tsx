@@ -333,13 +333,11 @@ function Records({
   // Stuck Queue-Owned Leads: the Leads in a queue more than 3, 5 or 7 days (0 = any time), and only one queue's (undefined = all).
   const stuckQueue = indicator?.label === 'Stuck Queue-Owned Leads';
   // Stuck Queue-Owned Leads and Inactive Lead Assignment Rules: the org's Lead queues above the table, to pick one.
-  // Opportunities Without Contact Roles: the deals' owners the same way, to pick one.
-  const byOwner = indicator?.label === 'Opportunities Without Contact Roles';
-  const byQueue = stuckQueue || byOwner || indicator?.label === 'Inactive Lead Assignment Rules';
+  const byQueue = stuckQueue || indicator?.label === 'Inactive Lead Assignment Rules';
   const [queueDays, setQueueDays] = useState(3);
   const [queue, setQueue] = useState<PickedQueue | undefined>();
-  // Area 3: the fields picked to show as the table's columns (null = the measure's own).
-  const pickFields = area.id === 'area-3';
+  // Areas 3 and 4: the fields picked to show as the table's columns (null = the measure's own).
+  const pickFields = area.id === 'area-3' || area.id === 'area-4';
   const [shownCols, setShownCols] = useState<string[] | null>(null);
   useEffect(() => {
     setPeriod(undefined);
@@ -424,12 +422,7 @@ function Records({
         {stuckQueue && <QueueDays value={queueDays} onChange={setQueueDays} />}
         {byQueue && (
           <QueueFilter assessmentId={measureAssessmentId!} areaId={area.id} label={indicator!.label} object={object!} value={queue} days={days} onChange={setQueue}
-            {...(stuckQueue ? {} : byOwner ? {
-              title: 'Owners',
-              tip: 'The owners of the open Opportunities with no Contact Roles, with how many deals each has and their total Amount. Pick one to see only their deals.',
-              empty: 'No open Opportunities without Contact Roles.',
-              all: 'Show every owner’s deals',
-            } : {
+            {...(stuckQueue ? {} : {
               title: 'Inactive Lead queues',
               tip: 'Lead queues the active Lead Assignment Rule never assigns to (every Lead queue when no rule is active). Salesforce has no on/off switch for a queue, so a queue out of the active routing counts as inactive. Pick one to see the open Leads in it.',
               empty: 'No inactive Lead queues: the active rule assigns to every Lead queue.',

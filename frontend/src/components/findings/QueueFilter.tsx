@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Clock, Users, X } from 'lucide-react';
 import { indicatorApi } from '@/api/endpoints';
 import { InfoTip } from '@/components/ui/HelpTip';
-import { cx, fmtCompact, fmtNumber } from '@/lib/format';
+import { cx, fmtNumber } from '@/lib/format';
 
 export type PickedQueue = { id: string; name: string };
 
@@ -35,7 +35,7 @@ export function QueueDays({ value, onChange }: { value: number; onChange: (days:
   );
 }
 
-/** Every Lead queue (or, for Opportunities Without Contact Roles, every owner) side by side above the records, with
+/** Every Lead queue in the org side by side above the records (Stuck Queue-Owned Leads, Inactive Lead Assignment Rules), with
  *  how many of the card's Leads sit in each. Clicking one shows only its Leads; "All" (or clicking it again) shows every queue's. */
 export function QueueFilter({
   assessmentId,
@@ -48,7 +48,6 @@ export function QueueFilter({
   title = 'Lead queues',
   tip,
   empty = 'No Lead queues found.',
-  all = 'Show every queue’s Leads',
 }: {
   assessmentId: string;
   areaId: string;
@@ -62,8 +61,6 @@ export function QueueFilter({
   title?: string;
   tip?: string;
   empty?: string;
-  /** What "All" does, in words (its tooltip). */
-  all?: string;
 }) {
   const queues = useQuery({
     queryKey: ['indicator-queues', assessmentId, areaId, label, object, days],
@@ -90,7 +87,7 @@ export function QueueFilter({
             type="button"
             aria-pressed={!value}
             onClick={() => onChange(undefined)}
-            title={all}
+            title="Show every queue’s Leads"
             className={cx(
               'inline-flex items-center rounded-full border px-2.5 py-1 text-xs transition',
               !value ? 'border-brand bg-brand-soft font-semibold text-brand-ink' : 'border-line hover:border-brand/40 hover:text-brand',
@@ -106,7 +103,7 @@ export function QueueFilter({
               type="button"
               aria-pressed={on}
               onClick={() => onChange(on ? undefined : { id: q.id, name: q.name })}
-              title={on ? all : `Show only the records of ${q.name}`}
+              title={on ? 'Show every queue’s Leads' : `Show only the Leads in ${q.name}`}
               className={cx(
                 'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition',
                 on ? 'border-brand bg-brand-soft font-semibold text-brand-ink' : 'border-line hover:border-brand/40 hover:text-brand',
@@ -115,7 +112,6 @@ export function QueueFilter({
             >
               {q.name}
               <span className={cx('rounded-full px-1.5 tabular-nums', on ? 'bg-surface' : q.count ? 'bg-bad-soft text-bad' : 'bg-muted')}>{fmtNumber(q.count)}</span>
-              {q.amount ? <span className={cx('tabular-nums', on ? 'text-brand-ink' : 'text-ink-subtle')}>{fmtCompact(q.amount)}</span> : null}
               {on && <X className="h-3 w-3" aria-hidden="true" />}
             </button>
           );

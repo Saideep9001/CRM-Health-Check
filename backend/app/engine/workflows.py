@@ -479,7 +479,7 @@ def contact_roles(ctx: Ctx) -> None:
         on_layout = f"Missing from {len(layouts[1])} of {len(layouts[0])} Opportunity layouts: " + ", ".join(layouts[1])
     else:
         on_layout = f"On all {len(layouts[0])} Opportunity layouts"
-    m = ctx.metric(
+    ctx.metric(
         label, n, "count", "lower-better", score,
         how="Open Opportunities with no Contact Roles (no Contact named as decision maker, influencer and so on), grouped by "
         "owner with the deals’ total Amount. We also check that the Contact Roles related list is on the Opportunity page layouts.",
@@ -492,12 +492,10 @@ def contact_roles(ctx: Ctx) -> None:
             ("What's counted", f"{n:,} of {total:,} open Opportunities ({pct(n, total):.0f}%) have no Contact Roles" + _worth(value)),
             ("By owner", "; ".join(f"{o}: {c:,}" + (f" ({_money(a)})" if a else "") for o, c, a in owners) if owners else "—"),
             ("Contact Roles on the page", on_layout),
-            ("Records listed", "Every open Opportunity with no Contact Roles, by close date (pick an owner above the table)"),
+            ("Records listed", "Every open Opportunity with no Contact Roles, by close date"),
         ],
         records=("Opportunity", OPEN_OPPS, NO_ROLES),
     )
-    if m.records:
-        m.records[0]["by_owner"] = True
     if n:
         ctx.finding(
             name="Open deals with no contact roles",
