@@ -347,6 +347,11 @@ def finding_records_csv(
     return _records_csv(db, http, settings, org_id, row.records_object, row.records_where, row.name, filters=_filters(filters))
 
 
+def _by_queue(rec: dict) -> bool:
+    """Can this measure's records be narrowed to one Lead queue (Stuck Queue-Owned Leads, Inactive Lead Assignment Rules)?"""
+    return rec.get("extra") == "days_in_queue" or bool(rec.get("by_queue"))
+
+
 def _with_extra(sf, rec: dict, columns: list[dict], records: list[dict]) -> list[dict]:
     """A measure's column that isn't a Salesforce field, added to the listed records: Days in Queue (worked out live, so it's
     always current), or the reason saved by the check (Assignment Gap Reason, Potential Match)."""
@@ -355,7 +360,7 @@ def _with_extra(sf, rec: dict, columns: list[dict], records: list[dict]) -> list
     if rec.get("extra") == "assignment_gap":
         return assignment.add_gap_reason(columns, records, rec.get("reasons") or {}, rec.get("reason"))
     if rec.get("extra") == "rule_match":
-        return assignment.add_reason(columns, records, rec.get("reasons") or {}, column=assignment.MATCH_COLUMN)
+        return assignment.add_reason(columns, records, rec.get("reasons") or {}, rec.get("reason"), column=assignment.MATCH_COLUMN)
     return columns
 
 
@@ -435,8 +440,8 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
     elif days is not None:
         raise HTTPException(422, "Only the Stuck Queue-Owned Leads measure takes a number of days.")
     if queue:
-        if rec.get("extra") != "days_in_queue":
-            raise HTTPException(422, "Only the Stuck Queue-Owned Leads measure takes a queue.")
+        if not _by_queue(rec):
+            raise HTTPException(422, "Only the Stuck Queue-Owned Leads and Inactive Lead Assignment Rules measures take a queue.")
         if not re.fullmatch(r"00G[A-Za-z0-9]{12}([A-Za-z0-9]{3})?", queue):
             raise HTTPException(422, "Unknown queue.")
         rec = {**rec, "where": f"{explorer.and_part(rec['where'])} AND OwnerId = '{queue}'" if rec.get("where") else f"OwnerId = '{queue}'"}
@@ -503,8 +508,8 @@ def indicator_queues(
     """Every queue that can own Leads, with how many of the measure's Leads sit in each (0 for the others), most first, for
     its Queue filter (Stuck Queue-Owned Leads)."""
     rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, object, days=days)
-    if rec.get("extra") != "days_in_queue":
-        raise HTTPException(422, "Only the Stuck Queue-Owned Leads measure is listed by queue.")
+    if not _by_queue(rec):
+        raise HTTPException(422, "Only the Stuck Queue-Owned Leads and Inactive Lead Assignment Rules measures are listed by queue.")
     where = f" WHERE {rec['where']}" if rec.get("where") else ""
 
     def load(sf):

@@ -147,6 +147,7 @@ def stuck_queue_leads(ctx: Ctx) -> None:
 
 RULE_ROWS = 20000  # open Leads read to compare with the rules
 RULE_LISTED = 500  # Leads listed under a card
+QUEUE_REASONS = 5000  # queue-owned Leads whose potential match is saved for the Inactive Lead Assignment Rules table
 
 
 def _lead_rules(ctx: Ctx) -> list[assignment.Rule]:
@@ -275,15 +276,20 @@ def inactive_rules(ctx: Ctx) -> None:
             *rows,
             ("What's counted", f"{len(inactive)} inactive rule{'' if len(inactive) == 1 else 's'}, {with_matches} of them matching open Leads; "
              f"{len(potential):,} open Leads would potentially match one"),
-            ("Records listed", "The Leads an inactive rule would match, with the rule and entry, newest first"
-             + (f" (the first {RULE_LISTED:,})" if len(potential) > RULE_LISTED else "")),
+            ("Records listed", "Open Leads owned by a queue (pick a queue above the table), newest first, each with the inactive rule "
+             "entry that would match it, if any"),
         ],
-        records=listed,
+        records=("Lead", OPEN_LEADS, QUEUED) if total else None,
         recent=False,
     )
     m.rule_list = sorted(listing, key=lambda r: -(r["matches"] or 0)) + ([_rule_item(ctx, active, labels)] if active else [])
-    if m.records:
-        m.records[0]["reasons"] = {i: "Potential match: " + "; ".join(r) for i, r in reasons.items() if i in {ld["Id"] for ld in potential[:RULE_LISTED]}}
+    if m.records:  # the table: Leads by queue, each with its potential match (saved for the queue-owned ones)
+        in_queues = [ld for ld in potential if str(ld.get("OwnerId") or "").startswith("00G")][:QUEUE_REASONS]
+        m.records[0].update({
+            "reasons": {ld["Id"]: "Potential match: " + "; ".join(reasons[ld["Id"]]) for ld in in_queues},
+            "reason": "No inactive rule entry matches this Lead",
+            "by_queue": True,
+        })
     if with_matches:
         ctx.finding(
             name="Inactive Lead Assignment Rules match existing Leads",

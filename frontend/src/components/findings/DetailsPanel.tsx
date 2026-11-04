@@ -332,7 +332,9 @@ function Records({
   const noActivity = /^no activity/i.test(indicator?.label ?? '');
   const [period, setPeriod] = useState<string | undefined>();
   // Stuck Queue-Owned Leads: the Leads in a queue more than 3, 5 or 7 days (0 = any time), and only one queue's (undefined = all).
-  const byQueue = indicator?.label === 'Stuck Queue-Owned Leads';
+  const stuckQueue = indicator?.label === 'Stuck Queue-Owned Leads';
+  // Stuck Queue-Owned Leads and Inactive Lead Assignment Rules: the org's Lead queues above the table, to pick one.
+  const byQueue = stuckQueue || indicator?.label === 'Inactive Lead Assignment Rules';
   const [queueDays, setQueueDays] = useState(3);
   const [queue, setQueue] = useState<PickedQueue | undefined>();
   // Area 3: the fields picked to show as the table's columns (null = the measure's own).
@@ -345,7 +347,7 @@ function Records({
     setShownCols(null);
   }, [object, indicator?.label]);
   const cols = shownCols ?? undefined;
-  const days = byQueue ? queueDays : undefined;
+  const days = stuckQueue ? queueDays : undefined;
   const measureRecords = useIndicatorRecords(useMeasure ? measureAssessmentId : null, area.id, indicator?.label ?? '', object, filters, only, period, queue?.id, cols, days);
   const missing = /^missing/i.test(indicator?.label ?? '');
   // The flow follows what the person picked: the fields ticked in Check fields, and the table's column filters (its count).
@@ -418,9 +420,9 @@ function Records({
             onChange={setShownCols}
           />
         )}
-        {byQueue && <QueueDays value={queueDays} onChange={setQueueDays} />}
+        {stuckQueue && <QueueDays value={queueDays} onChange={setQueueDays} />}
         {byQueue && (
-          <QueueFilter assessmentId={measureAssessmentId!} areaId={area.id} label={indicator!.label} object={object!} value={queue} days={queueDays} onChange={setQueue} />
+          <QueueFilter assessmentId={measureAssessmentId!} areaId={area.id} label={indicator!.label} object={object!} value={queue} days={days} onChange={setQueue} />
         )}
         <div className="min-w-0 flex-1">
         <RecordsTable

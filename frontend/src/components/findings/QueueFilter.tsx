@@ -34,8 +34,8 @@ export function QueueDays({ value, onChange }: { value: number; onChange: (days:
   );
 }
 
-/** Stuck Queue-Owned Leads: every Lead queue in the org side by side above the records, with how many stuck Leads sit in
- *  each. Clicking one shows only its Leads; "All" (or clicking it again) shows every queue's. */
+/** Every Lead queue in the org side by side above the records (Stuck Queue-Owned Leads, Inactive Lead Assignment Rules), with
+ *  how many of the card's Leads sit in each. Clicking one shows only its Leads; "All" (or clicking it again) shows every queue's. */
 export function QueueFilter({
   assessmentId,
   areaId,
@@ -50,8 +50,8 @@ export function QueueFilter({
   label: string;
   object: string;
   value: PickedQueue | undefined;
-  /** The days-in-queue threshold picked (the counts follow it). */
-  days: number;
+  /** Stuck Queue-Owned Leads: the days-in-queue threshold picked (the counts follow it). */
+  days?: number;
   onChange: (queue: PickedQueue | undefined) => void;
 }) {
   const queues = useQuery({
