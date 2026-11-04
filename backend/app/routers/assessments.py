@@ -355,12 +355,12 @@ def _by_queue(rec: dict) -> bool:
 # one role per line, the last column, frozen so it stays in view while the table scrolls sideways
 DEAL_ROLES_COLUMN = {"name": "OpenDealRoles", "label": "Roles on Open Deals", "type": "lines", "frozen": True}
 # Contacts to Multiple Accounts: every Account a Contact is related to, one per line ("lines" = shown stacked in the table).
-RELATED_ACCOUNTS_COLUMN = {"name": "RelatedAccounts", "label": "Related Accounts", "type": "lines"}
+RELATED_ACCOUNTS_COLUMN = {"name": "RelatedAccounts", "label": "Related Accounts", "type": "lines", "frozen": True}
 
 
 def _add_related_accounts(sf, columns: list[dict], records: list[dict]) -> list[dict]:
     """Each listed Contact's Accounts (Account Contact Relationships, read live): its own Account first, then the others by
-    name, one per line. The column goes right after the Contact's name."""
+    name, one per line. The column goes last, frozen so it stays in view while the table scrolls sideways."""
     ids = [r["id"] for r in records if re.fullmatch(r"003[A-Za-z0-9]{12}([A-Za-z0-9]{3})?", r.get("id") or "")]
     accounts: dict[str, list[str]] = {}
     for i in range(0, len(ids), 200):
@@ -377,8 +377,7 @@ def _add_related_accounts(sf, columns: list[dict], records: list[dict]) -> list[
                 accounts.setdefault(row["ContactId"][:15], []).append(name)
     for r in records:
         r["values"][RELATED_ACCOUNTS_COLUMN["name"]] = "\n".join(accounts.get((r.get("id") or "")[:15], [])) or None
-    rest = [c for c in columns if c["name"] != RELATED_ACCOUNTS_COLUMN["name"]]
-    return [*rest[:1], RELATED_ACCOUNTS_COLUMN, *rest[1:]]
+    return [*(c for c in columns if c["name"] != RELATED_ACCOUNTS_COLUMN["name"]), RELATED_ACCOUNTS_COLUMN]  # last, frozen
 
 
 def _with_extra(sf, rec: dict, columns: list[dict], records: list[dict]) -> list[dict]:

@@ -1,4 +1,4 @@
-import { RecordLink } from '@/components/data/RecordLink';
+import { RecordLink, useOpenRecord } from '@/components/data/RecordLink';
 import { Download, ExternalLink, Search } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { errorMessage } from '@/api/client';
@@ -25,6 +25,7 @@ export function fieldsNamed(text: string, object: string, fields: { name: string
 
 /** Records where the given field(s) are empty, 200 at a time, with a value filter and CSV. */
 export function EmptyRecords({ object, fields }: { object: string; fields: string[] }) {
+  const openRecord = useOpenRecord();
   const ex = useExpand();
   const [rowQuery, setRowQuery] = useState('');
   const [result, setResult] = useState<EmptyResult | null>(null);
@@ -103,7 +104,7 @@ export function EmptyRecords({ object, fields }: { object: string; fields: strin
               {rows.map((r, ri) => {
                 const href = r.id ? `${result.recordUrlPrefix}${r.id}` : undefined;
                 return (
-                  <tr key={r.id ?? ri} className="group hover:bg-muted/60">
+                  <tr key={r.id ?? ri} onClick={openRecord(object, r.id).onClick} className={cx('group hover:bg-muted/60', openRecord(object, r.id).className)}>
                     {cols.map((c, ci) => {
                       const raw = r.values[c.name];
                       const blank = raw === null || raw === undefined || raw === '';

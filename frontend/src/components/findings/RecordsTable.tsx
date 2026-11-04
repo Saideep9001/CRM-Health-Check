@@ -1,4 +1,4 @@
-import { RecordLink } from '@/components/data/RecordLink';
+import { RecordLink, useOpenRecord } from '@/components/data/RecordLink';
 import type { InfiniteData, UseInfiniteQueryResult } from '@tanstack/react-query';
 import { AlertTriangle, Download, ExternalLink, Search, X } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
@@ -84,6 +84,7 @@ export function RecordsTable({
   const hasFrozen = frozen.length > 0;
   const stick = 'sticky right-8 z-[1] bg-surface shadow-[-6px_0_8px_-6px_rgb(0_0_0/0.18)]';
   const asField = (c: { name: string; label: string; type: string }) => c as unknown as DataField;
+  const openRecord = useOpenRecord();
   // Why each flagged value was flagged, from the check (record id → field → reason), across the loaded pages.
   const notes: Record<string, Record<string, string>> = Object.assign({}, ...pages.map((p) => p.cellNotes ?? {}));
   const key = new Set(keyFields ?? []);
@@ -211,10 +212,12 @@ export function RecordsTable({
               <tbody className="divide-y divide-line">
                 {rows.map((r, i) => {
                   const href = r.id ? `${first!.recordUrlPrefix}${r.id}` : undefined;
+                  const row = openRecord(first!.object, r.id);
                   return (
                     <tr
                       key={r.id ?? i}
-                      className={cx('group hover:bg-muted/60', groupCol && groupOf[i] % 2 === 0 && 'bg-brand-soft/30', groupCol && i > 0 && groupOf[i] !== groupOf[i - 1] && 'border-t-2 border-t-brand/20')}
+                      onClick={row.onClick}
+                      className={cx('group hover:bg-muted/60', row.className, groupCol && groupOf[i] % 2 === 0 && 'bg-brand-soft/30', groupCol && i > 0 && groupOf[i] !== groupOf[i - 1] && 'border-t-2 border-t-brand/20')}
                     >
                       {groupCol && (
                         <td className={cx('px-3 py-2', byAccount ? 'max-w-[14rem] align-top' : 'whitespace-nowrap')}>

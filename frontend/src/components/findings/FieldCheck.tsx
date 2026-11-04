@@ -1,4 +1,4 @@
-import { RecordLink } from '@/components/data/RecordLink';
+import { RecordLink, useOpenRecord } from '@/components/data/RecordLink';
 import { AlertTriangle, ChevronDown, ListChecks, Search } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { errorMessage } from '@/api/client';
@@ -19,6 +19,7 @@ type Pick = { field: string; kind: FinderKind };
 
 /** Invalid values of one field (the health check's Data Standardization rules), with why each one is flagged. */
 function SpellingResults({ field, object }: { field: FieldCheckField; object: string }) {
+  const openRecord = useOpenRecord();
   const ex = useExpand();
   const std = field.standardization!;
   const [query, setQuery] = useState('');
@@ -102,7 +103,7 @@ function SpellingResults({ field, object }: { field: FieldCheckField; object: st
           </thead>
           <tbody className="divide-y divide-line">
             {rows.map((r, ri) => (
-              <tr key={r.id ?? ri} className="hover:bg-muted/60">
+              <tr key={r.id ?? ri} onClick={openRecord(object, r.id).onClick} className={cx('hover:bg-muted/60', openRecord(object, r.id).className)}>
                 {std.columns.map((c, ci) => (
                   <td key={c.name} className={cx('max-w-[16rem] truncate px-3 py-2', c.name === field.name && r.note && 'bg-bad-soft/60')} title={c.name === field.name && r.note ? `${show(r.values[c.name])}
 Why it’s flagged: ${r.note}` : show(r.values[c.name])}>

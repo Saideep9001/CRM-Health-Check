@@ -456,8 +456,8 @@ def test_contacts_to_multiple_accounts_when_on(client, sf, monkeypatch):
     assert "Contacts can’t be related to multiple Accounts" not in {f["name"] for f in findings}
     _page(monkeypatch, ["003000000000001", "003000000000002"])
     body = client.get(f"{API}/assessments/{a['id']}/areas/area-4/indicator-records", params={"label": card["label"], "object": "Contact"}).json()
-    assert [c["label"] for c in body["columns"]][:2] == ["Full Name", "Related Accounts"]  # right after the name
-    assert body["columns"][1]["type"] == "lines"
+    related = body["columns"][-1]  # last, frozen, one Account per line
+    assert (related["label"], related["type"], related["frozen"]) == ("Related Accounts", "lines", True)
     assert body["records"][0]["values"]["RelatedAccounts"] == "OakStone Retail Group\nTitan Manufacturing Corp"  # its own Account first
     assert body["records"][1]["values"]["RelatedAccounts"] is None
     q = next(q for q in reversed(sf.soql) if "FROM AccountContactRelation WHERE ContactId IN" in q)

@@ -1,4 +1,4 @@
-import { RecordLink } from '@/components/data/RecordLink';
+import { RecordLink, useOpenRecord } from '@/components/data/RecordLink';
 import { AlertTriangle, Check, Download, ExternalLink, Filter, Search } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -175,6 +175,7 @@ const exactKey = (v: unknown) => (show(v) === '—' ? '' : String(typeof v === '
 /** Duplicate groups: the numbered flow, a filter, exact or relevant match, CSV and the grouped table. `flag` = the fields whose
  *  shared values are flagged in red (the fields ticked in Check fields); null flags every compared field. */
 export function DuplicateResults({ result, fileName, flag = null }: { result: DuplicateResult; fileName: string; flag?: string[] | null }) {
+  const openRecord = useOpenRecord();
   const [query, setQuery] = useState('');
   const [mode, setMode] = useState<MatchMode>('all');
   const [colFilters, setColFilters] = useState<Record<string, Set<string>>>({});
@@ -301,7 +302,7 @@ export function DuplicateResults({ result, fileName, flag = null }: { result: Du
             <tbody>
               {groups.map((g, gi) =>
                 g.shown.map(({ rec, ri }, si) => (
-                  <tr key={`${g.n}-${rec.id ?? ri}`} className={cx('group hover:bg-muted/60', gi % 2 === 1 && 'bg-brand-soft/30', si === 0 && gi > 0 && 'border-t-2 border-t-brand/20')}>
+                  <tr key={`${g.n}-${rec.id ?? ri}`} onClick={openRecord(result.object, rec.id).onClick} className={cx('group hover:bg-muted/60', openRecord(result.object, rec.id).className, gi % 2 === 1 && 'bg-brand-soft/30', si === 0 && gi > 0 && 'border-t-2 border-t-brand/20')}>
                     <td className="whitespace-nowrap px-3 py-2 align-top">
                       {si === 0 && (
                         <span className="inline-flex flex-col">
