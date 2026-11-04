@@ -88,12 +88,12 @@ export const DIAGNOSTIC_AREAS: DiagnosticArea[] = [
     categoryId: 'workflows',
     name: 'Account Hierarchies & Contact Relationships',
     description:
-      'Assess Account hierarchies, Contact relationships, and Contact Roles associated with Opportunities.',
+      'Assess Contact Roles on open Opportunities, Contacts with no Account, Contacts related to multiple Accounts, and Contacts on several deals.',
     indicators: [
-      'Missing Account relationships',
+      'Opportunities Without Contact Roles',
       'Orphaned Contacts',
-      'Missing Contact Roles',
-      'Account hierarchy issues',
+      'Contacts to Multiple Accounts',
+      'Multi-Deal Contacts',
     ],
   },
   {

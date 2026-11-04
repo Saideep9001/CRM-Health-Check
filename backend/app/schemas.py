@@ -139,6 +139,7 @@ class QueueCount(ApiModel):
     id: str  # the queue (a Group id), for the filter
     name: str  # the queue's name
     count: int  # Leads in it
+    amount: float | None = None  # by owner (Opportunities Without Contact Roles): the deals' total Amount
 
 
 class DataChildRelationship(ApiModel):

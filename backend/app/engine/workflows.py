@@ -6,7 +6,9 @@ checks (validation rules, Path, flows…) read the Tooling API and are skipped w
 a note when the connected user can't view setup.
 """
 import re
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
+from urllib.parse import quote, unquote
 
 from ..salesforce import assignment, queues
 from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
@@ -41,6 +43,7 @@ def _days_since(iso: str | None) -> int | None:
 # Where in Salesforce each setup problem is fixed.
 SETTING_FIX = {
     'Contacts can’t be related to multiple Accounts': '/lightning/setup/AccountSettings/home',
+    'Contact Roles missing from Opportunity layouts': '/lightning/setup/ObjectManager/Opportunity/PageLayouts/view',
     'Sales Path isn’t turned on for Opportunities': '/lightning/setup/PathAssistantSetupHome/home',
     'Sales stages without guidance': '/lightning/setup/PathAssistantSetupHome/home',
     'No field for why deals are lost': '/lightning/setup/ObjectManager/Opportunity/FieldsAndRelationships/view',
@@ -425,41 +428,102 @@ def criteria_mismatches(ctx: Ctx) -> None:
 
 # ---------------------------------------------------------------- area 4: account hierarchies & contact relationships
 
-def account_relationships(ctx: Ctx) -> None:
-    total = ctx.total("Account")
-    empty = ctx.count(
-        "Account",
-        "Id NOT IN (SELECT AccountId FROM Contact WHERE AccountId != null)",
-        "Id NOT IN (SELECT AccountId FROM Opportunity WHERE AccountId != null)",
-    ) if total else 0
-    score = rate_score(empty / total, 0.5) if total else 100
-    ctx.metric(
-        "Missing Account relationships", empty, "count", "lower-better", score,
-        how="Accounts that have no Contacts and no Opportunities linked to them.",
-        rule="100 when every Account has people or deals, falling evenly to 0 when 50% of Accounts have neither.",
-        columns=["Name", "Type", "Industry", "OwnerId", "CreatedDate"],
-        order="CreatedDate",
+NO_ROLES = "Id NOT IN (SELECT OpportunityId FROM OpportunityContactRole)"
+ROLE_ROWS = 20000  # open-deal contact roles read for Multi-Deal Contacts
+ROLE_LISTED = 500  # Contacts listed (with their roles) on Multi-Deal Contacts
+
+
+def _layouts_without(ctx: Ctx, obj: str, needle: str) -> tuple[list[str], list[str]] | None:
+    """(every page layout of `obj`, those whose related lists have none containing `needle`), read through the Metadata API;
+    None when the layouts can't be read."""
+    read = getattr(ctx.sf, "read_metadata", None)
+    if read is None:
+        return None
+    try:
+        rows = ctx.setup(f"SELECT Name, NamespacePrefix FROM Layout WHERE TableEnumOrId = '{obj}'")
+    except Unavailable:
+        return None
+    names = sorted({f"{obj}-" + (f"{r['NamespacePrefix']}__" if r.get("NamespacePrefix") else "") + r["Name"] for r in rows if r.get("Name")})
+    missing: list[str] = []
+    try:
+        for i in range(0, len(names), 10):  # readMetadata takes up to 10 names
+            chunk = names[i:i + 10]
+            xml = read("Layout", [quote(n, safe=" -_.") for n in chunk])
+            for rec in ET.fromstring(xml).iter(f"{{{assignment.NS['m']}}}records"):
+                full = unquote(rec.findtext("m:fullName", "", assignment.NS))
+                lists = [el.text or "" for el in rec.iter(f"{{{assignment.NS['m']}}}relatedList")]
+                if full and not any(needle.lower() in t.lower() for t in lists):
+                    missing.append(full.removeprefix(f"{obj}-"))
+    except SalesforceAuthExpired:
+        raise
+    except (SalesforceError, ET.ParseError):
+        return None
+    return [n.removeprefix(f"{obj}-") for n in names], sorted(missing)
+
+
+def contact_roles(ctx: Ctx) -> None:
+    """Opportunities Without Contact Roles: open deals with nobody named on them, by owner with their value, and whether the
+    Contact Roles related list is on the Opportunity page layouts."""
+    label = "Opportunities Without Contact Roles"
+    total = ctx.count("Opportunity", OPEN_OPPS)
+    n = ctx.count("Opportunity", OPEN_OPPS, NO_ROLES) if total else 0
+    score = rate_score(n / total, 0.6) if total else 100
+    owners = ctx.by_owner("Opportunity", OPEN_OPPS, NO_ROLES, amount=True, limit=10) if n else []
+    value = ctx.amount("Opportunity", OPEN_OPPS, NO_ROLES) if n else None
+    layouts = _layouts_without(ctx, "Opportunity", "ContactRole")
+    if layouts is None:
+        on_layout = "Couldn’t read the Opportunity page layouts (needs “View Setup and Configuration” and Metadata API access)"
+    elif not layouts[0]:
+        on_layout = "No Opportunity page layouts found"
+    elif layouts[1]:
+        on_layout = f"Missing from {len(layouts[1])} of {len(layouts[0])} Opportunity layouts: " + ", ".join(layouts[1])
+    else:
+        on_layout = f"On all {len(layouts[0])} Opportunity layouts"
+    m = ctx.metric(
+        label, n, "count", "lower-better", score,
+        how="Open Opportunities with no Contact Roles (no Contact named as decision maker, influencer and so on), grouped by "
+        "owner with the deals’ total Amount. We also check that the Contact Roles related list is on the Opportunity page layouts.",
+        rule="100 when every open deal has a Contact Role, falling evenly to 0 when 60% of open deals have none.",
+        columns=["Name", "AccountId", "StageName", "Amount", "CloseDate", "OwnerId"],
+        order="CloseDate",
         criteria=[
-            ("Records checked", f"{total:,} Accounts"),
-            ("Checked", "Linked Contacts and linked Opportunities (any status)"),
-            ("Empty account", "No Contact AND no Opportunity points to the Account"),
-            ("What's counted", f"{empty:,} of {total:,} Accounts ({pct(empty, total):.0f}%) are empty"),
-            ("Records listed", "Every empty Account, oldest first"),
+            ("Records checked", f"{total:,} open Opportunities (not Closed Won or Closed Lost)"),
+            ("Missing", "No Opportunity Contact Role on the deal"),
+            ("What's counted", f"{n:,} of {total:,} open Opportunities ({pct(n, total):.0f}%) have no Contact Roles" + _worth(value)),
+            ("By owner", "; ".join(f"{o}: {c:,}" + (f" ({_money(a)})" if a else "") for o, c, a in owners) if owners else "—"),
+            ("Contact Roles on the page", on_layout),
+            ("Records listed", "Every open Opportunity with no Contact Roles, by close date (pick an owner above the table)"),
         ],
-        records=("Account", "Id NOT IN (SELECT AccountId FROM Contact WHERE AccountId != null)", "Id NOT IN (SELECT AccountId FROM Opportunity WHERE AccountId != null)"),
+        records=("Opportunity", OPEN_OPPS, NO_ROLES),
     )
-    ctx.finding(
-        name="Accounts with no people and no deals",
-        records=("Account", "Id NOT IN (SELECT AccountId FROM Contact WHERE AccountId != null)", "Id NOT IN (SELECT AccountId FROM Opportunity WHERE AccountId != null)"),
-        score=score,
-        affected=empty,
-        description=f"{empty:,} of {total:,} Accounts ({pct(empty, total):.0f}%) have no Contacts and no Opportunities.",
-        why="Empty accounts clutter searches and reports, and often turn out to be duplicates or old imports.",
-        impact="Wasted time and an inflated account count.",
-        action="Review these Accounts: add the key people, link them to their parent company, merge duplicates, or archive them.",
-        obj="Account",
-        url=ctx.list_url("Account"),
-    )
+    if m.records:
+        m.records[0]["by_owner"] = True
+    if n:
+        ctx.finding(
+            name="Open deals with no contact roles",
+            records=("Opportunity", OPEN_OPPS, NO_ROLES),
+            value=value,
+            score=score,
+            affected=n,
+            description=f"{n:,} of {total:,} open Opportunities ({pct(n, total):.0f}%) have no Contact Roles{_worth(value)}."
+            + (f" Most belong to: {_owners(owners)}." if owners else ""),
+            why="Without Contact Roles you don’t know who decides, who influences, and who signs.",
+            impact="Single-threaded deals that stall when one contact goes quiet, and no data on buying groups.",
+            action="Add the decision maker and key influencers to each open deal. Make the Contact Roles list prominent on the Opportunity page.",
+            obj="Opportunity",
+            url=ctx.list_url("Opportunity"),
+            measure=label,
+        )
+    if layouts and layouts[1]:
+        _setting(
+            ctx,
+            "Contact Roles missing from Opportunity layouts",
+            f"The Contact Roles related list isn’t on {len(layouts[1])} of {len(layouts[0])} Opportunity page layouts ({', '.join(layouts[1][:5])}"
+            + (", …" if len(layouts[1]) > 5 else "") + "), so reps using them can’t see or add the people on a deal.",
+            "In Setup → Object Manager → Opportunity → Page Layouts, add the Contact Roles related list to each layout.",
+            severity="medium",
+            obj="Opportunity",
+        )
 
 
 def orphaned_contacts(ctx: Ctx) -> None:
@@ -495,62 +559,23 @@ def orphaned_contacts(ctx: Ctx) -> None:
     )
 
 
-def missing_contact_roles(ctx: Ctx) -> None:
-    total = ctx.count("Opportunity", OPEN_OPPS)
-    cond = "Id NOT IN (SELECT OpportunityId FROM OpportunityContactRole)"
-    n = ctx.count("Opportunity", OPEN_OPPS, cond) if total else 0
-    score = rate_score(n / total, 0.6) if total else 100
-    ctx.metric(
-        "Missing Contact Roles", n, "count", "lower-better", score,
-        how="Open Opportunities with no contact roles (no people named as decision maker, influencer and so on).",
-        rule="100 when every open deal has contact roles, falling evenly to 0 when 60% of open deals have none.",
-        columns=["Name", "StageName", "Amount", "CloseDate", "NextStep", "OwnerId"],
-        order="CloseDate",
-        criteria=[
-            ("Records checked", f"{total:,} open Opportunities"),
-            ("Checked", "The Contact Roles related list on each deal"),
-            ("Missing", "The deal has no contact roles at all"),
-            ("What's counted", f"{n:,} of {total:,} open Opportunities ({pct(n, total):.0f}%) have no contact roles"),
-            ("Records listed", "Every open Opportunity with no contact roles, by close date"),
-        ],
-        records=("Opportunity", OPEN_OPPS, cond),
-    )
-    if n:
-        value = ctx.amount("Opportunity", OPEN_OPPS, cond)
-        owners = ctx.by_owner("Opportunity", OPEN_OPPS, cond)
-        ctx.finding(
-            name="Open deals with no contact roles",
-            records=("Opportunity", OPEN_OPPS, cond),
-            value=value,
-            score=score,
-            affected=n,
-            description=f"{n:,} of {total:,} open Opportunities ({pct(n, total):.0f}%) have no contact roles{_worth(value)}."
-            + (f" Most belong to: {_owners(owners)}." if owners else ""),
-            why="Without contact roles you don’t know who decides, who influences, and who signs.",
-            impact="Single-threaded deals that stall when one contact goes quiet, and no data on buying groups.",
-            action="Add the decision maker and key influencers to each open deal. Make the Contact Roles list prominent on the Opportunity page.",
-            obj="Opportunity",
-            url=ctx.list_url("Opportunity"),
-        )
+MULTI = "Id IN (SELECT ContactId FROM AccountContactRelation WHERE IsDirect = false)"
 
 
-def account_hierarchy(ctx: Ctx) -> None:
-    total = ctx.total("Account")
-    issues = 0
-    if total and ctx.has_field("Account", "ParentId"):
-        with_parent = ctx.count("Account", "ParentId != null")
-        if total >= 50 and with_parent == 0:
-            issues += 1
-            _setting(
-                ctx,
-                "Account hierarchies aren’t used",
-                f"None of your {total:,} Accounts has a Parent Account, so related companies and divisions aren’t connected.",
-                "Link subsidiaries and divisions to their parent Account, and add the View Hierarchy button to the Account page.",
-                severity="low",
-                obj="Account",
-            )
+def multiple_accounts(ctx: Ctx) -> None:
+    """Contacts to Multiple Accounts: whether the feature is on, and how many Contacts are related to more than one Account."""
+    label = "Contacts to Multiple Accounts"
+    total = ctx.total("Contact")
     if not ctx.has_object("AccountContactRelation"):
-        issues += 1
+        ctx.metric(
+            label, 0, "count", "higher-better", 50,
+            how="Whether “Contacts to Multiple Accounts” is turned on, and how many Contacts are related to more than one Account.",
+            rule="100 when the feature is on; 50 when it’s off.",
+            criteria=[
+                ("Feature", "Off: the Account Contact Relationship object isn’t available"),
+                ("What's counted", "No Contact can be related to more than its own Account"),
+            ],
+        )
         _setting(
             ctx,
             "Contacts can’t be related to multiple Accounts",
@@ -559,16 +584,67 @@ def account_hierarchy(ctx: Ctx) -> None:
             severity="low",
             obj="Contact",
         )
+        return
+    n = ctx.count("Contact", MULTI, recent=False) if total else 0
+    links = ctx.count("AccountContactRelation", "IsDirect = false", recent=False) if total else 0
     ctx.metric(
-        "Account hierarchy issues", issues, "count", "lower-better", [100, 75, 50][issues],
-        how="We check two things: whether any Accounts have a Parent Account (only when you have 50 or more Accounts), and whether a Contact can be related to more than one Account. The number is how many of these are missing.",
-        rule="100 with no issues, 75 with one, and 50 with both.",
+        label, n, "count", "higher-better", 100,
+        how="Whether “Contacts to Multiple Accounts” is turned on, and how many Contacts are related to more than one Account "
+        "(an indirect relationship besides their own Account).",
+        rule="100 when the feature is on; 50 when it’s off. How many Contacts use it is shown for review, not scored.",
+        columns=["Name", "AccountId", "Title", "Email", "OwnerId"],
+        order="Name",
         criteria=[
-            ("Parent accounts", f"Whether any of your {total:,} Accounts has a Parent Account. Only checked with 50 or more Accounts; a gap when none do"),
-            ("Contacts to multiple Accounts", "Whether the Account Contact Relationship feature is turned on; a gap when it's off"),
-            ("What's counted", f"{issues} of 2 issues found"),
+            ("Feature", "On: Contacts can be related to more than one Account"),
+            ("Records checked", f"{total:,} Contacts"),
+            ("Related to more than one Account", "The Contact has at least one indirect Account Contact Relationship"),
+            ("What's counted", f"{n:,} Contacts ({pct(n, total):.0f}%) are related to more than one Account, through {links:,} indirect relationships"),
+            ("Records listed", "Every Contact related to more than one Account, by name"),
         ],
+        records=("Contact", MULTI),
+        recent=False,
     )
+
+
+def multi_deal_contacts(ctx: Ctx) -> None:
+    """Multi-Deal Contacts: Contacts with a Contact Role on more than one open Opportunity, with their roles (shown, not scored)."""
+    label = "Multi-Deal Contacts"
+    try:
+        rows = ctx.rows("SELECT ContactId, Role, Opportunity.Name FROM OpportunityContactRole "
+                        "WHERE Opportunity.IsClosed = false AND ContactId != null ORDER BY ContactId", ROLE_ROWS)
+    except SalesforceAuthExpired:
+        raise
+    except SalesforceError as exc:
+        raise Unavailable(f"Couldn’t read the Opportunity Contact Roles ({exc}).") from None
+    deals: dict[str, list[str]] = {}
+    for r in rows:
+        deals.setdefault(r["ContactId"], []).append(f"{r.get('Role') or 'No role'} on {(r.get('Opportunity') or {}).get('Name') or 'a deal'}")
+    multi = {c: d for c, d in deals.items() if len(d) > 1}
+    ids = sorted(multi, key=lambda c: -len(multi[c]))
+    roles: dict[str, int] = {}
+    for d in multi.values():
+        for s in d:
+            role = s.split(" on ", 1)[0]
+            roles[role] = roles.get(role, 0) + 1
+    m = ctx.metric(
+        label, len(multi), "count", "higher-better", None,
+        how="Contacts with a Contact Role on more than one open Opportunity (an influencer or decision maker across several deals), "
+        "with their role on each deal.",
+        rule="Shown for review, not scored: these are the people to keep close, since several deals depend on them.",
+        columns=["Name", "AccountId", "Title", "OwnerId"],
+        criteria=[
+            ("Records checked", f"{len(rows):,} Contact Roles on open Opportunities" + (f" (the first {ROLE_ROWS:,})" if len(rows) >= ROLE_ROWS else "")),
+            ("Multi-deal", "The Contact has a Contact Role on two or more open Opportunities"),
+            ("What's counted", f"{len(multi):,} of {len(deals):,} Contacts with a role on an open deal are on more than one"),
+            ("Their roles", "; ".join(f"{r}: {c:,}" for r, c in sorted(roles.items(), key=lambda x: -x[1])) if roles else "—"),
+            ("Records listed", f"The Contacts on the most open deals first (up to {ROLE_LISTED:,}), each with their roles"),
+        ],
+        records=("Contact", ctx.ids_in(ids, ROLE_LISTED)) if ids else None,
+        recent=False,
+        extra="deal_roles",
+    )
+    if m.records:
+        m.records[0]["reasons"] = {c: f"{len(multi[c])} open deals: " + "; ".join(multi[c]) for c in ids[:ROLE_LISTED]}
 
 
 # ---------------------------------------------------------------- area 5: sales path, playbooks, feedback loops
@@ -1174,7 +1250,7 @@ def layout_usability(ctx: Ctx) -> None:
 
 AREAS = {
     "area-3": [stuck_queue_leads, inactive_rules, criteria_mismatches],
-    "area-4": [account_relationships, orphaned_contacts, missing_contact_roles, account_hierarchy],
+    "area-4": [contact_roles, orphaned_contacts, multiple_accounts, multi_deal_contacts],
     "area-5": [stuck_opportunities, missing_next_steps, closed_lost_reasons, stage_guidance],
     "area-6": [missing_sales_activities, web_to_lead, email_templates, activity_capture],
     "area-7": [validation_rules, required_field_gaps, junk_data, layout_usability],
@@ -1184,10 +1260,10 @@ STEP_LABELS = {
     stuck_queue_leads: "Finding Leads stuck in queues",
     inactive_rules: "Checking inactive Lead Assignment Rules",
     criteria_mismatches: "Checking Leads against the active assignment rule",
-    account_relationships: "Checking Account relationships",
+    contact_roles: "Checking contact roles on deals",
     orphaned_contacts: "Finding Contacts without an Account",
-    missing_contact_roles: "Checking contact roles on deals",
-    account_hierarchy: "Checking Account hierarchies",
+    multiple_accounts: "Checking Contacts to Multiple Accounts",
+    multi_deal_contacts: "Finding Contacts on several deals",
     stuck_opportunities: "Finding stuck deals",
     missing_next_steps: "Checking next steps on deals",
     closed_lost_reasons: "Checking why deals were lost",

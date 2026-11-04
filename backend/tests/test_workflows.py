@@ -1,5 +1,6 @@
 """Workflows & Automation checks (areas 3–7), run against a fake sales org with known data."""
 import re
+import sys
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -45,6 +46,21 @@ RULES_XML = """<?xml version="1.0" encoding="UTF-8"?>
   <ruleEntry><assignedTo>ann@acme.test</assignedTo><assignedToType>User</assignedToType>
    <criteriaItems><field>Lead.LeadSource</field><operation>equals</operation><value>Phone Inquiry,Phone</value></criteriaItems></ruleEntry>
  </assignmentRule></records></result></readMetadataResponse></soapenv:Body></soapenv:Envelope>"""
+# Opportunity page layouts (Metadata API): the Contact Roles related list is on the first, missing from the second.
+LAYOUT_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns="http://soap.sforce.com/2006/04/metadata"
+ xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><soapenv:Body><readMetadataResponse><result>
+<records xsi:type="Layout"><fullName>Opportunity-Opportunity Layout</fullName>
+ <relatedLists><relatedList>RelatedContactRoleList</relatedList></relatedLists><relatedLists><relatedList>RelatedNoteList</relatedList></relatedLists></records>
+<records xsi:type="Layout"><fullName>Opportunity-Sales %28Marketing%29 Layout</fullName>
+ <relatedLists><relatedList>RelatedNoteList</relatedList></relatedLists></records>
+</result></readMetadataResponse></soapenv:Body></soapenv:Envelope>"""
+# Contact Roles on open deals: Pat is on two (Multi-Deal Contacts), Sam on one.
+ROLES = [
+    {"ContactId": "003000000000001", "Role": "Influencer", "Opportunity": {"Name": "Acme Renewal"}},
+    {"ContactId": "003000000000001", "Role": "Decision Maker", "Opportunity": {"Name": "Globex Expansion"}},
+    {"ContactId": "003000000000002", "Role": None, "Opportunity": {"Name": "Acme Renewal"}},
+]
 LEADS = [  # open Leads read to compare with the rules
     {"Id": "00Q000000000001", "OwnerId": "00G000000000002", "Owner": {"Name": "Web Queue"}, "CreatedById": "005000000000009", "LeadSource": "Web"},  # active entry 1
     {"Id": "00Q000000000002", "OwnerId": "005000000000002", "Owner": {"Name": "Bob Ray"}, "CreatedById": "005000000000002", "LeadSource": "Partner"},  # no match, waiting
@@ -96,7 +112,8 @@ class FakeSalesOrg(FakeSalesforce):
             return super().handler(request)
         if url.path.startswith("/services/Soap/m/"):
             self.soap.append(request.content.decode())
-            return httpx.Response(200, text=self.rules_xml, headers={"Content-Type": "text/xml"})
+            xml = LAYOUT_XML if "<met:type>Layout</met:type>" in self.soap[-1] else self.rules_xml
+            return httpx.Response(200, text=xml, headers={"Content-Type": "text/xml"})
         if url.path.endswith("/sobjects"):
             return httpx.Response(200, json={"sobjects": [{"name": n, "label": n, "labelPlural": n + "s", "queryable": True, "retrieveable": True} for n in DESCRIBE]})
         if m := re.search(r"/sobjects/(\w+)/describe$", url.path):
@@ -154,6 +171,10 @@ class FakeSalesOrg(FakeSalesforce):
             return {("Company", "Lead"): [{"v": "[not provided]", "c": 3}, {"v": "Acme", "c": 5}], ("Name", "Account"): [{"v": "test", "c": 1}]}.get((m[1], m[2]), [])
         if "FROM AssignmentRule WHERE SobjectType = 'Lead'" in q:  # rule ids, for links into Setup
             return [{"Id": "01Q000000000001AAA", "Name": "Partner Rule"}]
+        if "FROM OpportunityContactRole WHERE Opportunity.IsClosed = false" in q:
+            return ROLES
+        if q.startswith("SELECT OwnerId i, Owner.Name n, COUNT(Id) c, SUM(Amount) a FROM Opportunity"):
+            return [{"i": "005000000000001", "n": "Ann Lee", "c": 9, "a": 120000}, {"i": "005000000000002", "n": "Bob Ray", "c": 6, "a": None}]
         if "FROM FlowDefinitionView" in q:
             return []
         if "FROM OpportunityStage" in q:
@@ -162,6 +183,8 @@ class FakeSalesOrg(FakeSalesforce):
 
     @staticmethod
     def tooling(q: str) -> list[dict]:
+        if q.startswith("SELECT Name, NamespacePrefix FROM Layout WHERE TableEnumOrId = 'Opportunity'"):
+            return [{"Name": "Opportunity Layout", "NamespacePrefix": None}, {"Name": "Sales (Marketing) Layout", "NamespacePrefix": None}]
         if "FROM ValidationRule" in q and "'Opportunity'" in q:
             return [{"ValidationName": "Amount_Required", "Active": True, "ErrorMessage": "Error"}]
         return []
@@ -193,9 +216,12 @@ def test_all_workflow_areas(client, sf):
     assert [i["label"] for i in areas["area-3"]["indicators"]] == ["Stuck Queue-Owned Leads", "Inactive Lead Assignment Rules", "Lead Assignment Criteria Mismatches"]
     assert ind["Stuck Queue-Owned Leads"] == 8  # in a queue more than 3 days
     assert ind["Inactive Lead Assignment Rules"] == 1 and ind["Lead Assignment Criteria Mismatches"] == 2  # 1 Lead in an inactive queue
-    assert len(sf.soap) == 1 and "<met:type>AssignmentRules</met:type><fullNames>Lead</fullNames>" in sf.soap[0]  # read once for both cards
-    assert ind["Missing Contact Roles"] == 15 and ind["Orphaned Contacts"] == 9 and ind["Missing Account relationships"] == 30
-    assert ind["Account hierarchy issues"] == 2  # no parents on 100 accounts; no AccountContactRelation
+    rule_reads = [x for x in sf.soap if "<met:type>AssignmentRules</met:type>" in x]
+    assert len(rule_reads) == 1 and "<fullNames>Lead</fullNames>" in rule_reads[0]  # read once for both cards
+    assert [i["label"] for i in areas["area-4"]["indicators"]] == ["Opportunities Without Contact Roles", "Orphaned Contacts",
+                                                                   "Contacts to Multiple Accounts", "Multi-Deal Contacts"]
+    assert ind["Opportunities Without Contact Roles"] == 15 and ind["Orphaned Contacts"] == 9
+    assert ind["Contacts to Multiple Accounts"] == 0 and ind["Multi-Deal Contacts"] == 1  # the feature is off; Pat is on 2 open deals
     assert ind["Stuck Opportunities"] == 10 and ind["Missing Next Steps"] == 18 and ind["Missing Closed Lost reasons"] == 6
     assert ind["Sales stage guidance gaps"] == 2  # no Path: both open stages unguided
     assert ind["Missing sales activities"] == 1  # Bob owns work but logged nothing
@@ -219,6 +245,8 @@ def test_all_workflow_areas(client, sf):
     assert "Loss Reason" in names["Lost deals with no reason"]["description"]
     assert "Unclear validation error messages" in names
     assert names["Open deals with no contact roles"]["objectName"] == "Opportunity"
+    assert names["Contacts can’t be related to multiple Accounts"]["severity"] == "low"
+    assert "isn’t on 1 of 2 Opportunity page layouts (Sales (Marketing) Layout)" in names["Contact Roles missing from Opportunity layouts"]["description"]
     assert all(q.lstrip().upper().startswith("SELECT") for q in sf.soql)
     assert any("LAST_N_DAYS:7" in q and "Owner.Type = 'Queue'" in q and "LeadHistory WHERE Field = 'Owner'" in q for q in sf.soql)  # waited 7+ days
     assert any("LAST_N_DAYS:45" in q and "LastStageChangeDate" in q for q in sf.soql)  # stuck-deal setting used
@@ -266,7 +294,7 @@ def test_stuck_queue_owned_leads_by_queue_and_days(client, sf):
     queues = client.get(f"{base}/indicator-queues", params=params)
     # every Lead queue, the empty ones too (0), most stuck Leads first; counted past the card's threshold
     assert queues.status_code == 200 and queues.json() == [
-        {"id": "00G000000000001AAA", "name": "Jane Doe", "count": 5}, {"id": "00G000000000002AAA", "name": "Web Queue", "count": 0}]
+        {"id": "00G000000000001AAA", "name": "Jane Doe", "count": 5, "amount": None}, {"id": "00G000000000002AAA", "name": "Web Queue", "count": 0, "amount": None}]
     grouped = next(q for q in sf.soql if "GROUP BY Owner.Name" in q and "Owner.Type = 'Queue'" in q and "LAST_N_DAYS:3" in q)
     assert "LeadHistory WHERE Field = 'Owner' AND CreatedDate = LAST_N_DAYS:3" in grouped
 
@@ -382,3 +410,52 @@ def test_inactive_queues_shown_with_no_inactive_rule(client, sf):
     assert card["value"] == 1 and [r["name"] for r in card["ruleList"]] == ["Standard"]
     queues = client.get(f"{API}/assessments/{a['id']}/areas/area-3/indicator-queues", params={"label": card["label"], "object": "Lead"}).json()
     assert [q["name"] for q in queues] == ["Partner Queue"]
+
+
+def test_contact_roles_by_owner_and_layouts(client, sf):
+    connect(client)
+    a, res, _ = run(client)
+    card = next(i for x in res["areas"] for i in x["indicators"] if i["label"] == "Opportunities Without Contact Roles")
+    crit = dict(card["criteria"])
+    assert crit["Contact Roles on the page"] == "Missing from 1 of 2 Opportunity layouts: Sales (Marketing) Layout"
+    assert crit["By owner"] == "Jane Doe: 5 (1,000)"
+    layout_read = next(x for x in sf.soap if "<met:type>Layout</met:type>" in x)
+    assert "<fullNames>Opportunity-Sales %28Marketing%29 Layout</fullNames>" in layout_read  # names encoded the Metadata API way
+    base = f"{API}/assessments/{a['id']}/areas/area-4"
+    params = {"label": "Opportunities Without Contact Roles", "object": "Opportunity"}
+    owners = client.get(f"{base}/indicator-queues", params=params)
+    assert owners.status_code == 200
+    assert owners.json() == [{"id": "005000000000001", "name": "Ann Lee", "count": 9, "amount": 120000.0},
+                             {"id": "005000000000002", "name": "Bob Ray", "count": 6, "amount": None}]
+    assert client.get(f"{base}/indicator-records", params={**params, "queue": "005000000000001"}).status_code == 200
+    q = next(q for q in reversed(sf.soql) if "FROM Opportunity WHERE" in q)
+    assert "Id NOT IN (SELECT OpportunityId FROM OpportunityContactRole) AND OwnerId = '005000000000001'" in q
+    assert client.get(f"{base}/indicator-records", params={**params, "queue": "x' OR Id != null"}).status_code == 422
+    other = {"label": "Orphaned Contacts", "object": "Contact"}
+    assert client.get(f"{base}/indicator-records", params={**other, "queue": "005000000000001"}).status_code == 422
+    assert client.get(f"{base}/indicator-queues", params=other).status_code == 422
+
+
+def test_multi_deal_contacts_list_their_roles(client, sf, monkeypatch):
+    connect(client)
+    a, res, _ = run(client)
+    card = next(i for x in res["areas"] for i in x["indicators"] if i["label"] == "Multi-Deal Contacts")
+    crit = dict(card["criteria"])
+    assert card["score"] is None and crit["What's counted"] == "1 of 2 Contacts with a role on an open deal are on more than one"
+    assert crit["Their roles"] == "Influencer: 1; Decision Maker: 1"
+    _page(monkeypatch, ["003000000000001"])
+    body = client.get(f"{API}/assessments/{a['id']}/areas/area-4/indicator-records", params={"label": card["label"], "object": "Contact"}).json()
+    assert body["columns"][-1]["label"] == "Roles on Open Deals"
+    assert body["records"][0]["values"]["OpenDealRoles"] == "2 open deals: Influencer on Acme Renewal; Decision Maker on Globex Expansion"
+
+
+def test_contacts_to_multiple_accounts_when_on(client, sf, monkeypatch):
+    monkeypatch.setitem(DESCRIBE, "AccountContactRelation", [_f("Id", type="id"), _f("ContactId", type="reference"), _f("IsDirect", type="boolean")])
+    monkeypatch.setattr(sys.modules[__name__], "COUNTS", [(("FROM Contact", "AccountContactRelation WHERE IsDirect = false"), 7),
+                                                          (("FROM AccountContactRelation",), 11), *COUNTS])
+    connect(client)
+    _, res, findings = run(client)
+    card = next(i for x in res["areas"] for i in x["indicators"] if i["label"] == "Contacts to Multiple Accounts")
+    assert card["value"] == 7 and card["score"] == 100
+    assert dict(card["criteria"])["What's counted"] == "7 Contacts (6%) are related to more than one Account, through 11 indirect relationships"
+    assert "Contacts can’t be related to multiple Accounts" not in {f["name"] for f in findings}
