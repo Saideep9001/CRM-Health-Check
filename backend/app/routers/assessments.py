@@ -353,7 +353,7 @@ def _with_extra(sf, rec: dict, columns: list[dict], records: list[dict]) -> list
     if rec.get("extra") == "days_in_queue":
         return queues.add_days_in_queue(sf, columns, records)
     if rec.get("extra") == "assignment_gap":
-        return assignment.add_gap_reason(columns, records, rec.get("reasons") or {})
+        return assignment.add_gap_reason(columns, records, rec.get("reasons") or {}, rec.get("reason"))
     return columns
 
 

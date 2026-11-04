@@ -139,11 +139,11 @@ def fields_used(rule: Rule) -> list[str]:
 GAP_COLUMN = {"name": "AssignmentGapReason", "label": "Assignment Gap Reason", "type": "string"}
 
 
-def add_gap_reason(columns: list[dict], records: list[dict], reasons: dict[str, str]) -> list[dict]:
-    """Adds each listed Lead's saved reason (in place) and returns the columns with it after the Created Date, the owner
+def add_gap_reason(columns: list[dict], records: list[dict], reasons: dict[str, str], default: str | None = None) -> list[dict]:
+    """Adds each listed Lead's saved reason (or `default`, the same for every Lead) (in place) and returns the columns with it after the Created Date, the owner
     named "Current Owner"."""
     for r in records:
-        r["values"][GAP_COLUMN["name"]] = reasons.get(r.get("id") or "")
+        r["values"][GAP_COLUMN["name"]] = reasons.get(r.get("id") or "") or default
     out: list[dict] = []
     for c in columns:
         out.append({**c, "label": "Current Owner"} if c["name"] == "OwnerId" else c)

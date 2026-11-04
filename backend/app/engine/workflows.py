@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 from ..salesforce import assignment
 from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
-from .core import Ctx, FindingDraft, Unavailable, in_list, pct, rate_score
+from .core import Ctx, FindingDraft, Unavailable, pct, rate_score
 
 OPEN_LEADS = "IsConverted = false"
 OPEN_OPPS = "IsClosed = false"
@@ -146,122 +146,13 @@ def stuck_queue_leads(ctx: Ctx) -> None:
 
 
 GAP_ROWS = 20000  # open Leads read to check against the rule
-GAP_LISTED = 500  # Leads listed under the card
-
-
-def _owner_ids(ctx: Ctx, rule: assignment.Rule) -> set[str]:
-    """The users and queues the rule's entries assign to (it names users by username, queues by API name)."""
-    users = [e.assigned_to for e in rule.entries if e.assigned_to and (e.assigned_type or "").lower() == "user"]
-    queues = [e.assigned_to for e in rule.entries if e.assigned_to and (e.assigned_type or "").lower() == "queue"]
-    ids: set[str] = set()
-    if users:
-        ids |= {r["Id"] for r in ctx.rows(f"SELECT Id FROM User WHERE {in_list('Username', users)}", 200)}
-    if queues:
-        ids |= {r["Id"] for r in ctx.rows(f"SELECT Id FROM Group WHERE Type = 'Queue' AND {in_list('DeveloperName', queues)}", 200)}
-    return ids
-
-
-def _reassigned(ctx: Ctx, ids: list[str]) -> set[str]:
-    """Leads whose owner was changed after they were created (by a person or another process), from Lead History."""
-    out: set[str] = set()
-    for i in range(0, len(ids), 200):
-        try:
-            out |= {r["LeadId"] for r in ctx.rows(f"SELECT LeadId FROM LeadHistory WHERE Field = 'Owner' AND LeadId IN ({_ids_in(ids[i:i + 200])})", 10000)}
-        except SalesforceAuthExpired:
-            raise
-        except SalesforceError:
-            return set()  # Lead Owner changes aren't tracked: nobody is left out on this basis
-    return out
-
-
-def _owner_name(lead: dict) -> str:
-    return (lead.get("Owner") or {}).get("Name") or "Unknown"
-
-
-def _works_leads(ctx: Ctx, ids: list[str]) -> set[str]:
-    """Of these users, the ones who work Leads: active people (and agents) on a standard licence, not integration, automated
-    or API-only users (the same test as for sales reps)."""
-    out: set[str] = set()
-    users = [i for i in ids if str(i).startswith("005")]
-    for i in range(0, len(users), 200):
-        for u in ctx.rows(f"SELECT Id, Name, UserType, Profile.Name FROM User WHERE IsActive = true AND Id IN ({_ids_in(users[i:i + 200])})"):
-            profile = (u.get("Profile") or {}).get("Name") or ""
-            if u.get("UserType", "Standard") == "Standard" and not _BOT_NAME.search(u.get("Name") or "") and not _NON_REP_PROFILE.search(profile):
-                out.add(u["Id"])
-    return out
-
-
-def _creator_name(lead: dict) -> str:
-    return (lead.get("CreatedBy") or {}).get("Name") or "its creator"
-
-
-def _gaps_without_rule(ctx: Ctx, label: str, total: int) -> None:
-    """No active Lead Assignment Rule: no Lead can match one, so each stays with whoever created it. The ones that need
-    assigning by hand are still with their creator, when that's a system user (an integration, import or automated user)
-    rather than someone who works Leads. Leads moved since (into a queue or to a person) were assigned another way."""
-    leads = ctx.rows(f"SELECT Id, OwnerId, Owner.Name, CreatedById, CreatedBy.Name, CreatedDate FROM Lead WHERE {OPEN_LEADS} "
-                     "ORDER BY CreatedDate DESC", GAP_ROWS) if total else []
-    moved = [ld for ld in leads if ld.get("OwnerId") != ld.get("CreatedById")]
-    kept = [ld for ld in leads if ld.get("OwnerId") == ld.get("CreatedById")]
-    workers = _works_leads(ctx, sorted({ld["OwnerId"] for ld in kept if ld.get("OwnerId")}))
-    with_worker = [ld for ld in kept if ld.get("OwnerId") in workers]
-    gaps = [ld for ld in kept if ld.get("OwnerId") not in workers]
-    in_queue = sum(1 for ld in moved if str(ld.get("OwnerId") or "").startswith("00G"))
-    n = len(gaps)
-    score = rate_score(n / total, 0.2) if total else 100
-    owners: dict[str, int] = {}
-    for ld in gaps:
-        owners[_owner_name(ld)] = owners.get(_owner_name(ld), 0) + 1
-    top = sorted(owners.items(), key=lambda kv: -kv[1])[:3]
-    reasons = {ld["Id"]: f"No active Lead Assignment Rule, so no rule could assign it; still with its creator {_creator_name(ld)}, "
-               "a system user, not a rep or a queue" for ld in gaps[:GAP_LISTED]}
-    listed = ("Lead", ctx.ids_in([ld["Id"] for ld in gaps], GAP_LISTED)) if gaps else None
-    m = ctx.metric(
-        label, n, "count", "lower-better", score,
-        how="Open Leads that need assigning by hand. No Lead Assignment Rule is active, so no Lead can match one and each stays with "
-        "whoever created it: these are still with a system user (an integration, import or automated user) instead of a rep or a queue.",
-        rule="100 when every open Lead is with a rep or a queue, falling evenly to 0 when 20% of open Leads still sit with a system user.",
-        columns=["Name", "Company", "OwnerId", "Status", "CreatedDate"],
-        order="-CreatedDate",
-        extra="assignment_gap",
-        criteria=[
-            ("Records checked", f"{len(leads):,} open Leads (not converted)" + (f", the newest {GAP_ROWS:,} of {total:,}" if total > len(leads) else "")),
-            ("Assignment rule", "None is active, so no Lead can match a rule entry"),
-            ("Needs assigning", "Still owned by the user who created it (never moved), and that user is a system user: an integration, "
-             "automated, API-only or bot user, or one who is inactive"),
-            ("Left out", f"{len(moved):,} moved by someone other than their creator ({in_queue:,} into a queue), an intended assignment; "
-             f"{len(with_worker):,} with the rep (or agent) who created them and works Leads"),
-            ("What's counted", f"{n:,} of {total:,} open Leads ({pct(n, total):.0f}%) are still with a system user"),
-            ("Records listed", "Each with its assignment gap reason, newest first" + (f" (the first {GAP_LISTED:,})" if n > GAP_LISTED else "")),
-        ],
-        records=listed,
-        recent=False,
-    )
-    if m.records:
-        m.records[0]["reasons"] = reasons
-    if listed:
-        ctx.finding(
-            name="Leads that need manual assignment",
-            records=listed,
-            recent=False,
-            fix="/lightning/setup/LeadRules/home",
-            score=score,
-            affected=n,
-            description=f"{n:,} open Leads are still with the system user who created them, because no Lead Assignment Rule is active."
-            + (f" Most are with: {', '.join(f'{o} ({c})' for o, c in top)}." if top else ""),
-            why="A Lead left with an integration or import user has no one to work it.",
-            impact="These Leads wait for someone to notice and assign them by hand, so first contact is slow or never happens.",
-            action="Assign these Leads to reps or a queue now, then activate a Lead Assignment Rule (and use it on imports and web forms) "
-            "so new Leads are routed automatically.",
-            obj="Lead",
-            url=ctx.list_url("Lead"),
-        )
+GAP_LISTED = 500  # Leads listed under the card (with an active rule; without one, every open Lead is listed)
+NO_RULE_REASON = "No Assignment Rule Match: no Lead Assignment Rule is active, so the Lead matches no rule entry"
 
 
 def rule_gap_leads(ctx: Ctx) -> None:
-    """Open Leads that match none of the active Lead Assignment Rule's entries and were left with an owner the rule
-    doesn't assign to (usually the default lead owner), unless they were reassigned since or sit with a rule target.
-    With no active rule, the Leads still with the system user who created them (see _gaps_without_rule)."""
+    """Unassigned Leads – No Assignment Rule Match: read the active Lead Assignment Rule's entries and their criteria,
+    check every open Lead against them, and flag the Leads that match no entry."""
     label = "Unassigned Leads – No Assignment Rule Match"
     read = getattr(ctx.sf, "read_metadata", None)
     if read is None:
@@ -274,59 +165,80 @@ def rule_gap_leads(ctx: Ctx) -> None:
         raise Unavailable(f"Couldn’t read the Lead Assignment Rules ({exc}). The connected user needs “View Setup and Configuration” "
                           "and “Modify Metadata Through Metadata API Functions” (or “Customize Application”).") from None
     total = ctx.count("Lead", OPEN_LEADS)
-    if rule is None:
+    columns = ["Name", "Company", "OwnerId", "CreatedDate"]
+    how = "Open Leads that match none of the entries of the active Lead Assignment Rule, so the rule can’t assign them and they need assigning by hand."
+    scoring = "100 when every open Lead matches a rule entry, falling evenly to 0 when 20% of open Leads match none."
+    action = ("Assign these Leads by hand now, then fix the rule so it catches them: add or widen entries (for example a last entry with "
+              "no criteria that sends everything else to a triage queue), and check the entries’ criteria for missing values.")
+
+    if rule is None:  # no entries to match: every open Lead is a No Assignment Rule Match
         _setting(ctx, "No active Lead Assignment Rule",
                  "New Leads aren’t routed to anyone automatically: each one stays with whoever creates it, or goes to the default lead owner.",
                  "In Setup → Lead Assignment Rules, create and activate a rule whose entries send Leads to the right person or queue.",
                  severity="high", obj="Lead")
-        _gaps_without_rule(ctx, label, total)
+        n = total
+        score = 0 if total else 100
+        m = ctx.metric(
+            label, n, "count", "lower-better", score, how=how, rule=scoring, columns=columns, order="-CreatedDate", extra="assignment_gap",
+            criteria=[
+                ("Records checked", f"{total:,} open Leads (not converted)"),
+                ("Assignment rule", "None is active, so there are no rule entries for a Lead to match"),
+                ("No Assignment Rule Match", "Every open Lead: with no active rule, none can match an entry"),
+                ("What's counted", f"{n:,} of {total:,} open Leads (100%)" if total else "No open Leads"),
+                ("Records listed", "Every open Lead with its assignment gap reason, newest first"),
+            ],
+            records=("Lead", OPEN_LEADS) if total else None,
+            recent=False,
+        )
+        if m.records:
+            m.records[0]["reason"] = NO_RULE_REASON  # the same for every Lead
+        if n:
+            ctx.finding(
+                name="Leads with no assignment rule match",
+                records=("Lead", OPEN_LEADS),
+                recent=False,
+                fix="/lightning/setup/LeadRules/home",
+                score=score,
+                affected=n,
+                description=f"All {n:,} open Leads match no Lead Assignment Rule entry, because no Lead Assignment Rule is active.",
+                why="Without a rule, nothing routes a Lead to the right person or queue.",
+                impact="Leads wait for someone to notice and assign them by hand, so first contact is slow or never happens.",
+                action="Activate a Lead Assignment Rule whose entries cover your Leads, then use it on imports and web forms, and assign "
+                "the open Leads by hand (or re-run the rule on them).",
+                obj="Lead",
+                url=ctx.list_url("Lead"),
+            )
         return
+
     fields = ctx.fields("Lead")
     used = [f for f in assignment.fields_used(rule) if f in fields]
     types = {f: fields[f]["type"] for f in used}
-    cols = ", ".join(dict.fromkeys(["Id", "OwnerId", "Owner.Name", "CreatedDate", *used]))
+    cols = ", ".join(dict.fromkeys(["Id", "CreatedDate", *used]))
     leads = ctx.rows(f"SELECT {cols} FROM Lead WHERE {OPEN_LEADS} ORDER BY CreatedDate DESC", GAP_ROWS) if total else []
-    no_match: list[dict] = []
+    gaps: list[dict] = []
     unsure = 0
     for lead in leads:
         results = [assignment.matches(e, lead, types) for e in rule.entries]
         if all(r is False for r in results):
-            no_match.append(lead)
+            gaps.append(lead)
         elif not any(results):  # no entry surely matched, but one couldn't be checked
             unsure += 1
-    targets = _owner_ids(ctx, rule)
-    at_target = [ld for ld in no_match if ld.get("OwnerId") in targets]
-    rest = [ld for ld in no_match if ld.get("OwnerId") not in targets]
-    moved = _reassigned(ctx, [ld["Id"] for ld in rest])
-    gaps = [ld for ld in rest if ld["Id"] not in moved]
     n = len(gaps)
     score = rate_score(n / total, 0.2) if total else 100
-    owners: dict[str, int] = {}
-    for ld in gaps:
-        owners[_owner_name(ld)] = owners.get(_owner_name(ld), 0) + 1
-    top = sorted(owners.items(), key=lambda kv: -kv[1])[:3]
     entries = f"{len(rule.entries)} entr{'y' if len(rule.entries) == 1 else 'ies'}"
     unchecked = sum(not e.checkable for e in rule.entries)
-    reasons = {ld["Id"]: f"Matches none of the rule’s {entries}; left with {_owner_name(ld)}, who the rule doesn’t assign to "
-               "(likely the default lead owner)" for ld in gaps[:GAP_LISTED]}
+    reasons = {ld["Id"]: f"No Assignment Rule Match: meets the criteria of none of the {entries} of the rule “{rule.name}”" for ld in gaps[:GAP_LISTED]}
     listed = ("Lead", ctx.ids_in([ld["Id"] for ld in gaps], GAP_LISTED)) if gaps else None
     m = ctx.metric(
-        label, n, "count", "lower-better", score,
-        how=f"Open Leads that match none of the entries of the active Lead Assignment Rule “{rule.name}”, and so were left with an owner "
-        "the rule doesn’t assign to (usually the default lead owner) instead of the intended user or queue.",
-        rule="100 when every open Lead matches a rule entry (or was assigned another way), falling evenly to 0 when 20% of open Leads don’t.",
-        columns=["Name", "Company", "OwnerId", "Status", "CreatedDate"],
-        order="-CreatedDate",
-        extra="assignment_gap",
+        label, n, "count", "lower-better", score, how=how, rule=scoring, columns=columns, order="-CreatedDate", extra="assignment_gap",
         criteria=[
             ("Records checked", f"{len(leads):,} open Leads (not converted)" + (f", the newest {GAP_ROWS:,} of {total:,}" if total > len(leads) else "")),
-            ("Assignment rule", f"“{rule.name}”, {entries}, read from Setup"
+            ("Assignment rule", f"“{rule.name}”, {entries}, read from Setup with their criteria"
              + (f"; {unchecked} use a formula or a related record’s field and can’t be checked here, so Leads they might match aren’t counted"
                 if unchecked else "")),
-            ("No match", "The Lead meets none of the entries’ criteria (each entry’s filter logic included)"),
-            ("Left out", f"{len(at_target):,} owned by a user or queue the rule assigns to; {len(moved):,} reassigned after they were created "
-             "(by a person or another process, from Lead History)" + (f"; {unsure:,} that only an unchecked entry might match" if unsure else "")),
-            ("What's counted", f"{n:,} of {total:,} open Leads ({pct(n, total):.0f}%) match no entry and are still with an owner the rule doesn’t assign to"),
+            ("No Assignment Rule Match", "The Lead meets the criteria of none of the entries (each entry’s filter logic included)"
+             + (f"; {unsure:,} that only an unchecked entry might match aren’t counted" if unsure else "")),
+            ("What's counted", f"{n:,} of {total:,} open Leads ({pct(n, total):.0f}%) match no entry"),
             ("Records listed", "Each with its assignment gap reason, newest first" + (f" (the first {GAP_LISTED:,})" if n > GAP_LISTED else "")),
         ],
         records=listed,
@@ -336,18 +248,16 @@ def rule_gap_leads(ctx: Ctx) -> None:
         m.records[0]["reasons"] = reasons
     if listed:
         ctx.finding(
-            name="Leads that match no assignment rule entry",
+            name="Leads with no assignment rule match",
             records=listed,
             recent=False,
             fix="/lightning/setup/LeadRules/home",
             score=score,
             affected=n,
-            description=f"{n:,} open Leads match none of the {entries} of the Lead Assignment Rule “{rule.name}” and were left with "
-            "an owner the rule doesn’t assign to." + (f" Most are with: {', '.join(f'{o} ({c})' for o, c in top)}." if top else ""),
-            why="A Lead that slips past every rule entry lands with the default owner, where nobody is expecting it.",
+            description=f"{n:,} open Leads match none of the {entries} of the Lead Assignment Rule “{rule.name}”.",
+            why="A Lead that slips past every rule entry goes to the default lead owner, where nobody is expecting it.",
             impact="Leads wait for someone to notice and assign them by hand, so first contact is slow or never happens.",
-            action="Assign these Leads by hand now, then add a rule entry that catches them (for example a last entry with no criteria that "
-            "sends everything else to a triage queue), and check the entries’ criteria for missing values.",
+            action=action,
             obj="Lead",
             url=ctx.list_url("Lead"),
         )
