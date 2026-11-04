@@ -36,7 +36,7 @@ import { InlineError } from '../ui/States';
 import { ChangeBadge } from './AffectedRecords';
 import { FixPlanPanel } from './FixPlanPanel';
 import { ActivityPeriod } from './ActivityPeriod';
-import { QueueDays, QueueFilter, type PickedQueue } from './QueueFilter';
+import { QueueDays, QueueFilter, RuleTargetFilter, type PickedQueue } from './QueueFilter';
 import { FieldPicker } from './FieldPicker';
 import { RecordsTable } from './RecordsTable';
 import { DuplicateResults } from './DuplicateFinder';
@@ -420,14 +420,12 @@ function Records({
           />
         )}
         {stuckQueue && <QueueDays value={queueDays} onChange={setQueueDays} />}
-        {byQueue && (
-          <QueueFilter assessmentId={measureAssessmentId!} areaId={area.id} label={indicator!.label} object={object!} value={queue} days={days} onChange={setQueue}
-            {...(stuckQueue ? {} : {
-              title: 'Inactive Lead queues',
-              tip: 'Lead queues the active Lead Assignment Rule never assigns to (every Lead queue when no rule is active). Salesforce has no on/off switch for a queue, so a queue out of the active routing counts as inactive. Pick one to see the open Leads in it.',
-              empty: 'No inactive Lead queues: the active rule assigns to every Lead queue.',
-            })}
-          />
+        {stuckQueue && (
+          <QueueFilter assessmentId={measureAssessmentId!} areaId={area.id} label={indicator!.label} object={object!} value={queue} days={days} onChange={setQueue} />
+        )}
+        {byQueue && !stuckQueue && (
+          // Inactive Lead Assignment Rules: the inactive rules, then who they assign to, then that owner's Leads
+          <RuleTargetFilter key={`${object}-${indicator!.label}`} assessmentId={measureAssessmentId!} areaId={area.id} label={indicator!.label} object={object!} value={queue} onChange={setQueue} />
         )}
         <div className="min-w-0 flex-1">
         <RecordsTable

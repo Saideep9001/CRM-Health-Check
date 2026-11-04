@@ -159,6 +159,8 @@ class FakeSalesOrg(FakeSalesforce):
             return [{"Id": "00G000000000001AAA", "Name": "Jane Doe"}] if "'Jane Doe'" in q else []
         if "FROM LeadHistory WHERE Field = 'Owner' AND LeadId IN" in q:
             return [{"LeadId": "00Q000000000003"}]  # its owner was changed after it was created
+        if "FROM User WHERE Username IN" in q:  # who inactive rules assign to, by username
+            return [{"Id": "005000000000002", "Name": "Bob Ray", "Username": "bob@acme.test"}] if "'bob@acme.test'" in q else []
         if "FROM User" in q:
             return [{"Id": i, "Name": n, "UserType": "Standard", "Profile": {"Name": "Sales"}} for i, n in USERS.items()]
         if "Owner.Type = 'Queue' ORDER BY CreatedDate" in q:
@@ -366,7 +368,7 @@ def test_inactive_rules_are_potential_matches(client, sf, monkeypatch):
     assert queues.status_code == 200 and [(q["id"], q["name"]) for q in queues.json()] == [("00G000000000003AAA", "Partner Queue")]
     assert client.get(f"{base}/indicator-records", params={**params, "queue": "00G000000000003AAA"}).status_code == 200
     q = _lead_query(sf)
-    assert "FROM Lead WHERE IsConverted = false AND OwnerId IN ('00G000000000003AAA') AND OwnerId = '00G000000000003AAA'" in q
+    assert "FROM Lead WHERE IsConverted = false AND OwnerId IN ('00G000000000003AAA')" in q
     assert client.get(f"{base}/indicator-records", params={**params, "queue": "00G000000000002AAA"}).status_code == 422  # active routing
     assert client.get(f"{base}/indicator-records", params={**params, "days": 3}).status_code == 422  # days are card 1's
     _page(monkeypatch, ["00Q000000000005"])
@@ -462,3 +464,29 @@ def test_contacts_to_multiple_accounts_when_on(client, sf, monkeypatch):
     assert body["records"][1]["values"]["RelatedAccounts"] is None
     q = next(q for q in reversed(sf.soql) if "FROM AccountContactRelation WHERE ContactId IN" in q)
     assert "ContactId IN ('003000000000001', '003000000000002')" in q
+
+
+def test_inactive_rules_chips_by_rule_and_assignee(client, sf):
+    connect(client)
+    a, _, _ = run(client)
+    base = f"{API}/assessments/{a['id']}/areas/area-3"
+    params = {"label": "Inactive Lead Assignment Rules", "object": "Lead"}
+    body = client.get(f"{base}/indicator-rule-targets", params=params)
+    assert body.status_code == 200
+    got = body.json()
+    # each inactive rule with who it assigns to (Old Rule: Bob, a user; Partner Rule: the Partner queue), counts live (by OwnerId)
+    assert got["rules"] == [{"name": "Old Rule", "targets": ["005000000000002"], "count": 2},
+                            {"name": "Partner Rule", "targets": ["00G000000000003AAA"], "count": 0}]
+    assert got["targets"] == [{"id": "005000000000002", "name": "Bob Ray", "type": "User", "inactive": False, "count": 2},
+                              {"id": "00G000000000003AAA", "name": "Partner Queue", "type": "Queue", "inactive": True, "count": 0}]
+    # a rule's assignee (a user here): the open Leads it owns, not just those in inactive queues
+    assert client.get(f"{base}/indicator-records", params={**params, "queue": "005000000000002"}).status_code == 200
+    q = _lead_query(sf)
+    assert "FROM Lead WHERE IsConverted = false AND OwnerId IN ('005000000000002')" in q and "00G000000000003AAA" not in q
+    # a rule picked with no assignee: all of its assignees
+    assert client.get(f"{base}/indicator-records", params={**params, "queue": "005000000000002,00G000000000003AAA"}).status_code == 200
+    assert "OwnerId IN ('005000000000002', '00G000000000003AAA')" in _lead_query(sf)
+    for bad in ("005000000000001", "x' OR Id != null", ","):  # not one of the rules' assignees or the inactive queues
+        assert client.get(f"{base}/indicator-records", params={**params, "queue": bad}).status_code == 422
+    other = {"label": "Stuck Queue-Owned Leads", "object": "Lead"}
+    assert client.get(f"{base}/indicator-rule-targets", params=other).status_code == 422

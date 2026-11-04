@@ -25,6 +25,7 @@ from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
 from ..schemas import (
     FieldValues,
     QueueCount,
+    RuleTargets,
     Assessment,
     AssessmentResults,
     AssessmentStatus,
@@ -353,6 +354,13 @@ def _by_queue(rec: dict) -> bool:
 
 
 # one role per line, the last column, frozen so it stays in view while the table scrolls sideways
+def _rule_owner_ids(rec: dict) -> set[str]:
+    """Inactive Lead Assignment Rules: the owners its records can be narrowed to (the inactive queues, and every inactive
+    rule's queues and users), all Salesforce ids saved by the check."""
+    ids = {q["id"] for q in rec.get("inactive_queues") or []} | {t["id"] for r in rec.get("rule_targets") or [] for t in r["targets"]}
+    return {i for i in ids if re.fullmatch(r"00[5G][A-Za-z0-9]{12}([A-Za-z0-9]{3})?", i or "")}
+
+
 DEAL_ROLES_COLUMN = {"name": "OpenDealRoles", "label": "Roles on Open Deals", "type": "lines", "frozen": True}
 # Contacts to Multiple Accounts: every Account a Contact is related to, one per line ("lines" = shown stacked in the table).
 RELATED_ACCOUNTS_COLUMN = {"name": "RelatedAccounts", "label": "Related Accounts", "type": "lines", "frozen": True}
@@ -480,10 +488,17 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
     if queue:
         if not _by_queue(rec):
             raise HTTPException(422, "Only the Stuck Queue-Owned Leads and Inactive Lead Assignment Rules measures take a queue.")
-        if not re.fullmatch(r"00G[A-Za-z0-9]{12}([A-Za-z0-9]{3})?", queue) or (
-                rec.get("inactive_queues") is not None and queue not in {q["id"] for q in rec["inactive_queues"]}):
-            raise HTTPException(422, "Unknown queue.")
-        rec = {**rec, "where": f"{explorer.and_part(rec['where'])} AND OwnerId = '{queue}'" if rec.get("where") else f"OwnerId = '{queue}'"}
+        if rec.get("inactive_queues") is not None:  # Inactive Lead Assignment Rules: an inactive queue, or a rule's queues and users
+            picked = [q.strip() for q in queue.split(",") if q.strip()]
+            allowed = _rule_owner_ids(rec)
+            if not picked or len(picked) > 100 or any(q not in allowed for q in picked):
+                raise HTTPException(422, "Unknown queue.")
+            base = rec.get("open_where") or rec["where"]  # the open Leads, so a rule's users count too
+            rec = {**rec, "where": f"{explorer.and_part(base)} AND OwnerId IN ({', '.join(repr(q) for q in picked)})"}
+        else:
+            if not re.fullmatch(r"00G[A-Za-z0-9]{12}([A-Za-z0-9]{3})?", queue):
+                raise HTTPException(422, "Unknown queue.")
+            rec = {**rec, "where": f"{explorer.and_part(rec['where'])} AND OwnerId = '{queue}'" if rec.get("where") else f"OwnerId = '{queue}'"}
     if only:
         fields = [f.strip() for f in only.split(",") if f.strip()][:20]
         if any(not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*(\.Name)?", f) for f in fields):  # a field, or a parent's name (Account.Name)
@@ -576,6 +591,45 @@ def indicator_queues(
                 queues.setdefault(r["Id"], r["Name"])
         out = [{"id": i, "name": n, "count": counts.get(n, 0)} for i, n in queues.items()]
         return sorted(out, key=lambda q: (-q["count"], q["name"].lower()))
+
+    return _salesforce(db, http, settings, load, org_id)
+
+
+@router.get("/assessments/{assessment_id}/areas/{area_id}/indicator-rule-targets", response_model=RuleTargets)
+def indicator_rule_targets(
+    assessment_id: str,
+    area_id: str,
+    label: str = Query(..., max_length=200),
+    object: str | None = Query(None, max_length=80),
+    db: Session = Depends(get_db),
+    http: httpx.Client = Depends(http_dep),
+    settings: Settings = Depends(settings_dep),
+):
+    """Inactive Lead Assignment Rules: each inactive rule with who it assigns to (queues and users), and the inactive Lead
+    queues, each with how many open Leads it owns now (live), for the chips above the records."""
+    rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, object)
+    if rec.get("inactive_queues") is None:
+        raise HTTPException(422, "Only the Inactive Lead Assignment Rules measure is listed by rule.")
+    rules = rec.get("rule_targets") or []
+    targets: dict[str, dict] = {q["id"]: {"id": q["id"], "name": q["name"], "type": "Queue", "inactive": True} for q in rec["inactive_queues"]}
+    for r in rules:
+        for t in r["targets"]:
+            targets.setdefault(t["id"], {**t, "inactive": False})
+    ids = sorted(_rule_owner_ids(rec))
+    base = rec.get("open_where") or "IsConverted = false"
+
+    def load(sf):
+        counts: dict[str, int] = {}
+        for i in range(0, len(ids), 100):
+            chunk = ", ".join(repr(x) for x in ids[i:i + 100])
+            for row in sf.query(f"SELECT OwnerId o, COUNT(Id) c FROM {rec['object']} WHERE {explorer.and_part(base)} AND OwnerId IN ({chunk}) "
+                                "GROUP BY OwnerId").get("records", []):
+                counts[row["o"]] = int(row.get("c") or 0)
+        out_targets = sorted(({**t, "count": counts.get(t["id"], 0)} for t in targets.values() if t["id"] in ids),
+                             key=lambda t: (-t["count"], t["name"].lower()))
+        out_rules = [{"name": r["name"], "targets": [t["id"] for t in r["targets"] if t["id"] in ids],
+                      "count": sum(counts.get(t["id"], 0) for t in r["targets"])} for r in rules]
+        return {"rules": out_rules, "targets": out_targets}
 
     return _salesforce(db, http, settings, load, org_id)
 

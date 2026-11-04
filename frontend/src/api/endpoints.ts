@@ -225,6 +225,16 @@ export const indicatorApi = {
       { label, object, days },
       signal,
     ),
+  /** Inactive Lead Assignment Rules: each inactive rule and who it assigns to (queues and users), with live counts. */
+  ruleTargets: (assessmentId: string, areaId: string, label: string, object: string, signal?: AbortSignal) =>
+    http.get<{
+      rules: { name: string; targets: string[]; count: number }[];
+      targets: { id: string; name: string; type: string; inactive: boolean; count: number }[];
+    }>(
+      `/assessments/${encodeURIComponent(assessmentId)}/areas/${encodeURIComponent(areaId)}/indicator-rule-targets`,
+      { label, object },
+      signal,
+    ),
   /** The values of one column among a measure's records (for its filter drop-down). */
   values: (assessmentId: string, areaId: string, label: string, object: string, field: string, filters: DataFilter[], signal?: AbortSignal, only: string[] = [], period?: string, queue?: string, days?: number) =>
     http.get<FieldValues>(

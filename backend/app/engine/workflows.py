@@ -13,6 +13,7 @@ from urllib.parse import quote, unquote
 from ..salesforce import assignment, queues
 from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
 from .core import Ctx, FindingDraft, Unavailable, pct, rate_score
+from .core import in_list as soql_in
 
 OPEN_LEADS = "IsConverted = false"
 OPEN_OPPS = "IsClosed = false"
@@ -217,19 +218,54 @@ def _rule_item(ctx: Ctx, rule: assignment.Rule, labels: dict[str, str], matched:
     }
 
 
+def _lead_queues(ctx: Ctx) -> list[dict]:
+    """Every queue that can own Leads (read once per check): [{"QueueId", "Queue": {"Name", "DeveloperName"}}]."""
+    if "lead_queues" not in ctx.memo:
+        try:
+            ctx.memo["lead_queues"] = ctx.rows("SELECT QueueId, Queue.Name, Queue.DeveloperName FROM QueueSobject WHERE SobjectType = 'Lead'", 500)
+        except SalesforceAuthExpired:
+            raise
+        except SalesforceError:
+            ctx.memo["lead_queues"] = []
+    return ctx.memo["lead_queues"]
+
+
 def _inactive_queues(ctx: Ctx, active: assignment.Rule | None) -> list[dict]:
     """Lead queues the active Lead Assignment Rule never assigns to (every Lead queue when no rule is active): [{"id", "name"}].
     Salesforce has no on/off switch for a queue, so a queue out of the active routing counts as inactive."""
     routed = {e.assigned_to for e in (active.entries if active else []) if e.assigned_to and (e.assigned_type or "").lower() == "queue"}
-    try:
-        rows = ctx.rows("SELECT QueueId, Queue.Name, Queue.DeveloperName FROM QueueSobject WHERE SobjectType = 'Lead'", 500)
-    except SalesforceAuthExpired:
-        raise
-    except SalesforceError:
-        return []
-    out = {r["QueueId"]: (r.get("Queue") or {}).get("Name") or r["QueueId"] for r in rows
+    out = {r["QueueId"]: (r.get("Queue") or {}).get("Name") or r["QueueId"] for r in _lead_queues(ctx)
            if r.get("QueueId") and (r.get("Queue") or {}).get("DeveloperName") not in routed}
     return sorted(({"id": i, "name": n} for i, n in out.items()), key=lambda q: q["name"].lower())
+
+
+def _rule_targets(ctx: Ctx, rules: list[assignment.Rule]) -> list[dict]:
+    """Who each rule assigns to (its entries' queues and users), by id: [{"name", "targets": [{"id", "name", "type"}]}].
+    Queues are found by API name, users by username; one we can't find (deleted, or no access) is left out."""
+    queues = {(r.get("Queue") or {}).get("DeveloperName"): {"id": r["QueueId"], "name": (r.get("Queue") or {}).get("Name") or r["QueueId"], "type": "Queue"}
+              for r in _lead_queues(ctx) if r.get("QueueId")}
+    names = sorted({e.assigned_to for r in rules for e in r.entries if e.assigned_to and (e.assigned_type or "").lower() != "queue"})
+    users: dict[str, dict] = {}
+    if names:
+        try:
+            for u in ctx.rows(f"SELECT Id, Name, Username FROM User WHERE {soql_in('Username', list(names), 200)}", 200):
+                if u.get("Id") and u.get("Username"):
+                    users[u["Username"].lower()] = {"id": u["Id"], "name": u.get("Name") or u["Username"], "type": "User"}
+        except SalesforceAuthExpired:
+            raise
+        except SalesforceError:
+            pass
+    out = []
+    for rule in rules:
+        found: dict[str, dict] = {}
+        for e in rule.entries:
+            if not e.assigned_to:
+                continue
+            t = queues.get(e.assigned_to) if (e.assigned_type or "").lower() == "queue" else users.get(e.assigned_to.lower())
+            if t:
+                found.setdefault(t["id"], t)
+        out.append({"name": rule.name, "targets": sorted(found.values(), key=lambda t: t["name"].lower())})
+    return out
 
 
 def inactive_rules(ctx: Ctx) -> None:
@@ -297,13 +333,16 @@ def inactive_rules(ctx: Ctx) -> None:
         recent=False,
     )
     m.rule_list = sorted(listing, key=lambda r: -(r["matches"] or 0)) + ([_rule_item(ctx, active, labels)] if active else [])
-    if m.records:  # the table: the Leads in the inactive Lead queues, each with its potential match
-        ids = {q["id"] for q in idle}
+    if m.records:  # the table: the Leads in the inactive Lead queues, or those a picked rule or assignee owns, with their potential match
+        targets = _rule_targets(ctx, inactive)
+        ids = {q["id"] for q in idle} | {t["id"] for r in targets for t in r["targets"]}
         mine = [ld for ld in potential if ld.get("OwnerId") in ids][:QUEUE_REASONS]
         m.records[0].update({
             "reasons": {ld["Id"]: "Potential match: " + "; ".join(reasons[ld["Id"]]) for ld in mine},
             "reason": "No inactive rule entry matches this Lead",
             "inactive_queues": idle,
+            "rule_targets": targets,  # each inactive rule's queues and users, for the chips above the table
+            "open_where": OPEN_LEADS,  # the open Leads, before narrowing to the inactive queues
         })
     if with_matches:
         ctx.finding(

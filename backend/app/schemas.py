@@ -135,6 +135,25 @@ class FieldValues(ApiModel):
     truncated: bool  # more than 2,000 different values
 
 
+class RuleTarget(ApiModel):
+    id: str  # a queue (00G…) or a user (005…)
+    name: str
+    type: str  # Queue or User
+    inactive: bool  # an inactive Lead queue (out of the active routing)
+    count: int  # open Leads it owns now
+
+
+class RuleTargetsRule(ApiModel):
+    name: str  # the inactive Lead Assignment Rule
+    targets: list[str]  # ids of the queues and users it assigns to
+    count: int  # open Leads they own now
+
+
+class RuleTargets(ApiModel):
+    rules: list[RuleTargetsRule]
+    targets: list[RuleTarget]
+
+
 class QueueCount(ApiModel):
     id: str  # the queue (a Group id), for the filter
     name: str  # the queue's name
