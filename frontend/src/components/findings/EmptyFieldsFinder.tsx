@@ -1,3 +1,4 @@
+import { RecordLink } from '@/components/data/RecordLink';
 import { Download, ExternalLink, Search } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { errorMessage } from '@/api/client';
@@ -112,7 +113,7 @@ export function EmptyRecords({ object, fields }: { object: string; fields: strin
                           {result.fields.includes(c.name) && blank ? (
                             <span className="rounded bg-bad-soft px-1.5 py-0.5 text-[11px] font-semibold text-bad">Empty</span>
                           ) : ci === 0 && href ? (
-                            <a href={href} target="_blank" rel="noopener noreferrer" className="font-medium hover:text-brand hover:underline">{v === '—' ? r.id : v}</a>
+                            <RecordLink object={object} id={r.id!}>{v === '—' ? r.id : v}</RecordLink>
                           ) : (
                             <span className={v === '—' ? 'text-ink-subtle' : ''}>{v}</span>
                           )}

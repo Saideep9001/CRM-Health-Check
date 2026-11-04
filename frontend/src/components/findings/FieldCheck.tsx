@@ -1,3 +1,4 @@
+import { RecordLink } from '@/components/data/RecordLink';
 import { AlertTriangle, ChevronDown, ListChecks, Search } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { errorMessage } from '@/api/client';
@@ -17,7 +18,7 @@ export const ALL = '__all__'; // the "all chosen fields together" row
 type Pick = { field: string; kind: FinderKind };
 
 /** Invalid values of one field (the health check's Data Standardization rules), with why each one is flagged. */
-function SpellingResults({ field, prefix }: { field: FieldCheckField; prefix: string }) {
+function SpellingResults({ field, object }: { field: FieldCheckField; object: string }) {
   const ex = useExpand();
   const std = field.standardization!;
   const [query, setQuery] = useState('');
@@ -106,7 +107,7 @@ function SpellingResults({ field, prefix }: { field: FieldCheckField; prefix: st
                   <td key={c.name} className={cx('max-w-[16rem] truncate px-3 py-2', c.name === field.name && r.note && 'bg-bad-soft/60')} title={c.name === field.name && r.note ? `${show(r.values[c.name])}
 Why it’s flagged: ${r.note}` : show(r.values[c.name])}>
                     {ci === 0 && r.id ? (
-                      <a href={`${prefix}${r.id}`} target="_blank" rel="noopener noreferrer" className="font-medium hover:text-brand hover:underline">{show(r.values[c.name])}</a>
+                      <RecordLink object={object} id={r.id}>{show(r.values[c.name])}</RecordLink>
                     ) : (
                       <span className={c.name === field.name ? 'font-medium text-warn' : show(r.values[c.name]) === '—' ? 'text-ink-subtle' : ''}>{show(r.values[c.name])}</span>
                     )}
@@ -489,7 +490,7 @@ export function FieldCheck({
                 ) : picked && pick.kind === 'duplicates' && picked.duplicates ? (
                   <DuplicateResults result={picked.duplicates} fileName={`duplicate-${object.toLowerCase()}s-${picked.name.toLowerCase()}.csv`} />
                 ) : picked && pick.kind === 'spelling' && picked.standardization ? (
-                  <SpellingResults field={picked} prefix={result.recordUrlPrefix} />
+                  <SpellingResults field={picked} object={result.object} />
                 ) : (
                   <p className="text-sm text-ink-muted">This isn’t checked for {picked?.label}.</p>
                 )}

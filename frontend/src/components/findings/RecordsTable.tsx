@@ -1,3 +1,4 @@
+import { RecordLink } from '@/components/data/RecordLink';
 import type { InfiniteData, UseInfiniteQueryResult } from '@tanstack/react-query';
 import { AlertTriangle, Download, ExternalLink, Search, X } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
@@ -260,9 +261,7 @@ export function RecordsTable({
 Why it’s flagged: ${reason}` : v}
                           >
                             {ci === 0 && href ? (
-                              <a href={href} target="_blank" rel="noopener noreferrer" className="font-medium text-ink hover:text-brand hover:underline">
-                                {v === '—' ? r.id : v}
-                              </a>
+                              <RecordLink object={first!.object} id={r.id!}>{v === '—' ? r.id : v}</RecordLink>
                             ) : (
                               <span className={v === '—' ? 'text-ink-subtle' : ''}>{v}</span>
                             )}

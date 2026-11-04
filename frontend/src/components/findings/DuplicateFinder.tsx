@@ -1,3 +1,4 @@
+import { RecordLink } from '@/components/data/RecordLink';
 import { AlertTriangle, Check, Download, ExternalLink, Filter, Search } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -329,9 +330,7 @@ export function DuplicateResults({ result, fileName, flag = null }: { result: Du
 Why it’s flagged: ${same}` : show(rec.values[c.name])}
                       >
                         {ci === 0 && rec.id ? (
-                          <a href={`${result.recordUrlPrefix}${rec.id}`} target="_blank" rel="noopener noreferrer" className="font-medium hover:text-brand hover:underline">
-                            {show(rec.values[c.name])}
-                          </a>
+                          <RecordLink object={result.object} id={rec.id}>{show(rec.values[c.name])}</RecordLink>
                         ) : (
                           <span className={show(rec.values[c.name]) === '—' ? 'text-ink-subtle' : ''}>{show(rec.values[c.name])}</span>
                         )}
