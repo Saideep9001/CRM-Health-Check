@@ -84,7 +84,7 @@ def _norm(value: object, table: dict[str, str]) -> str:
 #
 # Every chosen object gets four cards: Duplicates, Missing Key Fields, Data Standardization Issues and No Activity in
 # 6 Months. Accounts also get Accounts Without Contacts and Accounts Without Open Opportunities; Opportunities get
-# Closed Lost Without a Reason, Opportunities Without Line Items and Opportunities Without Contact Roles. Lead, Account,
+# Closed Lost Without a Reason and Opportunities Without Line Items (Contact Roles are in Area 4). Lead, Account,
 # Contact and Opportunity use the fields below; any other object uses every field people fill in.
 
 DUP_FIELDS: dict[str, tuple[str, ...]] = {
@@ -751,20 +751,6 @@ def opportunities_without_line_items(ctx: Ctx, obj: str = "Opportunity") -> None
     )
 
 
-def opportunities_without_contact_roles(ctx: Ctx, obj: str = "Opportunity") -> None:
-    _without(
-        ctx, "Opportunities Without Contact Roles", "Id NOT IN (SELECT OpportunityId FROM OpportunityContactRole)", base=(OPEN_DEALS,),
-        counted="Open Opportunities with no Contact Role (no buyer named on the deal)",
-        checked="open Opportunities (not Closed Won or Closed Lost)", fine="has a Contact Role",
-        why="Without Contact Roles you don’t know who decides, who signs and who uses what you sell.",
-        impact="Deals that stall with no known buyer, and campaigns and renewals that can’t reach the right people.",
-        action="Add the decision maker and other key people as Contact Roles, and require one before a deal can close.",
-        fix="/lightning/o/Opportunity/list",
-        name="Opportunities without Contact Roles",
-        columns=["Name", "AccountId", "Amount", "StageName", "CloseDate", "OwnerId"],
-    )
-
-
 # ---------------- leads
 
 def leads_without_campaign(ctx: Ctx, obj: str = "Lead") -> None:
@@ -870,7 +856,7 @@ def lead_cards(ctx: Ctx) -> None:
 def opportunity_cards(ctx: Ctx) -> None:
     ctx.selected("Opportunity")
     _cards(ctx, "Opportunity", opportunity_duplicates, missing_key_fields, data_standardization, no_recent_activity,
-           closed_lost_without_reason, opportunities_without_line_items, opportunities_without_contact_roles)
+           closed_lost_without_reason, opportunities_without_line_items)
 
 
 def other_object_cards(ctx: Ctx) -> None:

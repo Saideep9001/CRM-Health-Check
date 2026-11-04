@@ -10,8 +10,5 @@ def test_opportunity_cards(client, sf):
     ind = {i["label"]: i for a in res["areas"] for i in a["indicators"]}
     missing = dict(ind["Missing Key Fields (Opportunities)"]["criteria"])
     assert missing["Fields checked"] == "Amount, NextStep"  # the fake org's Opportunity has no Close Date
-    roles = ind["Opportunities Without Contact Roles"]
-    assert roles["score"] is not None and "Id NOT IN (SELECT OpportunityId FROM OpportunityContactRole)" in " ".join(sf.soql)
-    assert "WHERE IsClosed = false AND Id NOT IN" in " ".join(sf.soql)  # open deals only (not Closed Won or Closed Lost)
-    problems = {f["name"]: f for f in client.get(f"{API}/assessments/{aid}/findings").json()["items"]}
-    assert problems["Opportunities without Contact Roles"]["fixUrl"].endswith("/lightning/o/Opportunity/list")
+    assert "Opportunities Without Contact Roles" not in ind  # in Area 4 now
+    assert not any("OpportunityContactRole" in q for q in sf.soql)

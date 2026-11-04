@@ -37,7 +37,6 @@ export const DIAGNOSTIC_AREAS: DiagnosticArea[] = [
       'No Activity in 6 Months (Opportunities)',
       'Closed Lost Without a Reason (Opportunities)',
       'Opportunities Without Line Items',
-      'Opportunities Without Contact Roles',
     ],
   },
   {
