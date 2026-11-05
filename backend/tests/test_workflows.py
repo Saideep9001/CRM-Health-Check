@@ -267,7 +267,7 @@ def test_all_workflow_areas(client, sf):
                                                                    "Stale Leads"]
     assert ind["Stale Leads"] == 20  # Status unchanged for 30+ days (Lead History)
     assert ind["Opportunities with an Overdue Close Date"] == 8
-    overdue = areas["area-4"]["indicators"][-1]  # Area 4, after the Contact cards
+    overdue = areas["area-5"]["indicators"][-2]  # Area 5, right before Sales stage guidance gaps
     assert overdue["label"] == "Opportunities with an Overdue Close Date"
     assert dict(overdue["criteria"])["How far past"] == "1–30 days: 3 · 31–90 days: 3 · more than 90 days: 2"
     assert ind["Stuck Queue-Owned Leads"] == 8  # in a queue more than 3 days
@@ -277,8 +277,7 @@ def test_all_workflow_areas(client, sf):
     assert [i["label"] for i in areas["area-4"]["indicators"]] == ["Accounts Without Contacts", "Account Hierarchy Chains",  # Accounts first
                                                                    "Child Accounts Under Inactive Parents", "Possible Missing Parent Accounts",
                                                                    "Opportunities Without Contact Roles", "Orphaned Contacts",
-                                                                   "Contacts to Multiple Accounts", "Multi-Deal Contacts",
-                                                                   "Opportunities with an Overdue Close Date"]  # then Opportunities
+                                                                   "Contacts to Multiple Accounts", "Multi-Deal Contacts"]
     assert ind["Child Accounts Under Inactive Parents"] == 3
     assert ind["Accounts Without Contacts"] == 30
     assert ind["Opportunities Without Contact Roles"] == 15 and ind["Orphaned Contacts"] == 9
@@ -658,7 +657,8 @@ def test_opportunity_cards_moved_to_area_5(client, sf, monkeypatch):
     labels = {x["areaId"]: [i["label"] for i in x["indicators"]] for x in res["areas"]}
     # (the fake org has no plural label, so the cards say "Opportunitys"; a real org's say "Opportunities")
     moved = ("No Activity in 6 Months (Opportun", "Closed Lost Without a Reason (Opportun")
-    assert [label.startswith(m) for label, m in zip(labels["area-5"][-3:-1], moved)] == [True, True]  # before Sales stage guidance
+    assert [label.startswith(m) for label, m in zip(labels["area-5"][2:4], moved)] == [True, True]  # after Missing Next Steps
+    assert labels["area-5"][-2:] == ["Opportunities with an Overdue Close Date", "Sales stage guidance gaps"]
     assert labels["area-5"][:2] == ["Stuck Opportunities", "Missing Next Steps"] and "Missing Closed Lost reasons" not in labels["area-5"]
     assert not any(label.startswith(moved) for label in labels.get("area-1", []))
 

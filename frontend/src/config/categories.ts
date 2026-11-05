@@ -89,7 +89,7 @@ export const DIAGNOSTIC_AREAS: DiagnosticArea[] = [
     categoryId: 'workflows',
     name: 'Account Hierarchies & Contact Relationships',
     description:
-      'Assess Account hierarchies and parent links, then Contact Roles on open Opportunities, Contacts with no Account, Contacts related to multiple Accounts, Contacts on several deals, and open deals past their Close Date.',
+      'Assess Account hierarchies and parent links, then Contact Roles on open Opportunities, Contacts with no Account, Contacts related to multiple Accounts, and Contacts on several deals.',
     indicators: [
       'Accounts Without Contacts',
       'Account Hierarchy Chains',
@@ -99,7 +99,6 @@ export const DIAGNOSTIC_AREAS: DiagnosticArea[] = [
       'Orphaned Contacts',
       'Contacts to Multiple Accounts',
       'Multi-Deal Contacts',
-      'Opportunities with an Overdue Close Date',
     ],
   },
   {
@@ -108,12 +107,13 @@ export const DIAGNOSTIC_AREAS: DiagnosticArea[] = [
     categoryId: 'workflows',
     name: 'Sales Path, Playbooks & Feedback Loops',
     description:
-      'Assess sales stage guidance, required sales fields, deal progression, deals nobody is working, and the capture of Closed Lost reasons.',
+      'Assess sales stage guidance, required sales fields, deal progression, deals nobody is working, deals past their Close Date, and the capture of Closed Lost reasons.',
     indicators: [
       'Stuck Opportunities',
       'Missing Next Steps',
       'No Activity in 6 Months (Opportunities)',
       'Closed Lost Without a Reason (Opportunities)',
+      'Opportunities with an Overdue Close Date',
       'Sales stage guidance gaps',
     ],
   },
