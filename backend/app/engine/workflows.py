@@ -723,7 +723,7 @@ def _loops(parent: dict[str, str]) -> list[list[str]]:
     return loops
 
 
-CHAIN_LISTED = 500  # Accounts listed when no top Account is picked
+CHAIN_LISTED = 200  # parent Accounts listed (one page), by batch
 CHAIN_TOPS = 30  # the largest hierarchies offered as chips above the table
 CHAIN_SAVED = 20000  # Accounts whose place in their hierarchy is saved for the table
 
@@ -771,11 +771,6 @@ def hierarchy_chains(ctx: Ctx) -> None:
             base = [*base, s]
             chain[s] = base
     members = sorted(set(tops) | set(parent), key=lambda a: (names.get(a) or a).lower())
-    below = {a: 0 for a in members}
-    for a in members:
-        for anc in chain[a][:-1]:
-            if anc != a:
-                below[anc] = below.get(anc, 0) + 1
     looped = {a for a in members if chain[a][0] in in_loop or a in in_loop}  # in a loop, or under one
 
     def top_of(a: str) -> str | None:
@@ -793,6 +788,22 @@ def hierarchy_chains(ctx: Ctx) -> None:
         if top_of(a):
             families.setdefault(top_of(a), []).append(a)
     biggest = sorted(families, key=lambda t: (-len(families[t]), (names.get(t) or t).lower()))
+    # Batches: each hierarchy (its top Account and everything under it), largest first, then each loop with the Accounts under it.
+    loop_rep = {x: loop[0] for loop in loops for x in loop}
+    batch_key = {a: (top_of(a) or loop_rep[chain[a][0]]) for a in members}
+    loop_groups: dict[str, list[str]] = {}
+    for a in members:
+        if a in looped:
+            loop_groups.setdefault(batch_key[a], []).append(a)
+    order = [*biggest, *(loop[0] for loop in loops)]
+    batch_no = {k: n for n, k in enumerate(order, 1)}
+    groups = {**families, **loop_groups}
+    kids: dict[str, list[str]] = {}
+    for child, p in parent.items():
+        kids.setdefault(p, []).append(child)
+    # the rows: the parent Accounts (those with a child), by batch, then level (top first), then name
+    parents = sorted((a for a in members if a in kids),
+                     key=lambda a: (batch_no[batch_key[a]], 0 if a in looped else len(chain[a]), (names.get(a) or a).lower()))
     deepest = max((a for a in members if a not in looped), key=lambda a: len(chain[a]), default=None)
     loop_text = "; ".join(path_of(loop[0]) for loop in loops[:5]) + (f"; and {len(loops) - 5:,} more" if len(loops) > 5 else "")
     m = ctx.metric(
@@ -802,7 +813,7 @@ def hierarchy_chains(ctx: Ctx) -> None:
         "an Account is in a hierarchy when it has a parent or at least one child.",
         rule="Shown for review, not scored: hierarchies are neither good nor bad. A chain that loops back on itself "
         "(A → B → C → A) has no top Account and raises a problem.",
-        columns=["Name", "OwnerId"],
+        columns=["Name", "Phone", "Industry", "OwnerId"],
         order="Name",
         criteria=[
             ("Records checked", f"{len(rows):,} Accounts with a Parent Account, of {total:,} Accounts"
@@ -813,22 +824,25 @@ def hierarchy_chains(ctx: Ctx) -> None:
             ("Deepest chain", f"{len(chain[deepest])} levels: {path_of(deepest)}" if deepest else "None"),
             ("Largest hierarchy", f"{names.get(biggest[0], biggest[0])} ({len(families[biggest[0]]):,} Accounts)" if biggest else "None"),
             ("Loops", f"{len(in_loop):,} Accounts in {len(loops):,} loop{'' if len(loops) == 1 else 's'}: {loop_text}" if loops else "None"),
-            ("Records listed", f"The Accounts in a hierarchy (up to {CHAIN_LISTED:,}; pick a top Account above the table for one "
-             "hierarchy), each with its top Account, level, the Accounts below it and its chain"),
+            ("Batches", f"Each hierarchy is a batch (its top Account and every Account under it), largest first"
+             + (", then each loop" if loops else "") + f": {len(order):,} batch{'' if len(order) == 1 else 'es'}"),
+            ("Records listed", f"The parent Accounts (those with a child Account), grouped by batch and top Account first, each with "
+             f"its Child Accounts (up to {CHAIN_LISTED:,}; pick a batch above the table to see one)"),
         ],
-        records=("Account", ctx.ids_in(members, CHAIN_LISTED)) if members else None,
+        records=("Account", ctx.ids_in(parents, CHAIN_LISTED)) if parents else None,
         recent=False,
         extra="hierarchy",
     )
     m.out_of, m.out_of_label = total, "Accounts"
     if m.records:
-        saved = members[:CHAIN_SAVED]
         m.records[0].update({
-            "reasons": {a: {"top": names.get(top_of(a)) if top_of(a) else None, "level": None if a in looped else len(chain[a]),
-                            "below": below.get(a, 0), "path": path_of(a)} for a in saved},
-            # the largest hierarchies, for the chips above the table: each top Account with its Accounts
-            "hierarchies": [{"id": t, "name": names.get(t, t), "count": len(families[t]), "ids": families[t][:CHAIN_LISTED]}
-                            for t in biggest[:CHAIN_TOPS]],
+            # each parent Account's batch, level (0 in a loop, to sort by) and Child Accounts (their names, one per line)
+            "reasons": {a: {"batch": batch_no[batch_key[a]], "level": 0 if a in looped else len(chain[a]),
+                            "children": "\n".join(sorted((names.get(k) or k for k in kids[a]), key=str.lower))} for a in parents[:CHAIN_SAVED]},
+            # the largest batches, for the chips above the table: each with its parent Accounts
+            "hierarchies": [{"id": k, "name": f"Batch {batch_no[k]} · {names.get(k, k)}" + ("" if k in families else " (loop)"),
+                             "count": len(groups[k]), "ids": [a for a in parents if batch_key[a] == k][:CHAIN_LISTED]}
+                            for k in order[:CHAIN_TOPS]],
         })
     if loops:
         members_in = sorted(in_loop)

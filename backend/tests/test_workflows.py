@@ -523,15 +523,15 @@ def test_account_hierarchy_chains(client, sf, monkeypatch):
     assert found["severity"] == "high" and found["affectedRecords"] == 4
     base = f"{API}/assessments/{a['id']}/areas/area-4"
     params = {"label": card["label"], "object": "Account"}
-    tops = client.get(f"{base}/indicator-queues", params=params).json()  # the largest hierarchies' top Accounts
-    assert [(t["id"], t["name"], t["count"]) for t in tops] == [("001000000000001", "Account A", 4)]
+    batches = client.get(f"{base}/indicator-queues", params=params).json()  # each hierarchy is a batch, largest first, then loops
+    assert [(b["id"], b["name"], b["count"]) for b in batches] == [
+        ("001000000000001", "Batch 1 · Account A", 4), ("001000000000005", "Batch 2 · Loop X (loop)", 3), ("001000000000008", "Batch 3 · Self S (loop)", 1)]
     assert client.get(f"{base}/indicator-records", params={**params, "queue": "001000000000009"}).status_code == 422
-    _page(monkeypatch, ["001000000000003", "001000000000001", "001000000000006", "001000000000099"])
+    _page(monkeypatch, ["001000000000002", "001000000000001", "001000000000099"])
     body = client.get(f"{base}/indicator-records", params={**params, "queue": "001000000000001"}).json()
-    labels = [c["label"] for c in body["columns"]]
-    assert labels[-4:] == ["Top Account", "Level", "Accounts Below", "Hierarchy Path (parent → child)"] and body["columns"][-1]["frozen"]
-    c, top, y, other = (r["values"] for r in body["records"])
-    assert (c["TopAccount"], c["HierarchyLevel"], c["AccountsBelow"], c["HierarchyPath"]) == ("Account A", 3, 0, "Account A → Account B → Account C")
-    assert (top["TopAccount"], top["HierarchyLevel"], top["AccountsBelow"]) == ("Account A", 1, 3)
-    assert y["TopAccount"] is None and y["HierarchyLevel"] is None and y["HierarchyPath"] == "Loop X → Loop Z → Loop Y ↻ back to Loop X"
-    assert other["HierarchyPath"] is None
+    assert body["sortedBy"] == "HierarchyBatch"  # the table groups the rows by batch
+    assert body["columns"][0]["label"] == "Batch" and (body["columns"][-1]["label"], body["columns"][-1]["frozen"]) == ("Child Accounts", True)
+    top, b, other = (r["values"] for r in body["records"])  # batch by batch, the top Account first
+    assert (top["HierarchyBatch"], top["ChildAccounts"]) == (1, "Account B\nAccount D")
+    assert (b["HierarchyBatch"], b["ChildAccounts"]) == (1, "Account C")
+    assert other["HierarchyBatch"] is None and other["ChildAccounts"] is None

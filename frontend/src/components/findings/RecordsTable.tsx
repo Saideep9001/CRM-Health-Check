@@ -66,18 +66,20 @@ export function RecordsTable({
   // Rows kept together: duplicate groups (the same cleaned value of the matched field), or records grouped by their
   // Account (the server sorts them by Account name), with the Account named first in each block.
   const byAccount = first?.sortedBy === 'AccountId';
-  const groupCol = byAccount ? 'AccountId' : grouped ? first?.sortedBy ?? null : null;
+  // Account Hierarchy Chains: rows already in batch order from the server, each batch banded and numbered
+  const byBatch = first?.sortedBy === 'HierarchyBatch';
+  const groupCol = byAccount ? 'AccountId' : byBatch ? 'HierarchyBatch' : grouped ? first?.sortedBy ?? null : null;
   const [filter, setFilter] = useState('');
   const term = filter.trim().toLowerCase();
   // Filter the loaded records by any value (name, email, city, owner…).
   const loaded = pages
     .flatMap((p) => p.records)
     .filter((r) => !term || [...Object.values(r.values), ...Object.values(r.refNames)].some((v) => v != null && String(v).toLowerCase().includes(term)));
-  const rows = groupCol && !byAccount // by Account: already sorted by the Account's name on the server
+  const rows = groupCol && !byAccount && !byBatch // by Account or batch: already in order from the server
     ? [...loaded].sort((a, b) => matchKey(a.values[groupCol], groupCol).localeCompare(matchKey(b.values[groupCol], groupCol)))
     : loaded;
   // The server lists the columns that explain the result first (e.g. Name, Website for duplicates).
-  const shown = first ? first.columns.filter((c) => c.type !== 'id' && !(byAccount && c.name === 'AccountId')) : []; // the Account heads its block
+  const shown = first ? first.columns.filter((c) => c.type !== 'id' && !(byAccount && c.name === 'AccountId') && !(byBatch && c.name === 'HierarchyBatch')) : []; // the Account (or batch) heads its block
   // Frozen columns (e.g. Roles on Open Deals) go last and stay in view on the right while the table scrolls sideways.
   const frozen = shown.filter((c) => c.frozen);
   const cols = [...shown.filter((c) => !c.frozen).slice(0, 12 - frozen.length), ...frozen];
@@ -184,7 +186,7 @@ export function RecordsTable({
             <table className="w-full min-w-[640px] text-left text-xs">
               <thead className="sticky top-0 z-10 bg-surface shadow-[0_1px_0_rgb(var(--line))]">
                 <tr>
-                  {groupCol && <th className="whitespace-nowrap px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">{byAccount ? 'Account' : 'Group'}</th>}
+                  {groupCol && <th className="whitespace-nowrap px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">{byAccount ? 'Account' : byBatch ? 'Batch' : 'Group'}</th>}
                   {cols.map((c) => {
                     const meta = fieldOf(c.name);
                     const filtered = !!columnFilter(filters, c.name);
@@ -231,7 +233,7 @@ export function RecordsTable({
                               </span>
                             ) : (
                               <span className="rounded-full bg-surface px-2 py-0.5 text-[11px] font-semibold text-brand-ink ring-1 ring-brand/20">
-                                #{groupOf[i]} · {groupSize.get(groupOf[i])}
+                                {byBatch ? `Batch ${String(r.values.HierarchyBatch ?? groupOf[i])}` : `#${groupOf[i]} · ${groupSize.get(groupOf[i])}`}
                               </span>
                             ))}
                         </td>

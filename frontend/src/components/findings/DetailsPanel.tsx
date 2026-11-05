@@ -427,8 +427,8 @@ function Records({
         )}
         {byTop && (
           <QueueFilter assessmentId={measureAssessmentId!} areaId={area.id} label={indicator!.label} object={object!} value={queue} onChange={setQueue} neutral
-            title="Top Accounts" tip="The largest hierarchies, by their top Account (the one with no Parent Account), with how many Accounts each has. Pick one to see only that hierarchy."
-            empty="No Account hierarchies." allTitle="Show every Account in a hierarchy" />
+            title="Batches" tip="Each batch is one hierarchy: its top Account (the one with no Parent Account) and every Account under it, largest first, with how many Accounts it has. Pick one to see only its parent Accounts."
+            empty="No Account hierarchies." allTitle="Show every batch" />
         )}
         {byQueue && !stuckQueue && (
           // Inactive Lead Assignment Rules: the inactive rules, then who they assign to, then that owner's Leads

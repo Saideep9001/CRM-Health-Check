@@ -362,11 +362,10 @@ def _rule_owner_ids(rec: dict) -> set[str]:
     return {i for i in ids if re.fullmatch(r"00[5G][A-Za-z0-9]{12}([A-Za-z0-9]{3})?", i or "")}
 
 
-# Account Hierarchy Chains: each Account's place in its hierarchy, saved by the check; its chain is the last column, frozen
-HIERARCHY_COLUMNS = [{"name": "TopAccount", "label": "Top Account", "type": "string"},
-                     {"name": "HierarchyLevel", "label": "Level", "type": "int"},
-                     {"name": "AccountsBelow", "label": "Accounts Below", "type": "int"},
-                     {"name": "HierarchyPath", "label": "Hierarchy Path (parent → child)", "type": "string", "frozen": True}]
+# Account Hierarchy Chains: each parent Account's batch (the table groups its rows by it) and its Child Accounts, one per
+# line, the last column, frozen; both saved by the check
+BATCH_COLUMN = {"name": "HierarchyBatch", "label": "Batch", "type": "int"}
+CHILDREN_COLUMN = {"name": "ChildAccounts", "label": "Child Accounts", "type": "lines", "frozen": True}
 DEAL_ROLES_COLUMN = {"name": "OpenDealRoles", "label": "Roles on Open Deals", "type": "lines", "frozen": True}
 # Contacts to Multiple Accounts: every Account a Contact is related to, one per line ("lines" = shown stacked in the table).
 RELATED_ACCOUNTS_COLUMN = {"name": "RelatedAccounts", "label": "Related Accounts", "type": "lines", "frozen": True}
@@ -405,14 +404,15 @@ def _with_extra(sf, rec: dict, columns: list[dict], records: list[dict]) -> list
         return assignment.add_reason(columns, records, rec.get("reasons") or {}, rec.get("reason"), column=assignment.MATCH_COLUMN)
     if rec.get("extra") == "related_accounts":
         return _add_related_accounts(sf, columns, records)
-    if rec.get("extra") == "hierarchy":  # Account Hierarchy Chains: each Account's top Account, level, Accounts below and chain
+    if rec.get("extra") == "hierarchy":  # Account Hierarchy Chains: parent Accounts by batch, each with its Child Accounts
         saved = rec.get("reasons") or {}
+        place = lambda r: saved.get(r.get("id") or "") or {}  # noqa: E731
         for r in records:
-            place = saved.get(r.get("id") or "") or {}
-            r["values"].update({"TopAccount": place.get("top"), "HierarchyLevel": place.get("level"),
-                                "AccountsBelow": place.get("below"), "HierarchyPath": place.get("path")})
-        names = {c["name"] for c in HIERARCHY_COLUMNS}
-        return [*(c for c in columns if c["name"] not in names), *HIERARCHY_COLUMNS]
+            r["values"].update({BATCH_COLUMN["name"]: place(r).get("batch"), CHILDREN_COLUMN["name"]: place(r).get("children")})
+        # batch by batch, the top Account first (the rows come from Salesforce by name)
+        records.sort(key=lambda r: (place(r).get("batch") or 10**9, place(r).get("level") or 0, str(r["values"].get("Name") or "").lower()))
+        names = {BATCH_COLUMN["name"], CHILDREN_COLUMN["name"]}
+        return [BATCH_COLUMN, *(c for c in columns if c["name"] not in names), CHILDREN_COLUMN]
     if rec.get("extra") == "deal_roles":  # Multi-Deal Contacts: each Contact's roles on open deals, saved by the check
         reasons = rec.get("reasons") or {}
         for r in records:
@@ -563,6 +563,8 @@ def indicator_records(
         exact=bool(picked)), org_id)
     if rec.get("extra"):
         page["columns"] = _salesforce(db, http, settings, lambda sf: _with_extra(sf, rec, page["columns"], page["records"]), org_id)
+    if rec.get("extra") == "hierarchy":
+        page["sorted_by"] = BATCH_COLUMN["name"]  # the table groups the rows by batch
     notes = rec.get("notes") or {}  # why each value was flagged, saved by the check (e.g. Data Standardization)
     page["cell_notes"] = {r["id"]: notes[r["id"]] for r in page["records"] if r.get("id") in notes}
     return page
