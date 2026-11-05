@@ -70,7 +70,7 @@ const GROUPS: Record<string, string> = {
 // Cards grouped in one area only (the same label elsewhere keeps no heading).
 const AREA_GROUPS: Record<string, Record<string, string>> = {
   // Area 5: its deal cards sit under one Opportunities heading with No Activity and Closed Lost Without a Reason
-  'area-5': { 'Stuck Opportunities': 'Opportunities', 'Missing Next Steps': 'Opportunities', 'Missing Closed Lost reasons': 'Opportunities' },
+  'area-5': { 'Stuck Opportunities': 'Opportunities', 'Missing Next Steps': 'Opportunities' },
 };
 
 function objectOf(label: string, areaId?: string): { group: string; title: string } | null {

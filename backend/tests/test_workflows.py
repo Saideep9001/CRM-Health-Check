@@ -279,7 +279,8 @@ def test_all_workflow_areas(client, sf):
     assert ind["Accounts Without Contacts"] == 30
     assert ind["Opportunities Without Contact Roles"] == 15 and ind["Orphaned Contacts"] == 9
     assert ind["Contacts to Multiple Accounts"] == 0 and ind["Multi-Deal Contacts"] == 1  # the feature is off; Pat is on 2 open deals
-    assert ind["Stuck Opportunities"] == 10 and ind["Missing Next Steps"] == 18 and ind["Missing Closed Lost reasons"] == 6
+    assert ind["Stuck Opportunities"] == 10 and ind["Missing Next Steps"] == 18
+    assert "Missing Closed Lost reasons" not in ind  # removed: Closed Lost Without a Reason covers it
     assert ind["Sales stage guidance gaps"] == 2  # no Path: both open stages unguided
     assert ind["Missing sales activities"] == 1  # Bob owns work but logged nothing
     assert ind["Web-to-Lead issues"] == 1 and ind["Email template availability"] == 2 and ind["Activity capture gaps"] == 22
@@ -299,7 +300,7 @@ def test_all_workflow_areas(client, sf):
     review = names["Inactive Lead Assignment Rules match existing Leads"]
     assert review["severity"] == "low" and review["affectedRecords"] == 4 and "“Old Rule” (4), “Partner Rule” (1)" in review["description"]
     assert "“Big Deal” (Proposal, 90,000)" in names["Stuck deals"]["description"]
-    assert "Loss Reason" in names["Lost deals with no reason"]["description"]
+    assert "Lost deals with no reason" not in names
     assert "Unclear validation error messages" in names
     assert names["Open deals with no contact roles"]["objectName"] == "Opportunity"
     assert names["Contacts can’t be related to multiple Accounts"]["severity"] == "low"
@@ -654,7 +655,7 @@ def test_opportunity_cards_moved_to_area_5(client, sf, monkeypatch):
     # (the fake org has no plural label, so the cards say "Opportunitys"; a real org's say "Opportunities")
     moved = ("No Activity in 6 Months (Opportun", "Closed Lost Without a Reason (Opportun")
     assert [label.startswith(m) for label, m in zip(labels["area-5"][-3:-1], moved)] == [True, True]  # before Sales stage guidance
-    assert labels["area-5"][-4] == "Missing Closed Lost reasons"
+    assert labels["area-5"][:2] == ["Stuck Opportunities", "Missing Next Steps"] and "Missing Closed Lost reasons" not in labels["area-5"]
     assert not any(label.startswith(moved) for label in labels.get("area-1", []))
 
 def test_stale_leads_period_and_status(client, sf):
@@ -699,3 +700,49 @@ def test_stale_leads_period_and_status(client, sf):
     assert client.get(f"{base}/indicator-records", params={**params, "record_type": "x' OR Id != null"}).status_code == 422
     other = client.get(f"{base}/indicator-records", params={"label": "Stuck Queue-Owned Leads", "object": "Lead", "record_type": "none"})
     assert other.status_code == 422
+
+
+# Sales Paths in Setup: an active Channel path (its own sales process, two stages, one guided) and an inactive Master one
+PATH_GUIDANCE = ("<p>Qualify the opportunity and confirm budget.&nbsp;What’s their business?</p>"
+                 "<ul><li>What problems are they trying to solve?</li><li>Why is the timing good for them?</li></ul>")
+
+
+def test_sales_paths_with_stage_guidance(client, sf, monkeypatch):
+    tooling, records = FakeSalesOrg.tooling, FakeSalesOrg.records
+
+    def paths_tooling(q):
+        if q.startswith("SELECT Id, DeveloperName, MasterLabel, SobjectType, IsActive FROM PathAssistant"):
+            return [{"Id": "0Ra000000000002AAA", "DeveloperName": "Master_Path", "MasterLabel": "Master Path", "SobjectType": "Opportunity", "IsActive": False},
+                    {"Id": "0Ra000000000001AAA", "DeveloperName": "Channel_Path", "MasterLabel": "Channel Sales Path", "SobjectType": "Opportunity", "IsActive": True},
+                    {"Id": "0Ra000000000003AAA", "DeveloperName": "Lead_Path", "MasterLabel": "Lead Path", "SobjectType": "Lead", "IsActive": True}]
+        if q == "SELECT Id, Metadata FROM PathAssistant WHERE Id = '0Ra000000000001AAA'":
+            return [{"Metadata": {"recordTypeName": "Opportunity.Channel", "pathAssistantSteps": [
+                {"picklistValueName": "Proposal", "info": PATH_GUIDANCE, "fieldNames": ["Amount", "NextStep"]},
+                {"picklistValueName": "Prospecting", "info": "<p>&nbsp;</p>", "fieldNames": []}]}}]
+        if q == "SELECT Id, Metadata FROM PathAssistant WHERE Id = '0Ra000000000002AAA'":
+            return [{"Metadata": {"recordTypeName": "__MASTER__", "pathAssistantSteps": []}}]
+        if q == "SELECT Id, Name, Metadata FROM BusinessProcess WHERE Id = '019000000000001AAA'":
+            return [{"Name": "Channel Sales Process", "Metadata": {"values": [{"fullName": "Prospecting"}, {"fullName": "Proposal"}]}}]
+        return tooling(q)
+
+    def paths_records(q):
+        if q.startswith("SELECT Name, BusinessProcessId FROM RecordType WHERE SobjectType = 'Opportunity' AND DeveloperName = 'Channel'"):
+            return [{"Name": "Channel", "BusinessProcessId": "019000000000001AAA"}]
+        return records(q)
+
+    monkeypatch.setattr(FakeSalesOrg, "tooling", staticmethod(paths_tooling))
+    monkeypatch.setattr(FakeSalesOrg, "records", staticmethod(paths_records))
+    connect(client)
+    a, _, _ = run(client)
+    body = client.get(f"{API}/assessments/{a['id']}/sales-paths")
+    assert body.status_code == 200, body.text
+    channel, master = body.json()  # active first; the Lead path isn't listed
+    assert (channel["name"], channel["active"], channel["salesProcess"], channel["recordType"]) == ("Channel Sales Path", True, "Channel Sales Process", "Channel")
+    assert (master["name"], master["active"], master["recordType"], master["salesProcess"]) == ("Master Path", False, "Master", None)
+    assert [s["stage"] for s in channel["stages"]] == ["Prospecting", "Proposal"] and (channel["guided"], channel["openStages"]) == (1, 2)
+    prospecting, proposal = channel["stages"]
+    assert not prospecting["available"] and prospecting["details"] == []  # only a blank paragraph: no guidance
+    assert proposal["available"] and proposal["details"] == ["Qualify the opportunity and confirm budget. What’s their business?",
+                                                             "• What problems are they trying to solve?", "• Why is the timing good for them?"]
+    assert proposal["keyFields"][0] == "Amount" and len(proposal["keyFields"]) == 2
+    assert all(not s["available"] for s in master["stages"])

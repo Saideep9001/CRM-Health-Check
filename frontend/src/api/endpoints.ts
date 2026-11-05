@@ -208,8 +208,23 @@ export const findingApi = {
 const filterParam = (filters: DataFilter[]) =>
   filters.length ? JSON.stringify(filters.map(({ field, op, value }) => ({ field, op, value }))) : undefined;
 
+/** One Opportunity Sales Path with every stage of its sales process and that stage's guidance, live from Setup. */
+export type SalesPathData = {
+  id: string;
+  name: string;
+  active: boolean;
+  recordType: string | null;
+  salesProcess: string | null;
+  stages: { stage: string; apiName: string; closed: boolean; available: boolean; details: string[]; keyFields: string[] }[];
+  openStages: number;
+  guided: number;
+};
+
 /** The records one measure ("What we measure") counted, live from Salesforce. */
 export const indicatorApi = {
+  /** Sales stage guidance gaps: the Opportunity Sales Paths, active first. */
+  salesPaths: (assessmentId: string, signal?: AbortSignal) =>
+    http.get<SalesPathData[]>(`/assessments/${encodeURIComponent(assessmentId)}/sales-paths`, {}, signal),
   /** `only` = fields: just the records with a problem in one of them (a flagged value, or an empty key field). */
   /** `period` (No Activity only): "90", "180" or "range:YYYY-MM-DD:YYYY-MM-DD" instead of the health check's 6 months. */
   records: (assessmentId: string, areaId: string, label: string, object: string, cursor: string | null, signal?: AbortSignal, filters: DataFilter[] = [], only: string[] = [], period?: string, queue?: string, fields?: string[], days?: number, recordType?: string) =>

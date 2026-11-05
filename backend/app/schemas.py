@@ -143,6 +143,26 @@ class RuleTarget(ApiModel):
     count: int  # open Leads it owns now
 
 
+class PathStage(ApiModel):
+    stage: str  # the Opportunity stage's label
+    api_name: str
+    closed: bool  # a closed stage (Closed Won / Closed Lost)
+    available: bool  # the stage has "Guidance for Success" text on this Path
+    details: list[str]  # the guidance as Salesforce has it, one line each ("• " = a list item)
+    key_fields: list[str]  # the Path's key fields for the stage
+
+
+class SalesPath(ApiModel):
+    id: str
+    name: str  # the Path's name in Setup
+    active: bool
+    record_type: str | None = None  # the record type it's for ("Master" = every Opportunity without one)
+    sales_process: str | None = None  # that record type's Sales Process
+    stages: list[PathStage]
+    open_stages: int  # stages that aren't closed
+    guided: int  # of them, with guidance
+
+
 class RuleTargetsRule(ApiModel):
     name: str  # the inactive Lead Assignment Rule
     targets: list[str]  # ids of the queues and users it assigns to

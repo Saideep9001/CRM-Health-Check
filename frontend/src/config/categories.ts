@@ -112,7 +112,6 @@ export const DIAGNOSTIC_AREAS: DiagnosticArea[] = [
     indicators: [
       'Stuck Opportunities',
       'Missing Next Steps',
-      'Missing Closed Lost reasons',
       'No Activity in 6 Months (Opportunities)',
       'Closed Lost Without a Reason (Opportunities)',
       'Sales stage guidance gaps',

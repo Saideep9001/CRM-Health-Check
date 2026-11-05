@@ -20,12 +20,13 @@ from ..engine import jobs
 from ..engine.core import in_list, soql_str
 from ..engine.runner import EXECUTABLE_AREA_IDS
 from ..models import AssessmentRow, FindingRow
-from ..salesforce import activity, assignment, explorer, finder, queues, service
+from ..salesforce import activity, assignment, explorer, finder, paths, queues, service
 from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
 from ..schemas import (
     FieldValues,
     QueueCount,
     RuleTargets,
+    SalesPath,
     Assessment,
     AssessmentResults,
     AssessmentStatus,
@@ -697,6 +698,15 @@ def indicator_record_types(
         return sorted(out, key=lambda t: (-t["count"], t["name"].lower()))
 
     return _salesforce(db, http, settings, load, org_id)
+
+
+@router.get("/assessments/{assessment_id}/sales-paths", response_model=list[SalesPath])
+def sales_paths(assessment_id: str, db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep),
+                settings: Settings = Depends(settings_dep)):
+    """Sales stage guidance gaps: the org's Opportunity Sales Paths (active first), each with every stage of its sales process
+    and that stage's "Guidance for Success" and key fields, read live from Salesforce Setup."""
+    row = _get(db, assessment_id)
+    return _salesforce(db, http, settings, paths.sales_paths, row.org_id)
 
 
 @router.get("/assessments/{assessment_id}/areas/{area_id}/indicator-rule-targets", response_model=RuleTargets)

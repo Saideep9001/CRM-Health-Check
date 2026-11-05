@@ -1323,7 +1323,8 @@ def missing_next_steps(ctx: Ctx) -> None:
     )
 
 
-_LOST_REASON = re.compile(r"(lost|loss).*(reason)|reason.*(lost|loss)", re.I)
+_LOST_REASON = re.compile(  # a lost-reason field, by name or label (Area 10)
+    r"(lost|loss).*(reason)|reason.*(lost|loss)", re.I)
 
 
 def opp_no_activity(ctx: Ctx) -> None:
@@ -1334,70 +1335,6 @@ def opp_no_activity(ctx: Ctx) -> None:
 def opp_closed_lost_without_reason(ctx: Ctx) -> None:
     """Closed Lost Without a Reason (Opportunities): lost deals with the loss reason empty (moved here from Area 1)."""
     closed_lost_without_reason(ctx, "Opportunity")
-
-
-def closed_lost_reasons(ctx: Ctx) -> None:
-    fields = ctx.fields("Opportunity")
-    reason = next(
-        (f["name"] for f in fields.values() if f.get("filterable") and (_LOST_REASON.search(f["name"]) or _LOST_REASON.search(f.get("label") or ""))),
-        None,
-    )
-    lost_conds = ("IsClosed = true", "IsWon = false", "CloseDate = LAST_N_DAYS:90")
-    lost = ctx.count("Opportunity", *lost_conds)
-    if reason is None:
-        ctx.metric(
-            "Missing Closed Lost reasons", lost, "count", "lower-better", 40 if lost else 70,
-            how="Opportunities have no field for why a deal was lost, so we count every deal lost (closed and not won) with a close date in the last 90 days: none of them can have a reason.",
-            rule="A fixed score: 40 if any deals were lost in the last 90 days, 70 if none were.",
-            columns=["Name", "StageName", "CloseDate", "Amount", "OwnerId"],
-            order="CloseDate",
-            criteria=[
-                ("Records checked", "Opportunities that are Closed Lost (closed and not won) with a close date in the last 90 days"),
-                ("Field checked", "A lost-reason field (a field whose name or label mentions lost/loss and reason): none exists"),
-                ("What's counted", f"All {lost:,} lost deals, since none can have a reason recorded"),
-                ("Records listed", "Every deal lost in the last 90 days, by close date"),
-            ],
-            records=("Opportunity", *lost_conds),
-        )
-        _setting(
-            ctx,
-            "No field for why deals are lost",
-            f"Opportunities have no “Closed Lost Reason” field, so the reasons behind {lost:,} lost deals in the last 90 days weren’t captured.",
-            "Add a required picklist (e.g. Price, Competitor, No decision, Timing) that must be filled in when a deal is Closed Lost.",
-            severity="high" if lost else "medium",
-            obj="Opportunity",
-        )
-        return
-    n = ctx.count("Opportunity", *lost_conds, f"{reason} = null") if lost else 0
-    score = rate_score(n / lost, 0.5) if lost else 100
-    ctx.metric(
-        "Missing Closed Lost reasons", n, "count", "lower-better", score,
-        how=f"Deals lost (closed and not won) with a close date in the last 90 days where {fields[reason].get('label') or reason} is empty.",
-        rule="100 when every lost deal has a reason, falling evenly to 0 when 50% of lost deals have none.",
-        columns=[reason, "Name", "StageName", "CloseDate", "Amount", "OwnerId"],
-        order="CloseDate",
-        criteria=[
-            ("Records checked", f"{lost:,} Opportunities that are Closed Lost with a close date in the last 90 days"),
-            ("Field checked", f"{fields[reason].get('label') or reason}"),
-            ("Missing", f"{fields[reason].get('label') or reason} is empty"),
-            ("What's counted", f"{n:,} of {lost:,} lost deals ({pct(n, lost):.0f}%) have no reason"),
-            ("Records listed", "Every lost deal with no reason, by close date"),
-        ],
-        records=("Opportunity", *lost_conds, f"{reason} = null"),
-    )
-    ctx.finding(
-        name="Lost deals with no reason",
-        records=("Opportunity", *lost_conds, f"{reason} = null"),
-        fix="/lightning/setup/ObjectManager/Opportunity/ValidationRules/view",
-        score=score,
-        affected=n,
-        description=f"{n:,} of {lost:,} deals lost in the last 90 days ({pct(n, lost):.0f}%) have no {fields[reason].get('label') or reason}.",
-        why="You can’t fix why you lose if you don’t record it.",
-        impact="Repeat losses to the same competitors or objections, with no data to act on.",
-        action=f"Make {fields[reason].get('label') or reason} required when a deal is Closed Lost (a validation rule), and review the reasons monthly.",
-        obj="Opportunity",
-        url=ctx.list_url("Opportunity"),
-    )
 
 
 def stage_guidance(ctx: Ctx) -> None:
@@ -1851,7 +1788,7 @@ AREAS = {
     "area-3": [stuck_queue_leads, inactive_rules, criteria_mismatches, lead_no_activity, stale_leads, overdue_close_dates],
     "area-4": [accounts_without_contacts, hierarchy_chains, inactive_parents, missing_parents,  # Accounts first, then Contacts
                contact_roles, orphaned_contacts, multiple_accounts, multi_deal_contacts],
-    "area-5": [stuck_opportunities, missing_next_steps, closed_lost_reasons, opp_no_activity, opp_closed_lost_without_reason, stage_guidance],
+    "area-5": [stuck_opportunities, missing_next_steps, opp_no_activity, opp_closed_lost_without_reason, stage_guidance],
     "area-6": [missing_sales_activities, web_to_lead, email_templates, activity_capture],
     "area-7": [validation_rules, required_field_gaps, junk_data, layout_usability],
 }
@@ -1873,7 +1810,6 @@ STEP_LABELS = {
     missing_parents: "Looking for missing Parent Accounts",
     stuck_opportunities: "Finding stuck deals",
     missing_next_steps: "Checking next steps on deals",
-    closed_lost_reasons: "Checking why deals were lost",
     opp_no_activity: "Finding deals with no activity in 6 months",
     opp_closed_lost_without_reason: "Finding lost deals with no reason",
     stage_guidance: "Checking sales stage guidance",

@@ -22,6 +22,7 @@ import { useNavigate } from 'react-router-dom';
 import { dataApi, findingApi, indicatorApi } from '@/api/endpoints';
 import { useQuery } from '@tanstack/react-query';
 import { useFindingRecords, useIndicatorRecords, useRole, useUpdateFinding } from '@/api/queries';
+import { SalesPaths } from './SalesPaths';
 import { SEVERITY_COLORS } from '@/components/charts/Charts';
 import { objectLabel } from '@/components/category/DiagnosticAreaCard';
 import { useToast } from '@/context/ToastContext';
@@ -365,6 +366,11 @@ function Records({
   const findingRecords = useFindingRecords(finding?.id ?? null, !useMeasure && !!finding?.recordsAvailable, filters);
   const duplicates = /duplicate/i.test(indicator?.label ?? finding?.name ?? '');
 
+  const pathsCheck = measureAssessmentId ?? finding?.assessmentId ?? null;
+  if (isSalesPaths(indicator, finding) && pathsCheck) {
+    // a setup card: the Sales Paths and each stage's guidance, read live from Salesforce, instead of records
+    return <SalesPaths assessmentId={pathsCheck} />;
+  }
   if (useMeasure) {
     return (
       <>
@@ -510,6 +516,11 @@ function Records({
     </p>
   );
 }
+
+/** Sales stage guidance gaps (and its problems): shown as the Sales Paths and their stages, not records. */
+const isSalesPaths = (indicator: IndicatorValue | null, finding: Finding | null) =>
+  indicator?.label === 'Sales stage guidance gaps' ||
+  ['Sales stages without guidance', 'Sales Path isn’t turned on for Opportunities'].includes(finding?.name ?? '');
 
 /**
  * The one details panel for a problem and the measure behind it: result and score, what we found and measure,
@@ -865,7 +876,7 @@ export function DetailsPanel({
               <FieldsBehind indicator={v} object={initialObject ?? objectOfFieldCard(v.label)} flow={fieldFlow} />
             </Section>
           ) : (
-            <Section icon={<Database className="h-3.5 w-3.5" />} title={finding ? 'The records' : 'The records behind this number'}>
+            <Section icon={<Database className="h-3.5 w-3.5" />} title={isSalesPaths(v, finding) ? 'Sales Paths and stage guidance' : finding ? 'The records' : 'The records behind this number'}>
               <Records area={area} indicator={v} finding={finding} measureAssessmentId={measureAssessmentId} legacy={legacy} initialObject={initialObject}
                 keyFields={empties?.map((f) => f.field)}
                 fieldChoices={(chartKind === 'missing' ? shownScores : chartKind === 'standardization' ? v?.fieldScores : null)?.map((f) => ({ field: f.field, label: f.label, count: f.count })) ?? []}
