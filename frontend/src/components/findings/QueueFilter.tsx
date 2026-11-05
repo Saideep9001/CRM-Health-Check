@@ -81,9 +81,9 @@ export function QueueFilter({
         </InfoTip>
       </span>
       {queues.isLoading ? (
-        <span className="text-xs text-ink-subtle">Loading queues…</span>
+        <span className="text-xs text-ink-subtle">Loading…</span>
       ) : queues.error ? (
-        <span className="text-xs text-bad">Couldn’t load the queues.</span>
+        <span className="text-xs text-bad">Couldn’t load them.</span>
       ) : !list.length ? (
         <span className="text-xs text-ink-subtle">{empty}</span>
       ) : (

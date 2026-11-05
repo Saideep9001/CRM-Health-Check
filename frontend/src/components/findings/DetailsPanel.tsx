@@ -337,7 +337,10 @@ function Records({
   const byRule = indicator?.label === 'Inactive Lead Assignment Rules';
   // Stale Leads: a period like No Activity's, and the Status the Leads are stuck in
   const stale = indicator?.label === 'Stale Leads';
-  const byQueue = stuckQueue || byRule || stale;
+  // Area 5 Opportunity cards: the sales stages above the table, to see one stage's deals
+  const byStage =
+    object === 'Opportunity' && (['Stuck Opportunities', 'Missing Next Steps'].includes(indicator?.label ?? '') || noActivity);
+  const byQueue = stuckQueue || byRule || stale || byStage;
   const [queueDays, setQueueDays] = useState(3);
   const [queue, setQueue] = useState<PickedQueue | undefined>();
   // Stale Leads: only one record type's Leads (undefined = all)
@@ -439,6 +442,11 @@ function Records({
           // Stale Leads: Record Type, then the Status the Leads are stuck in (of that record type), as drop-downs
           <StaleFilters assessmentId={measureAssessmentId!} areaId={area.id} label={indicator!.label} object={object!} period={period}
             recordType={recordType} onRecordType={(rt) => { setRecordType(rt); setQueue(undefined); }} status={queue} onStatus={setQueue} />
+        )}
+        {byStage && (
+          <QueueFilter key={`${object}-${indicator!.label}`} assessmentId={measureAssessmentId!} areaId={area.id} label={indicator!.label} object={object!} value={queue} period={period} onChange={setQueue}
+            title="Stage" tip="The sales stages these deals are in, with how many deals in each (in the stages’ order). Pick one to see only its deals."
+            empty="No deals to show by stage." />
         )}
         {byRule && (
           // Inactive Lead Assignment Rules: the inactive rules, then who they assign to, then that owner's Leads

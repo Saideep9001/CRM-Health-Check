@@ -156,4 +156,4 @@ def sales_paths(sf: SalesforceClient) -> list[dict]:
             master = p["_rt"] == "__MASTER__"
             out.append(entry(p["Id"], "Master (no record type)" if master else (p.get("MasterLabel") or "Sales Path"), True, None,
                              ["Master"] if master else ([p["_rt"]] if p["_rt"] else []), [p]))
-    return sorted(out, key=lambda x: (not x["active"], x["name"].lower()))
+    return sorted(out, key=lambda x: (not x["processActive"], not x["active"], x["name"].lower()))  # active processes first

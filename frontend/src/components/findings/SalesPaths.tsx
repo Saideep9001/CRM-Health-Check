@@ -63,7 +63,7 @@ export function SalesPaths({ assessmentId }: { assessmentId: string }) {
         <span className="mr-1 inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">
           <Route className="h-3.5 w-3.5" /> Sales Processes
           <InfoTip label="About Sales Processes">
-            Every Opportunity Sales Process in Setup. Green: it has an active Sales Path. Red: its Path is inactive, or it has none. Pick one to see each of its stages with the guidance reps see.
+            Every Opportunity Sales Process in Setup. Green: the Sales Process is active. Red: it’s inactive. A tag shows when it has no Sales Path, or its Path is inactive. Pick one to see each of its stages with the guidance reps see.
           </InfoTip>
         </span>
         {list.map((p) => {
@@ -74,15 +74,19 @@ export function SalesPaths({ assessmentId }: { assessmentId: string }) {
               type="button"
               aria-pressed={on}
               onClick={() => setPicked(p.id)}
-              title={`${p.pathName ? `Sales Path: ${p.pathName} (${p.pathActive ? 'active' : 'inactive'})` : 'No Sales Path'}${p.processActive ? '' : ' · the Sales Process is inactive'} · ${p.guided} of ${p.openStages} open stages have guidance`}
+              title={`Sales Process ${p.processActive ? 'active' : 'inactive'} · ${p.pathName ? `Sales Path: ${p.pathName} (${p.pathActive ? 'active' : 'inactive'})` : 'No Sales Path'} · ${p.guided} of ${p.openStages} open stages have guidance`}
               className={cx(
                 'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition',
-                p.active ? 'border-good/40 bg-good-soft text-good' : 'border-bad/40 bg-bad-soft text-bad',
+                p.processActive ? 'border-good/40 bg-good-soft text-good' : 'border-bad/40 bg-bad-soft text-bad',
                 on ? 'font-semibold ring-2 ring-brand ring-offset-1' : 'hover:brightness-95',
               )}
             >
-              <span className={cx('h-1.5 w-1.5 rounded-full', p.active ? 'bg-good' : 'bg-bad')} aria-hidden="true" />
+              <span className={cx('h-1.5 w-1.5 rounded-full', p.processActive ? 'bg-good' : 'bg-bad')} aria-hidden="true" />
               {p.name}
+              {!p.pathActive && (
+                // the Sales Process is fine, but reps see no guidance: no Path for it, or its Path is turned off
+                <span className="rounded-full bg-surface/80 px-1.5 text-[10px] font-medium text-ink-muted">{p.pathName ? 'Path inactive' : 'No Path'}</span>
+              )}
               <span className="rounded-full bg-surface/70 px-1.5 tabular-nums">
                 {p.guided}/{p.openStages}
               </span>
@@ -95,7 +99,9 @@ export function SalesPaths({ assessmentId }: { assessmentId: string }) {
         <div className="overflow-hidden rounded-xl border border-line">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-line bg-muted/40 px-4 py-2.5 text-xs text-ink-muted">
             <span className="text-sm font-semibold text-ink">{path.name}</span>
-            {!path.processActive && <span className="rounded-full bg-muted px-2 py-0.5 font-medium">Sales Process inactive</span>}
+            <span className={cx('rounded-full px-2 py-0.5 font-medium', path.processActive ? 'bg-good-soft text-good' : 'bg-bad-soft text-bad')}>
+              {path.processActive ? 'Active' : 'Inactive'}
+            </span>
             <span>
               Sales Path:{' '}
               {path.pathName ? (

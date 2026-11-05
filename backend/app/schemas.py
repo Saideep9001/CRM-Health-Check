@@ -156,7 +156,7 @@ class SalesPath(ApiModel):
     id: str  # the Sales Process (or, for a Master Path, the Path)
     name: str  # the Sales Process's name in Setup
     active: bool  # it has an active Sales Path
-    process_active: bool = True  # the Sales Process itself is active
+    process_active: bool = True  # the Sales Process itself is active (the chip's colour)
     path_name: str | None = None  # the Sales Path shown for it (None = no Path)
     path_active: bool | None = None
     record_type: str | None = None  # the record types that use it ("Master" = Opportunities with no record type)

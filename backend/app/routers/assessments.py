@@ -349,10 +349,19 @@ def finding_records_csv(
     return _records_csv(db, http, settings, org_id, row.records_object, row.records_where, row.name, filters=_filters(filters))
 
 
+# Area 5 Opportunity cards whose records can be narrowed to one sales stage (the Stage chips above the table)
+STAGE_CARDS = {"Stuck Opportunities", "Missing Next Steps"}
+
+
+def _by_stage(label: str, rec: dict) -> bool:
+    return rec.get("object") == "Opportunity" and (label in STAGE_CARDS or label.startswith("No Activity"))
+
+
 def _by_queue(rec: dict) -> bool:
-    """Can this measure's records be narrowed to one Lead queue (Stuck Queue-Owned Leads, Inactive Lead Assignment Rules)?"""
+    """Can this measure's records be narrowed to one Lead queue (Stuck Queue-Owned Leads, Inactive Lead Assignment Rules), one
+    Status (Stale Leads) or one Stage (Stuck Opportunities, Missing Next Steps, No Activity in 6 Months on Opportunities)?"""
     return (rec.get("extra") == "days_in_queue" or bool(rec.get("by_queue")) or rec.get("inactive_queues") is not None
-            or bool(rec.get("by_status")))
+            or bool(rec.get("by_status")) or bool(rec.get("by_stage")))
 
 
 # one role per line, the last column, frozen so it stays in view while the table scrolls sideways
@@ -507,6 +516,8 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
     rec = next((r for r in recs if obj in (None, r.get("object"))), None)
     if rec is None:
         raise HTTPException(404, "This measure isn’t about specific records.")
+    if _by_stage(label, rec):  # works on checks saved before the Stage chips too
+        rec = {**rec, "by_stage": True}
     if period:
         stale = rec.get("stale_days") is not None  # Stale Leads: its own days and basis, saved by the check
         if not (label.startswith("No Activity") or stale) or not rec.get("where"):
@@ -538,10 +549,12 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
     if queue:
         if not _by_queue(rec):
             raise HTTPException(422, "Only the Stuck Queue-Owned Leads and Inactive Lead Assignment Rules measures take a queue.")
-        if rec.get("by_status"):  # Stale Leads: the Leads stuck in one Status
-            if not re.fullmatch(r"[\w .,&/()'-]{1,80}", queue):
-                raise HTTPException(422, "Unknown Status.")
-            rec = {**rec, "where": f"{explorer.and_part(rec['where'])} AND Status = {soql_str(queue)}"}
+        if rec.get("by_status") or rec.get("by_stage"):  # Stale Leads: one Status; the Opportunity cards: one Stage
+            field = "StageName" if rec.get("by_stage") else "Status"
+            if not re.fullmatch(r"[\w .,&/()'%+-]{1,80}", queue):
+                raise HTTPException(422, f"Unknown {'Stage' if field == 'StageName' else 'Status'}.")
+            cond = f"{field} = {soql_str(queue)}"
+            rec = {**rec, "where": f"{explorer.and_part(rec['where'])} AND {cond}" if rec.get("where") else cond}
         elif rec.get("inactive_queues") is not None:  # Inactive Lead Assignment Rules: an inactive queue, or a rule's queues and users
             picked = [q.strip() for q in queue.split(",") if q.strip()]
             allowed = _rule_owner_ids(rec)
@@ -626,6 +639,19 @@ def indicator_queues(
     if not _by_queue(rec):
         raise HTTPException(422, "Only the Stuck Queue-Owned Leads and Inactive Lead Assignment Rules measures are listed by queue.")
     where = f" WHERE {rec['where']}" if rec.get("where") else ""
+    if rec.get("by_stage"):  # Stuck Opportunities, Missing Next Steps, No Activity: how many deals in each Stage, in the stages' order
+        def stages(sf):
+            rows = sf.query(f"SELECT StageName s, COUNT(Id) c FROM {rec['object']}{where} GROUP BY StageName LIMIT 200").get("records", [])
+            counts = {r["s"]: int(r.get("c") or 0) for r in rows if r.get("s")}
+            try:
+                order = [s.get("ApiName") for s in sf.query("SELECT ApiName, SortOrder FROM OpportunityStage ORDER BY SortOrder").get("records", [])]
+            except SalesforceAuthExpired:
+                raise
+            except SalesforceError:
+                order = []
+            rank = {n: i for i, n in enumerate(order)}
+            return [{"id": n, "name": n, "count": c} for n, c in sorted(counts.items(), key=lambda x: (rank.get(x[0], len(rank)), x[0]))]
+        return _salesforce(db, http, settings, stages, org_id)
     if rec.get("by_status"):  # Stale Leads: how many Leads are stuck in each Status, most first
         def statuses(sf):
             rows = sf.query(f"SELECT Status s, COUNT(Id) c FROM {rec['object']}{where} GROUP BY Status ORDER BY COUNT(Id) DESC LIMIT 100").get("records", [])

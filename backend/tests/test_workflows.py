@@ -201,6 +201,8 @@ class FakeSalesOrg(FakeSalesforce):
                     {"Id": "012000000000003AAA", "Name": "Old", "IsActive": False}]
         if q.startswith("SELECT RecordTypeId r, COUNT(Id) c FROM Lead"):
             return [{"r": "012000000000002AAA", "c": 7}, {"r": None, "c": 2}]
+        if q.startswith("SELECT StageName s, COUNT(Id) c FROM Opportunity"):  # the Stage chips
+            return [{"s": "Proposal", "c": 3}, {"s": "Prospecting", "c": 2}]
         if q.startswith("SELECT Id, Name FROM Account WHERE Id IN"):  # the top Accounts' names
             return [{"Id": "001000000000001", "Name": "Account A"}] if "'001000000000001'" in q else []
         if "FROM User WHERE Username IN" in q:  # who inactive rules assign to, by username
@@ -743,7 +745,7 @@ def test_sales_paths_with_stage_guidance(client, sf, monkeypatch):
     a, _, _ = run(client)
     body = client.get(f"{API}/assessments/{a['id']}/sales-paths")
     assert body.status_code == 200, body.text
-    channel, direct, master = body.json()  # every Sales Process, those with an active Path first; the Lead path isn't listed
+    channel, master, direct = body.json()  # every Sales Process, active ones first (the inactive Direct one last); no Lead path
     assert (channel["name"], channel["active"], channel["pathName"], channel["recordType"]) == ("Channel Sales Process", True, "Channel Sales Path", "Channel, Partner")
     assert (direct["name"], direct["active"], direct["pathName"], direct["processActive"]) == ("Direct Sales Process", False, None, False)
     assert [(s["stage"], s["available"]) for s in direct["stages"]] == [("Proposal", False)]  # no Path: no guidance
@@ -756,3 +758,20 @@ def test_sales_paths_with_stage_guidance(client, sf, monkeypatch):
                                                              "• What problems are they trying to solve?", "• Why is the timing good for them?"]
     assert proposal["keyFields"][0] == "Amount" and len(proposal["keyFields"]) == 2
     assert all(not s["available"] for s in master["stages"])
+
+
+def test_stage_chips_on_area_5_opportunity_cards(client, sf):
+    connect(client)
+    a, _, _ = run(client)
+    base = f"{API}/assessments/{a['id']}/areas/area-5"
+    for label in ("Stuck Opportunities", "Missing Next Steps"):
+        params = {"label": label, "object": "Opportunity"}
+        chips = client.get(f"{base}/indicator-queues", params=params)
+        assert chips.status_code == 200, chips.text
+        assert [(c["name"], c["count"]) for c in chips.json()] == [("Prospecting", 2), ("Proposal", 3)]  # in the stages' order
+        grouped = next(q for q in reversed(sf.soql) if q.startswith("SELECT StageName s, COUNT(Id) c FROM Opportunity"))
+        assert "IsClosed = false" in grouped and "GROUP BY StageName" in grouped
+        assert client.get(f"{base}/indicator-records", params={**params, "queue": "Proposal"}).status_code == 200
+        q = next(q for q in reversed(sf.soql) if " FROM Opportunity" in q and "StageName = " in q)
+        assert "AND StageName = 'Proposal'" in q
+        assert client.get(f"{base}/indicator-records", params={**params, "queue": "x' OR Id != null --"}).status_code == 422
