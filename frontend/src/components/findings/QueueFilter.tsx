@@ -45,6 +45,7 @@ export function QueueFilter({
   object,
   value,
   days,
+  period,
   onChange,
   title = 'Lead queues',
   tip,
@@ -57,6 +58,8 @@ export function QueueFilter({
   value: PickedQueue | undefined;
   /** Stuck Queue-Owned Leads: the days-in-queue threshold picked (the counts follow it). */
   days?: number;
+  /** Stale Leads: the period picked on the card (the counts follow it). */
+  period?: string;
   onChange: (queue: PickedQueue | undefined) => void;
   /** The chips' heading, what it means, and what to say when there are none. */
   title?: string;
@@ -64,8 +67,8 @@ export function QueueFilter({
   empty?: string;
 }) {
   const queues = useQuery({
-    queryKey: ['indicator-queues', assessmentId, areaId, label, object, days],
-    queryFn: ({ signal }) => indicatorApi.queues(assessmentId, areaId, label, object, signal, days),
+    queryKey: ['indicator-queues', assessmentId, areaId, label, object, days, period],
+    queryFn: ({ signal }) => indicatorApi.queues(assessmentId, areaId, label, object, signal, days, period),
     staleTime: 60_000,
   });
   const list = queues.data ?? [];

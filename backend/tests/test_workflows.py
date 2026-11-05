@@ -633,3 +633,29 @@ def test_lead_activity_cards_in_area_3(client, sf, monkeypatch):
     assert labels[-2:] == ["No Activity in 6 Months (Leads)", "Stale Leads"]  # moved from Area 1, and Stale Leads added
     assert not any(i["label"] == "No Activity in 6 Months (Leads)" for x in res["areas"] if x["areaId"] == "area-1" for i in x["indicators"])
     assert {"Open Leads with no activity in 6 months", "Open Leads stuck in the same status for 14+ days"} <= {f["name"] for f in findings}
+
+
+def test_stale_leads_period_and_status(client, sf):
+    connect(client)
+    a, _, _ = run(client)
+    base = f"{API}/assessments/{a['id']}/areas/area-3"
+    params = {"label": "Stale Leads", "object": "Lead"}
+    status = "'Status' AND CreatedDate"
+    # another period: Status unchanged for 90 days instead of the check's 14
+    assert client.get(f"{base}/indicator-records", params={**params, "period": "90"}).status_code == 200
+    q = _lead_query(sf)
+    assert "CreatedDate < LAST_N_DAYS:90" in q and f"{status} = LAST_N_DAYS:90" in q and "LAST_N_DAYS:14" not in q
+    # dates: no Status change between them, on Leads created before the first
+    assert client.get(f"{base}/indicator-records", params={**params, "period": "range:2026-01-01:2026-03-31"}).status_code == 200
+    q = _lead_query(sf)
+    assert "CreatedDate < 2026-01-01T00:00:00Z" in q
+    assert f"{status} >= 2026-01-01T00:00:00Z AND CreatedDate < 2026-04-01T00:00:00Z" in q
+    assert client.get(f"{base}/indicator-records", params={**params, "period": "45"}).status_code == 422
+    # the Status chips, for the period picked, and one Status's Leads
+    statuses = client.get(f"{base}/indicator-queues", params={**params, "period": "90"})
+    assert statuses.status_code == 200
+    grouped = next(q for q in reversed(sf.soql) if q.startswith("SELECT Status s, COUNT(Id) c FROM Lead"))
+    assert "LAST_N_DAYS:90" in grouped and "GROUP BY Status" in grouped
+    assert client.get(f"{base}/indicator-records", params={**params, "queue": "Working - Contacted"}).status_code == 200
+    assert "AND Status = 'Working - Contacted'" in _lead_query(sf)
+    assert client.get(f"{base}/indicator-records", params={**params, "queue": "New' OR Id != null --"}).status_code == 422

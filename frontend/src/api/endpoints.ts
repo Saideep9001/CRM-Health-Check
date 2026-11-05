@@ -219,10 +219,10 @@ export const indicatorApi = {
       signal,
     ),
   /** Stuck Queue-Owned Leads: every Lead queue, with how many of its Leads sit in each (for the Queue filter). */
-  queues: (assessmentId: string, areaId: string, label: string, object: string, signal?: AbortSignal, days?: number) =>
+  queues: (assessmentId: string, areaId: string, label: string, object: string, signal?: AbortSignal, days?: number, period?: string) =>
     http.get<{ id: string; name: string; count: number; active?: boolean | null }[]>(
       `/assessments/${encodeURIComponent(assessmentId)}/areas/${encodeURIComponent(areaId)}/indicator-queues`,
-      { label, object, days },
+      { label, object, days, period },
       signal,
     ),
   /** Inactive Lead Assignment Rules: each inactive rule and who it assigns to (queues and users), with live counts. */

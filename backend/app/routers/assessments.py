@@ -17,7 +17,7 @@ from ..db import get_db
 from ..deps import http_dep, settings_dep
 from ..engine.combine import combined_view
 from ..engine import jobs
-from ..engine.core import in_list
+from ..engine.core import in_list, soql_str
 from ..engine.runner import EXECUTABLE_AREA_IDS
 from ..models import AssessmentRow, FindingRow
 from ..salesforce import activity, assignment, explorer, finder, queues, service
@@ -350,7 +350,8 @@ def finding_records_csv(
 
 def _by_queue(rec: dict) -> bool:
     """Can this measure's records be narrowed to one Lead queue (Stuck Queue-Owned Leads, Inactive Lead Assignment Rules)?"""
-    return rec.get("extra") == "days_in_queue" or bool(rec.get("by_queue")) or rec.get("inactive_queues") is not None
+    return (rec.get("extra") == "days_in_queue" or bool(rec.get("by_queue")) or rec.get("inactive_queues") is not None
+            or bool(rec.get("by_status")))
 
 
 # one role per line, the last column, frozen so it stays in view while the table scrolls sideways
@@ -505,10 +506,13 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
     if rec is None:
         raise HTTPException(404, "This measure isn’t about specific records.")
     if period:
-        if not label.startswith("No Activity") or not rec.get("where"):
-            raise HTTPException(422, "Only the No Activity measures take a period.")
+        stale = rec.get("stale_days") is not None  # Stale Leads: its own days and basis, saved by the check
+        if not (label.startswith("No Activity") or stale) or not rec.get("where"):
+            raise HTTPException(422, "Only the No Activity and Stale Leads measures take a period.")
         try:
-            rec = {**rec, "where": activity.with_period(rec["where"], period)}
+            where = (activity.stale_with_period(rec["where"], int(rec["stale_days"]), bool(rec.get("stale_history")), period) if stale
+                     else activity.with_period(rec["where"], period))
+            rec = {**rec, "where": where}
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
     if rec.get("queue_days") is not None:  # Stuck Queue-Owned Leads: the Leads past the threshold picked on the card
@@ -522,7 +526,11 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
     if queue:
         if not _by_queue(rec):
             raise HTTPException(422, "Only the Stuck Queue-Owned Leads and Inactive Lead Assignment Rules measures take a queue.")
-        if rec.get("inactive_queues") is not None:  # Inactive Lead Assignment Rules: an inactive queue, or a rule's queues and users
+        if rec.get("by_status"):  # Stale Leads: the Leads stuck in one Status
+            if not re.fullmatch(r"[\w .,&/()'-]{1,80}", queue):
+                raise HTTPException(422, "Unknown Status.")
+            rec = {**rec, "where": f"{explorer.and_part(rec['where'])} AND Status = {soql_str(queue)}"}
+        elif rec.get("inactive_queues") is not None:  # Inactive Lead Assignment Rules: an inactive queue, or a rule's queues and users
             picked = [q.strip() for q in queue.split(",") if q.strip()]
             allowed = _rule_owner_ids(rec)
             if not picked or len(picked) > 100 or any(q not in allowed for q in picked):
@@ -593,16 +601,22 @@ def indicator_queues(
     label: str = Query(..., max_length=200),
     object: str | None = Query(None, max_length=80),
     days: int | None = Query(None, ge=0, le=7),
+    period: str | None = Query(None, max_length=40, description="Stale Leads: the period picked on the card"),
     db: Session = Depends(get_db),
     http: httpx.Client = Depends(http_dep),
     settings: Settings = Depends(settings_dep),
 ):
     """Every queue that can own Leads, with how many of the measure's Leads sit in each (0 for the others), most first, for
-    its Queue filter (Stuck Queue-Owned Leads)."""
-    rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, object, days=days)
+    its Queue filter (Stuck Queue-Owned Leads); for Stale Leads, each Status the Leads are stuck in."""
+    rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, object, period=period, days=days)
     if not _by_queue(rec):
         raise HTTPException(422, "Only the Stuck Queue-Owned Leads and Inactive Lead Assignment Rules measures are listed by queue.")
     where = f" WHERE {rec['where']}" if rec.get("where") else ""
+    if rec.get("by_status"):  # Stale Leads: how many Leads are stuck in each Status, most first
+        def statuses(sf):
+            rows = sf.query(f"SELECT Status s, COUNT(Id) c FROM {rec['object']}{where} GROUP BY Status ORDER BY COUNT(Id) DESC LIMIT 100").get("records", [])
+            return [{"id": r["s"], "name": r["s"], "count": int(r.get("c") or 0)} for r in rows if r.get("s")]
+        return _salesforce(db, http, settings, statuses, org_id)
     if rec.get("inactive_queues") is not None:  # Inactive Lead Assignment Rules: only the queues out of the active routing
         def count(sf):
             out = [{**q, "count": int(sf.query(f"SELECT COUNT() FROM {rec['object']}{where} AND OwnerId = '{q['id']}'").get("totalSize") or 0)}

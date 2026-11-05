@@ -334,7 +334,9 @@ function Records({
   const stuckQueue = indicator?.label === 'Stuck Queue-Owned Leads';
   // Stuck Queue-Owned Leads and Inactive Lead Assignment Rules: the org's Lead queues above the table, to pick one.
   const byRule = indicator?.label === 'Inactive Lead Assignment Rules';
-  const byQueue = stuckQueue || byRule;
+  // Stale Leads: a period like No Activity's, and the Status the Leads are stuck in
+  const stale = indicator?.label === 'Stale Leads';
+  const byQueue = stuckQueue || byRule || stale;
   const [queueDays, setQueueDays] = useState(3);
   const [queue, setQueue] = useState<PickedQueue | undefined>();
   // Areas 3 and 4: the fields picked to show as the table's columns (null = the measure's own).
@@ -424,6 +426,11 @@ function Records({
         {stuckQueue && (
           <QueueFilter assessmentId={measureAssessmentId!} areaId={area.id} label={indicator!.label} object={object!} value={queue} days={days} onChange={setQueue} />
         )}
+        {stale && (
+          <QueueFilter assessmentId={measureAssessmentId!} areaId={area.id} label={indicator!.label} object={object!} value={queue} period={period} onChange={setQueue}
+            title="Stuck in Status" tip="The Status each stale Lead is stuck in, with how many Leads (for the period picked on the table). Pick one to see only those Leads."
+            empty="No stale Leads in this period." />
+        )}
         {byRule && (
           // Inactive Lead Assignment Rules: the inactive rules, then who they assign to, then that owner's Leads
           <RuleTargetFilter key={`${object}-${indicator!.label}`} assessmentId={measureAssessmentId!} areaId={area.id} label={indicator!.label} object={object!} value={queue} onChange={setQueue} />
@@ -440,7 +447,11 @@ function Records({
           }
           grouped={duplicates}
           csvUrl={indicatorApi.csvUrl(measureAssessmentId!, area.id, indicator!.label, object!, filters, only, period, queue?.id, cols, days)}
-          toolbar={noActivity ? <ActivityPeriod key={`${object}-${indicator!.label}`} onChange={setPeriod} /> : undefined}
+          toolbar={
+            noActivity ? <ActivityPeriod key={`${object}-${indicator!.label}`} onChange={setPeriod} />
+              : stale ? <ActivityPeriod key={`${object}-${indicator!.label}`} onChange={setPeriod} own="30" what="No status change" />
+                : undefined
+          }
           filters={filters}
           onFiltersChange={setFilters}
           keyFields={missing && only.length ? only : keyFields}

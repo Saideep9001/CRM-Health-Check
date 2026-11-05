@@ -116,6 +116,8 @@ def test_no_activity_records_take_another_period(client, sf):
     assert client.get(f"{base}/indicator-records", params={**params, "period": "90"}).status_code == 200
     q = sf.soql[-1]
     assert "LastModifiedDate < LAST_N_DAYS:90" in q and "LAST_N_DAYS:180" not in q  # this fake Account has no activity date
+    assert client.get(f"{base}/indicator-records", params={**params, "period": "30"}).status_code == 200  # 1 month
+    assert "LastModifiedDate < LAST_N_DAYS:30" in sf.soql[-1]
 
     rng = "range:2024-01-15:2024-03-31"  # last activity between these days, both included
     assert client.get(f"{base}/indicator-values", params={**params, "field": "Industry", "period": rng}).status_code == 200

@@ -15,7 +15,7 @@ from functools import lru_cache
 from ..salesforce import duplicates as dupes
 from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
 from . import standards
-from .core import Ctx, FindingDraft, Unavailable, pct, range_score, rate_score
+from .core import Ctx, FindingDraft, Metric, Unavailable, pct, range_score, rate_score
 
 log = logging.getLogger(__name__)
 
@@ -677,7 +677,7 @@ def _loss_reason_field(ctx: Ctx) -> str | None:
 
 def _without(ctx: Ctx, label: str, cond: str, *, base: tuple[str, ...], counted: str, checked: str, fine: str, why: str, impact: str,
              action: str, fix: str, name: str, columns: list[str], bad: float = 0.5, obj: str = "Opportunity",
-             extra: list[tuple[str, str]] | None = None) -> None:
+             extra: list[tuple[str, str]] | None = None) -> Metric:
     """A card: how many of the `base` records of `obj` match `cond`, scored, raising a problem whenever any do."""
     total = ctx.count(obj, *base)
     n = ctx.count(obj, *base, cond) if total else 0
@@ -713,6 +713,7 @@ def _without(ctx: Ctx, label: str, cond: str, *, base: tuple[str, ...], counted:
         fix=fix,
         measure=label,
     )
+    return m
 
 
 def closed_lost_without_reason(ctx: Ctx, obj: str = "Opportunity") -> None:
@@ -774,6 +775,7 @@ def stale_leads(ctx: Ctx, obj: str = "Lead") -> None:
     last change of any kind), created before that."""
     days = int(ctx.scope.stale_lead_days)
     older = f"CreatedDate < LAST_N_DAYS:{days}"
+    history = True
     try:  # Status tracked in Lead History: the Leads whose Status changed recently aren't stale
         ctx.count("Lead", "Id IN (SELECT LeadId FROM LeadHistory WHERE Field = 'Status')")
         moved = lambda n: f"Id NOT IN (SELECT LeadId FROM LeadHistory WHERE Field = 'Status' AND CreatedDate = LAST_N_DAYS:{n})"  # noqa: E731
@@ -782,11 +784,12 @@ def stale_leads(ctx: Ctx, obj: str = "Lead") -> None:
     except SalesforceAuthExpired:
         raise
     except SalesforceError:  # no history to go by: no change of any kind
+        history = False
         moved = lambda n: f"LastModifiedDate < LAST_N_DAYS:{n}"  # noqa: E731
         how = "The Lead hasn’t changed at all (Status changes aren’t tracked in Lead History, so its last change is used)"
         counted = f"Open Leads not changed at all in the last {days} days"
     by_age = [(n, ctx.count("Lead", *BASE_CONDS["Lead"], f"CreatedDate < LAST_N_DAYS:{n}", moved(n))) for n in (30, 60, 90)]
-    _without(
+    m = _without(
         ctx, "Stale Leads", f"{older} AND {moved(days)}", base=BASE_CONDS["Lead"], obj="Lead",
         counted=counted,
         checked="open Leads", fine="moves forward",
@@ -799,6 +802,8 @@ def stale_leads(ctx: Ctx, obj: str = "Lead") -> None:
         extra=[("Stale means", f"{how} for {days} days or more (the check's setting), on Leads created before then."),
                ("By how long", "; ".join(f"{n}+ days: {c:,}" for n, c in by_age))],
     )
+    if m.records:  # the table can show another period (1, 3, 6 months or dates) and one Status at a time
+        m.records[0].update({"stale_days": days, "stale_history": history, "by_status": True})
 
 
 # ---------------- one step per object (cards for an object stay together)

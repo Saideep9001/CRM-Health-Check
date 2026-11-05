@@ -8,30 +8,37 @@ const ago = (months: number) => {
   return day(d);
 };
 
-/** The period a No Activity table covers: no activity in the last 6 months (the health check's own) or 3, or the last
- *  activity between two picked dates. `onChange` gets the API's `period`: undefined (6 months), "90", or
- *  "range:YYYY-MM-DD:YYYY-MM-DD". */
-export function ActivityPeriod({ onChange }: { onChange: (period: string | undefined) => void }) {
+type Choice = '30' | '90' | '180' | 'custom';
+
+/** The period a No Activity (or Stale Leads) table covers: nothing in the last 1, 3 or 6 months, or between two picked
+ *  dates. `own` is the card's own period (sent as undefined); `onChange` gets the API's `period`: undefined, "30", "90",
+ *  "180" or "range:YYYY-MM-DD:YYYY-MM-DD". `what` names the dates ("Last activity", "No status change"). */
+export function ActivityPeriod({ onChange, own = '180', what = 'Last activity' }: {
+  onChange: (period: string | undefined) => void;
+  own?: '30' | '90' | '180';
+  what?: string;
+}) {
   const today = day(new Date());
-  const [choice, setChoice] = useState<'180' | '90' | 'custom'>('180');
+  const [choice, setChoice] = useState<Choice>(own);
   const [from, setFrom] = useState(ago(12));
   const [to, setTo] = useState(ago(6));
   const valid = (f: string, t: string) => !!f && !!t && f <= t && f <= today;
-  const apply = (c: typeof choice, f = from, t = to) => {
+  const apply = (c: Choice, f = from, t = to) => {
     setChoice(c);
     if (c === 'custom' && !valid(f, t)) return; // keep showing the last good period until both dates make sense
-    onChange(c === '180' ? undefined : c === '90' ? '90' : `range:${f}:${t}`);
+    onChange(c === own ? undefined : c === 'custom' ? `range:${f}:${t}` : c);
   };
   return (
     <span className="inline-flex flex-wrap items-center gap-1.5 text-xs text-ink-muted">
       <select className="input h-7 w-auto py-0 text-xs" value={choice} onChange={(e) => apply(e.target.value as typeof choice)} aria-label="Period">
-        <option value="180">Last 6 months</option>
+        <option value="30">Last 1 month</option>
         <option value="90">Last 3 months</option>
+        <option value="180">Last 6 months</option>
         <option value="custom">Custom dates…</option>
       </select>
       {choice === 'custom' && (
         <>
-          <span title="Records whose last activity falls between these dates (both included)">Last activity from</span>
+          <span title="Between these dates (both included)">{what} from</span>
           <input
             type="date"
             className="input h-7 w-auto py-0 text-xs"
@@ -41,7 +48,7 @@ export function ActivityPeriod({ onChange }: { onChange: (period: string | undef
               setFrom(e.target.value);
               apply('custom', e.target.value, to);
             }}
-            aria-label="Last activity from"
+            aria-label={`${what} from`}
           />
           <span>to</span>
           <input
@@ -54,7 +61,7 @@ export function ActivityPeriod({ onChange }: { onChange: (period: string | undef
               setTo(e.target.value);
               apply('custom', from, e.target.value);
             }}
-            aria-label="Last activity to"
+            aria-label={`${what} to`}
           />
           {!valid(from, to) && <span className="text-bad">From must be on or before To</span>}
         </>

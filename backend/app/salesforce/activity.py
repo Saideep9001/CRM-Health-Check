@@ -46,9 +46,18 @@ def with_period(where: str, period: str) -> str:
     time), or "range:YYYY-MM-DD:YYYY-MM-DD" (the last activity fell between those days, both included). Only the
     engine's `LAST_N_DAYS:180` conditions change."""
     if period.isdigit():
-        if int(period) not in (90, 180):
-            raise ValueError("Pick the last 3 or 6 months, or dates.")
+        if int(period) not in (30, 90, 180):
+            raise ValueError("Pick the last 1, 3 or 6 months, or dates.")
         return where.replace("LAST_N_DAYS:180", f"LAST_N_DAYS:{period}")
+    start, after = _range(period)
+    # LastActivityDate is a date; LastModifiedDate and CreatedDate are date-times.
+    at = lambda f, d: d.isoformat() if f == "LastActivityDate" else f"{d.isoformat()}T00:00:00Z"  # noqa: E731
+    where = re.sub(r"\((\w+) = null OR \1 < LAST_N_DAYS:180\)", lambda mt: f"({mt.group(1)} >= {at(mt.group(1), start)} AND {mt.group(1)} < {at(mt.group(1), after)})", where)
+    return re.sub(r"\b(\w+) < LAST_N_DAYS:180\b", lambda mt: f"{mt.group(1)} < {at(mt.group(1), after)}", where)  # created by then
+
+
+def _range(period: str) -> tuple[date, date]:
+    """(first day, the day after the last) of "range:YYYY-MM-DD:YYYY-MM-DD"."""
     m = re.fullmatch(r"range:(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2})", period)
     try:
         start, end = (date.fromisoformat(m.group(1)), date.fromisoformat(m.group(2))) if m else (None, None)
@@ -56,11 +65,25 @@ def with_period(where: str, period: str) -> str:
         start = end = None
     if start is None or end is None or start > end or start > date.today() + timedelta(days=1):  # a day of slack for time zones
         raise ValueError("Pick a From date on or before the To date, not in the future.")
-    after = end + timedelta(days=1)
-    # LastActivityDate is a date; LastModifiedDate and CreatedDate are date-times.
-    at = lambda f, d: d.isoformat() if f == "LastActivityDate" else f"{d.isoformat()}T00:00:00Z"  # noqa: E731
-    where = re.sub(r"\((\w+) = null OR \1 < LAST_N_DAYS:180\)", lambda mt: f"({mt.group(1)} >= {at(mt.group(1), start)} AND {mt.group(1)} < {at(mt.group(1), after)})", where)
-    return re.sub(r"\b(\w+) < LAST_N_DAYS:180\b", lambda mt: f"{mt.group(1)} < {at(mt.group(1), after)}", where)  # created by then
+    return start, end + timedelta(days=1)
+
+
+def stale_with_period(where: str, days: int, history: bool, period: str) -> str:
+    """The health check's Stale Leads filter (Status unchanged for `days` days) for another period: "30" / "90" / "180" days,
+    or "range:YYYY-MM-DD:YYYY-MM-DD" (no Status change between those days, both included, on Leads created before the
+    first; without Lead History: no change at all since the first). Only the engine's own conditions change."""
+    if period.isdigit():
+        n = int(period)
+        if n not in (30, 90, 180):
+            raise ValueError("Pick the last 1, 3 or 6 months, or dates.")
+        return where.replace(f"LAST_N_DAYS:{days}", f"LAST_N_DAYS:{n}")
+    start, after = _range(period)
+    at = lambda d: f"{d.isoformat()}T00:00:00Z"  # noqa: E731
+    where = where.replace(f"CreatedDate < LAST_N_DAYS:{days}", f"CreatedDate < {at(start)}")
+    if history:
+        return where.replace(f"Field = 'Status' AND CreatedDate = LAST_N_DAYS:{days}",
+                             f"Field = 'Status' AND CreatedDate >= {at(start)} AND CreatedDate < {at(after)}")
+    return where.replace(f"LastModifiedDate < LAST_N_DAYS:{days}", f"LastModifiedDate < {at(start)}")
 
 
 def inactivity(sf: SalesforceClient, obj: str, days: int, basis: str) -> dict:
