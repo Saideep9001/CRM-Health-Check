@@ -67,7 +67,15 @@ const GROUPS: Record<string, string> = {
   'Possible Missing Parent Accounts': 'Accounts',
 };
 
-function objectOf(label: string): { group: string; title: string } | null {
+// Cards grouped in one area only (the same label elsewhere keeps no heading).
+const AREA_GROUPS: Record<string, Record<string, string>> = {
+  // Area 5: its deal cards sit under one Opportunities heading with No Activity and Closed Lost Without a Reason
+  'area-5': { 'Stuck Opportunities': 'Opportunities', 'Missing Next Steps': 'Opportunities', 'Missing Closed Lost reasons': 'Opportunities' },
+};
+
+function objectOf(label: string, areaId?: string): { group: string; title: string } | null {
+  const own = areaId ? AREA_GROUPS[areaId]?.[label] : undefined;
+  if (own) return { group: own, title: label };
   if (GROUPS[label]) return { group: GROUPS[label], title: label };
   let m = label.match(/^(.+) \(([^)]+)\)$/);
   if (m) return { group: m[2], title: m[1] };
@@ -151,7 +159,7 @@ export default function DiagnosticAreaPage() {
   // Cards grouped by the object they're about ("Completeness (Leads)" goes under Leads), in the check's order.
   const sections: { name: string; items: { label: string; i: number; title: string }[] }[] = [];
   measured.forEach((label, i) => {
-    const o = objectOf(label);
+    const o = objectOf(label, area.id);
     const name = o?.group ?? '';
     const last = sections[sections.length - 1];
     if (last && last.name === name) last.items.push({ label, i, title: o?.title ?? label });

@@ -861,8 +861,8 @@ def lead_cards(ctx: Ctx) -> None:
 
 def opportunity_cards(ctx: Ctx) -> None:
     ctx.selected("Opportunity")
-    _cards(ctx, "Opportunity", opportunity_duplicates, missing_key_fields, data_standardization, no_recent_activity,
-           closed_lost_without_reason, opportunities_without_line_items)
+    # No Activity in 6 Months and Closed Lost Without a Reason are in Area 5 (sales path & feedback loops)
+    _cards(ctx, "Opportunity", opportunity_duplicates, missing_key_fields, data_standardization, opportunities_without_line_items)
 
 
 def other_object_cards(ctx: Ctx) -> None:

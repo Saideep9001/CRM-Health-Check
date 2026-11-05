@@ -32,8 +32,6 @@ export const DIAGNOSTIC_AREAS: DiagnosticArea[] = [
       'Duplicate Opportunities',
       'Missing Key Fields (Opportunities)',
       'Data Standardization Issues (Opportunities)',
-      'No Activity in 6 Months (Opportunities)',
-      'Closed Lost Without a Reason (Opportunities)',
       'Opportunities Without Line Items',
     ],
   },
@@ -110,11 +108,13 @@ export const DIAGNOSTIC_AREAS: DiagnosticArea[] = [
     categoryId: 'workflows',
     name: 'Sales Path, Playbooks & Feedback Loops',
     description:
-      'Assess sales stage guidance, required sales fields, deal progression, and the capture of Closed Lost reasons.',
+      'Assess sales stage guidance, required sales fields, deal progression, deals nobody is working, and the capture of Closed Lost reasons.',
     indicators: [
       'Stuck Opportunities',
       'Missing Next Steps',
       'Missing Closed Lost reasons',
+      'No Activity in 6 Months (Opportunities)',
+      'Closed Lost Without a Reason (Opportunities)',
       'Sales stage guidance gaps',
     ],
   },

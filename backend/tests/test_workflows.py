@@ -645,6 +645,18 @@ def test_lead_activity_cards_in_area_3(client, sf, monkeypatch):
     assert {"Open Leads with no activity in 6 months", "Open Leads stuck in the same status for 14+ days"} <= {f["name"] for f in findings}
 
 
+
+def test_opportunity_cards_moved_to_area_5(client, sf, monkeypatch):
+    monkeypatch.setitem(DESCRIBE, "Opportunity", [*DESCRIBE["Opportunity"], _f("LastActivityDate", type="date"), _f("IsWon", type="boolean")])
+    connect(client)
+    _, res, _ = run(client)
+    labels = {x["areaId"]: [i["label"] for i in x["indicators"]] for x in res["areas"]}
+    # (the fake org has no plural label, so the cards say "Opportunitys"; a real org's say "Opportunities")
+    moved = ("No Activity in 6 Months (Opportun", "Closed Lost Without a Reason (Opportun")
+    assert [label.startswith(m) for label, m in zip(labels["area-5"][-3:-1], moved)] == [True, True]  # before Sales stage guidance
+    assert labels["area-5"][-4] == "Missing Closed Lost reasons"
+    assert not any(label.startswith(moved) for label in labels.get("area-1", []))
+
 def test_stale_leads_period_and_status(client, sf):
     connect(client)
     a, _, _ = run(client)

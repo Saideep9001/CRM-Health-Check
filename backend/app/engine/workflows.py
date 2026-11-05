@@ -15,7 +15,7 @@ from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
 from .core import Ctx, FindingDraft, Unavailable, pct, rate_score
 from .core import in_list as soql_in
 from .core import soql_str
-from .data_quality import accounts_without_contacts, no_recent_activity, stale_leads
+from .data_quality import accounts_without_contacts, closed_lost_without_reason, no_recent_activity, stale_leads
 
 OPEN_LEADS = "IsConverted = false"
 OPEN_OPPS = "IsClosed = false"
@@ -1326,6 +1326,16 @@ def missing_next_steps(ctx: Ctx) -> None:
 _LOST_REASON = re.compile(r"(lost|loss).*(reason)|reason.*(lost|loss)", re.I)
 
 
+def opp_no_activity(ctx: Ctx) -> None:
+    """No Activity in 6 Months (Opportunities): open deals with no task, event, call or email in 6 months (moved here from Area 1)."""
+    no_recent_activity(ctx, "Opportunity")
+
+
+def opp_closed_lost_without_reason(ctx: Ctx) -> None:
+    """Closed Lost Without a Reason (Opportunities): lost deals with the loss reason empty (moved here from Area 1)."""
+    closed_lost_without_reason(ctx, "Opportunity")
+
+
 def closed_lost_reasons(ctx: Ctx) -> None:
     fields = ctx.fields("Opportunity")
     reason = next(
@@ -1841,7 +1851,7 @@ AREAS = {
     "area-3": [stuck_queue_leads, inactive_rules, criteria_mismatches, lead_no_activity, stale_leads, overdue_close_dates],
     "area-4": [accounts_without_contacts, hierarchy_chains, inactive_parents, missing_parents,  # Accounts first, then Contacts
                contact_roles, orphaned_contacts, multiple_accounts, multi_deal_contacts],
-    "area-5": [stuck_opportunities, missing_next_steps, closed_lost_reasons, stage_guidance],
+    "area-5": [stuck_opportunities, missing_next_steps, closed_lost_reasons, opp_no_activity, opp_closed_lost_without_reason, stage_guidance],
     "area-6": [missing_sales_activities, web_to_lead, email_templates, activity_capture],
     "area-7": [validation_rules, required_field_gaps, junk_data, layout_usability],
 }
@@ -1864,6 +1874,8 @@ STEP_LABELS = {
     stuck_opportunities: "Finding stuck deals",
     missing_next_steps: "Checking next steps on deals",
     closed_lost_reasons: "Checking why deals were lost",
+    opp_no_activity: "Finding deals with no activity in 6 months",
+    opp_closed_lost_without_reason: "Finding lost deals with no reason",
     stage_guidance: "Checking sales stage guidance",
     missing_sales_activities: "Checking rep activity",
     web_to_lead: "Checking website leads",
