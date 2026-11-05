@@ -226,8 +226,21 @@ export type SalesPathData = {
   guided: number;
 };
 
+/** Einstein Activity Capture (EAC) Health, live from Salesforce (only what its APIs expose; null = not available). */
+export type EacHealthData = {
+  status: 'Healthy' | 'Warning' | 'Not set up';
+  settings: { available: boolean; flags: { name: string; label: string; on: boolean }[]; error: string | null };
+  tiles: { key: string; label: string; on: boolean | null; setting: string | null }[];
+  sources: string[];
+  users: { total: number; active: number; attention: number; issues: { id: string; name: string; profile: string | null; status: string; tone: 'bad' | 'warn' }[] };
+  pipeline: { key: string; label: string; value: number | null }[];
+};
+
 /** The records one measure ("What we measure") counted, live from Salesforce. */
 export const indicatorApi = {
+  /** Einstein Activity Capture (EAC) Health: settings, assigned users and the activity flowing in. */
+  eacHealth: (assessmentId: string, signal?: AbortSignal) =>
+    http.get<EacHealthData>(`/assessments/${encodeURIComponent(assessmentId)}/eac-health`, {}, signal),
   /** Sales stage guidance gaps: the Opportunity Sales Paths, active first. */
   salesPaths: (assessmentId: string, signal?: AbortSignal) =>
     http.get<SalesPathData[]>(`/assessments/${encodeURIComponent(assessmentId)}/sales-paths`, {}, signal),

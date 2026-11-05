@@ -47,6 +47,14 @@ RULES_XML = """<?xml version="1.0" encoding="UTF-8"?>
    <criteriaItems><field>Lead.LeadSource</field><operation>equals</operation><value>Phone Inquiry,Phone</value></criteriaItems></ruleEntry>
  </assignmentRule></records></result></readMetadataResponse></soapenv:Body></soapenv:Envelope>"""
 # Opportunity page layouts (Metadata API): the Contact Roles related list is on the first, missing from the second.
+# Einstein Activity Capture settings: on for everyone, email and contact sync on, event sync off
+EAC_XML = """<?xml version="1.0" encoding="UTF-8"?><soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+xmlns="http://soap.sforce.com/2006/04/metadata"><soapenv:Body><readMetadataResponse><result>
+<records xsi:type="EACSettings" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><fullName>EAC</fullName>
+<enableEACForEveryone>true</enableEACForEveryone><enableEmailSync>true</enableEmailSync><enableEventSync>false</enableEventSync>
+<enableContactSync>true</enableContactSync><enableInsightsInTimeline>true</enableInsightsInTimeline></records>
+</result></readMetadataResponse></soapenv:Body></soapenv:Envelope>"""
+
 LAYOUT_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns="http://soap.sforce.com/2006/04/metadata"
  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><soapenv:Body><readMetadataResponse><result>
@@ -97,6 +105,10 @@ LEADS = [  # open Leads read to compare with the rules
 
 # COUNT() answers: first rule whose substrings all appear in the query wins.
 COUNTS = [
+    (("FROM ActivityMetric", "LAST_N_DAYS:7"), 12),  # EAC Health: Activity Metrics updated
+    (("FROM ActivityMetric",), 40),
+    (("FROM Task WHERE OwnerId IN", "LAST_N_DAYS:7"), 9),  # tasks the EAC users logged
+    (("FROM Event WHERE OwnerId IN", "LAST_N_DAYS:7"), 3),
     (("FROM Lead", "OwnerId IN ('00G000000000003AAA', '00G000000000002AAA')"), 4),  # in the inactive queues, with no active rule
     (("FROM Lead", "OwnerId IN ('00G000000000003AAA')"), 1),  # in the inactive Partner queue
     (("FROM Lead", "Owner.Type = 'Queue'", "LAST_N_DAYS:7"), 3),  # in a queue more than 7 days (Critical)
@@ -143,7 +155,8 @@ class FakeSalesOrg(FakeSalesforce):
             return super().handler(request)
         if url.path.startswith("/services/Soap/m/"):
             self.soap.append(request.content.decode())
-            xml = LAYOUT_XML if "<met:type>Layout</met:type>" in self.soap[-1] else self.rules_xml
+            xml = (LAYOUT_XML if "<met:type>Layout</met:type>" in self.soap[-1] else EAC_XML if "<met:type>EACSettings</met:type>" in self.soap[-1]
+                   else self.rules_xml)
             return httpx.Response(200, text=xml, headers={"Content-Type": "text/xml"})
         if url.path.endswith("/sobjects"):
             return httpx.Response(200, json={"sobjects": [{"name": n, "label": n, "labelPlural": n + "s", "queryable": True, "retrieveable": True} for n in DESCRIBE]})
@@ -766,7 +779,7 @@ def test_stage_chips_on_area_5_opportunity_cards(client, sf):
     connect(client)
     a, _, _ = run(client)
     base = f"{API}/assessments/{a['id']}/areas/area-5"
-    for label in ("Stuck Opportunities", "Missing Next Steps"):
+    for label in ("Stuck Opportunities", "Missing Next Steps", "Opportunities with an Overdue Close Date"):
         params = {"label": label, "object": "Opportunity"}
         chips = client.get(f"{base}/indicator-queues", params=params)
         assert chips.status_code == 200, chips.text
@@ -777,3 +790,51 @@ def test_stage_chips_on_area_5_opportunity_cards(client, sf):
         q = next(q for q in reversed(sf.soql) if " FROM Opportunity" in q and "StageName = " in q)
         assert "AND StageName = 'Proposal'" in q
         assert client.get(f"{base}/indicator-records", params={**params, "queue": "x' OR Id != null --"}).status_code == 422
+
+
+# Users assigned EAC: one fine, one deactivated, one who never logged in, one not logged in for years
+EAC_USERS = [
+    {"Id": "005000000000011AAA", "Name": "Priya Nair", "Profile": {"Name": "Sales Rep"}, "IsActive": True, "LastLoginDate": "2099-01-01T00:00:00.000+0000"},
+    {"Id": "005000000000012AAA", "Name": "Daniel Ortiz", "Profile": {"Name": "Sales Manager"}, "IsActive": False, "LastLoginDate": None},
+    {"Id": "005000000000013AAA", "Name": "Aisha Khan", "Profile": {"Name": "Sales Rep"}, "IsActive": True, "LastLoginDate": None},
+    {"Id": "005000000000014AAA", "Name": "Marcus Lee", "Profile": {"Name": "Account Executive"}, "IsActive": True, "LastLoginDate": "2020-01-01T00:00:00.000+0000"},
+]
+
+
+def test_eac_health_card_in_area_6(client, sf, monkeypatch):
+    records = FakeSalesOrg.records
+
+    def eac_records(q):
+        if q.startswith("SELECT Id, Label FROM PermissionSet WHERE Label LIKE '%Activity Capture%'"):
+            return [{"Id": "0PS000000000001AAA", "Label": "Standard Einstein Activity Capture"}]
+        if q.startswith("SELECT AssigneeId FROM PermissionSetAssignment WHERE PermissionSetId IN ('0PS000000000001AAA')"):
+            return [{"AssigneeId": u["Id"]} for u in EAC_USERS[:3]]
+        if q.startswith("SELECT Id, MasterLabel FROM PermissionSetLicense WHERE MasterLabel LIKE '%Activity Capture%'"):
+            return [{"Id": "0PL000000000001AAA", "MasterLabel": "Einstein Activity Capture"}]
+        if q.startswith("SELECT AssigneeId FROM PermissionSetLicenseAssign WHERE PermissionSetLicenseId IN ('0PL000000000001AAA')"):
+            return [{"AssigneeId": EAC_USERS[0]["Id"]}, {"AssigneeId": EAC_USERS[3]["Id"]}]  # Priya twice: counted once
+        if q.startswith("SELECT Id, Name, Profile.Name, IsActive, LastLoginDate FROM User WHERE Id IN"):
+            return [u for u in EAC_USERS if f"'{u['Id']}'" in q]
+        return records(q)
+
+    monkeypatch.setattr(FakeSalesOrg, "records", staticmethod(eac_records))
+    connect(client)
+    a, res, findings = run(client)
+    card = next(i for x in res["areas"] if x["areaId"] == "area-6" for i in x["indicators"] if i["label"] == "Einstein Activity Capture (EAC) Health")
+    assert card["value"] == 3 and card["score"] is not None
+    crit = dict(card["criteria"])
+    assert crit["Users"] == "4 assigned, 1 active, 3 need attention"
+    assert "expired token" in crit["Not checked"]
+    found = next(f for f in findings if f["name"] == "EAC users who may not be capturing activity")
+    assert found["severity"] == "medium" and found["affectedRecords"] == 3  # a deactivated user still assigned
+    body = client.get(f"{API}/assessments/{a['id']}/eac-health")
+    assert body.status_code == 200, body.text
+    d = body.json()
+    assert d["status"] == "Warning"
+    assert {t["key"]: t["on"] for t in d["tiles"]} == {"master": True, "email": True, "calendar": False, "contact": True}
+    assert d["sources"] == ["Permission set: Standard Einstein Activity Capture", "Licence: Einstein Activity Capture"]
+    assert (d["users"]["total"], d["users"]["active"], d["users"]["attention"]) == (4, 1, 3)
+    issues = {u["name"]: u["status"] for u in d["users"]["issues"]}
+    assert d["users"]["issues"][0]["name"] == "Daniel Ortiz" and issues["Daniel Ortiz"] == "Deactivated user"  # the worst first
+    assert issues["Aisha Khan"] == "Never logged in" and issues["Marcus Lee"].startswith("No login in")
+    assert {p["key"]: p["value"] for p in d["pipeline"]} == {"metrics7": 12, "metrics30": 40, "task": 9, "event": 3}

@@ -22,6 +22,7 @@ import { useNavigate } from 'react-router-dom';
 import { dataApi, findingApi, indicatorApi } from '@/api/endpoints';
 import { useQuery } from '@tanstack/react-query';
 import { useFindingRecords, useIndicatorRecords, useRole, useUpdateFinding } from '@/api/queries';
+import { EacHealth } from './EacHealth';
 import { SalesPaths } from './SalesPaths';
 import { SEVERITY_COLORS } from '@/components/charts/Charts';
 import { objectLabel } from '@/components/category/DiagnosticAreaCard';
@@ -339,7 +340,7 @@ function Records({
   const stale = indicator?.label === 'Stale Leads';
   // Area 5 Opportunity cards: the sales stages above the table, to see one stage's deals
   const byStage =
-    object === 'Opportunity' && (['Stuck Opportunities', 'Missing Next Steps'].includes(indicator?.label ?? '') || noActivity);
+    object === 'Opportunity' && (['Stuck Opportunities', 'Missing Next Steps', 'Opportunities with an Overdue Close Date'].includes(indicator?.label ?? '') || noActivity);
   const byQueue = stuckQueue || byRule || stale || byStage;
   const [queueDays, setQueueDays] = useState(3);
   const [queue, setQueue] = useState<PickedQueue | undefined>();
@@ -373,6 +374,10 @@ function Records({
   if (isSalesPaths(indicator, finding) && pathsCheck) {
     // a setup card: the Sales Paths and each stage's guidance, read live from Salesforce, instead of records
     return <SalesPaths assessmentId={pathsCheck} />;
+  }
+  if (isEac(indicator, finding) && pathsCheck) {
+    // Einstein Activity Capture: its settings, users and activity, read live from Salesforce
+    return <EacHealth assessmentId={pathsCheck} />;
   }
   if (useMeasure) {
     return (
@@ -529,6 +534,10 @@ function Records({
 const isSalesPaths = (indicator: IndicatorValue | null, finding: Finding | null) =>
   indicator?.label === 'Sales stage guidance gaps' ||
   ['Sales stages without guidance', 'Sales Path isn’t turned on for Opportunities'].includes(finding?.name ?? '');
+
+/** Einstein Activity Capture (EAC) Health (and its problem): shown as its system status, users and activity, not records. */
+const isEac = (indicator: IndicatorValue | null, finding: Finding | null) =>
+  indicator?.label === 'Einstein Activity Capture (EAC) Health' || finding?.name === 'EAC users who may not be capturing activity';
 
 /**
  * The one details panel for a problem and the measure behind it: result and score, what we found and measure,
@@ -884,7 +893,7 @@ export function DetailsPanel({
               <FieldsBehind indicator={v} object={initialObject ?? objectOfFieldCard(v.label)} flow={fieldFlow} />
             </Section>
           ) : (
-            <Section icon={<Database className="h-3.5 w-3.5" />} title={isSalesPaths(v, finding) ? 'Sales Paths and stage guidance' : finding ? 'The records' : 'The records behind this number'}>
+            <Section icon={<Database className="h-3.5 w-3.5" />} title={isSalesPaths(v, finding) ? 'Sales Paths and stage guidance' : isEac(v, finding) ? 'Einstein Activity Capture status' : finding ? 'The records' : 'The records behind this number'}>
               <Records area={area} indicator={v} finding={finding} measureAssessmentId={measureAssessmentId} legacy={legacy} initialObject={initialObject}
                 keyFields={empties?.map((f) => f.field)}
                 fieldChoices={(chartKind === 'missing' ? shownScores : chartKind === 'standardization' ? v?.fieldScores : null)?.map((f) => ({ field: f.field, label: f.label, count: f.count })) ?? []}

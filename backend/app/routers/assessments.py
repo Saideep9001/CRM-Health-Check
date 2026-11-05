@@ -20,7 +20,7 @@ from ..engine import jobs
 from ..engine.core import in_list, soql_str
 from ..engine.runner import EXECUTABLE_AREA_IDS
 from ..models import AssessmentRow, FindingRow
-from ..salesforce import activity, assignment, explorer, finder, paths, queues, service
+from ..salesforce import activity, assignment, eac, explorer, finder, paths, queues, service
 from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
 from ..schemas import (
     FieldValues,
@@ -350,7 +350,7 @@ def finding_records_csv(
 
 
 # Area 5 Opportunity cards whose records can be narrowed to one sales stage (the Stage chips above the table)
-STAGE_CARDS = {"Stuck Opportunities", "Missing Next Steps"}
+STAGE_CARDS = {"Stuck Opportunities", "Missing Next Steps", "Opportunities with an Overdue Close Date"}
 
 
 def _by_stage(label: str, rec: dict) -> bool:
@@ -359,7 +359,7 @@ def _by_stage(label: str, rec: dict) -> bool:
 
 def _by_queue(rec: dict) -> bool:
     """Can this measure's records be narrowed to one Lead queue (Stuck Queue-Owned Leads, Inactive Lead Assignment Rules), one
-    Status (Stale Leads) or one Stage (Stuck Opportunities, Missing Next Steps, No Activity in 6 Months on Opportunities)?"""
+    Status (Stale Leads) or one Stage (Stuck Opportunities, Missing Next Steps, No Activity in 6 Months on Opportunities, Overdue Close Date)?"""
     return (rec.get("extra") == "days_in_queue" or bool(rec.get("by_queue")) or rec.get("inactive_queues") is not None
             or bool(rec.get("by_status")) or bool(rec.get("by_stage")))
 
@@ -724,6 +724,15 @@ def indicator_record_types(
         return sorted(out, key=lambda t: (-t["count"], t["name"].lower()))
 
     return _salesforce(db, http, settings, load, org_id)
+
+
+@router.get("/assessments/{assessment_id}/eac-health")
+def eac_health(assessment_id: str, db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep),
+               settings: Settings = Depends(settings_dep)) -> dict:
+    """Einstein Activity Capture (EAC) Health: system status, assigned users and the ones needing attention, and the
+    activity flowing in, read live from Salesforce."""
+    row = _get(db, assessment_id)
+    return _salesforce(db, http, settings, eac.eac_health, row.org_id)
 
 
 @router.get("/assessments/{assessment_id}/sales-paths", response_model=list[SalesPath])

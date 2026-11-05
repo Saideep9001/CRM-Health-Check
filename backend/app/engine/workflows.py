@@ -10,7 +10,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from urllib.parse import quote, unquote
 
-from ..salesforce import assignment, queues
+from ..salesforce import assignment, eac, queues
 from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
 from .core import Ctx, FindingDraft, Unavailable, pct, rate_score
 from .core import in_list as soql_in
@@ -1601,6 +1601,50 @@ def activity_capture(ctx: Ctx) -> None:
         )
 
 
+EAC_LABEL = "Einstein Activity Capture (EAC) Health"
+
+
+def eac_health(ctx: Ctx) -> None:
+    """Einstein Activity Capture (EAC) Health: its settings, who's assigned EAC and which of them Salesforce shows a problem
+    for (deactivated, never or long not logged in), and the activity flowing in. The card's own view reads it all live."""
+    data = eac.eac_health(ctx.sf)
+    people, conf = data["users"], data["settings"]
+    n, total = people["attention"], people["total"]
+    on = [t["label"] for t in data["tiles"] if t["on"]]
+    off = [t["label"] for t in data["tiles"] if t["on"] is False]
+    ctx.metric(
+        EAC_LABEL, n, "count", "lower-better", rate_score(n / total, 0.3) if total else None,
+        how="People assigned Einstein Activity Capture whom Salesforce shows a problem for: deactivated, never logged in, or no "
+            f"login in {eac.STALE_LOGIN_DAYS}+ days. Their emails and meetings may not be captured.",
+        rule=("100 when every assigned user is active and logging in, falling evenly to 0 when 30% of them need attention."
+              if total else "No score: nobody is assigned Einstein Activity Capture."),
+        criteria=[
+            ("EAC settings", ("On: " + ", ".join(on) if on else "") + ("; off: " + ", ".join(off) if off else "")
+             if conf["available"] else conf["error"]),
+            ("Assigned by", "; ".join(data["sources"]) or "No permission set or licence named “Activity Capture” found"),
+            ("Users", f"{total:,} assigned, {people['active']:,} active, {n:,} need attention"),
+            ("Needs attention", f"Deactivated, never logged in, or no login in {eac.STALE_LOGIN_DAYS}+ days"),
+            ("Not checked", "Each user’s EAC mailbox connection (expired token, pending authentication): Salesforce’s APIs don’t show it"),
+        ],
+    )
+    if n:
+        names = ", ".join(f"{r['name']} ({r['status'].lower()})" for r in people["issues"][:3])
+        ctx.finding(
+            name="EAC users who may not be capturing activity",
+            score=rate_score(n / total, 0.3),
+            affected=n,
+            description=f"{n:,} of {total:,} people assigned Einstein Activity Capture are deactivated or not logging in: {names}"
+                        + (" and others." if n > 3 else "."),
+            why="EAC only captures email and meetings for people who are active and connected, so their customer activity goes missing.",
+            impact="Activity timelines and Activity Metrics miss these people’s work, so deals look quieter than they are.",
+            action="Remove EAC from deactivated users, and ask the others to log in and reconnect their mailbox under "
+                   "Settings → Einstein Activity Capture. Check Setup → Einstein Activity Capture for connection errors.",
+            obj=None,
+            fix="/lightning/setup/ActivitySyncEngineSettingsMain/home",
+            severity="medium" if any(r["tone"] == "bad" for r in people["issues"]) else "low",
+        )
+
+
 # ---------------------------------------------------------------- area 7: layouts, validation rules, required fields
 
 CORE = ("Account", "Contact", "Lead", "Opportunity")
@@ -1790,7 +1834,7 @@ AREAS = {
                contact_roles, orphaned_contacts, multiple_accounts, multi_deal_contacts],
     "area-5": [stuck_opportunities, missing_next_steps, opp_no_activity, opp_closed_lost_without_reason, overdue_close_dates,
                stage_guidance],
-    "area-6": [missing_sales_activities, web_to_lead, email_templates, activity_capture],
+    "area-6": [missing_sales_activities, web_to_lead, email_templates, activity_capture, eac_health],
     "area-7": [validation_rules, required_field_gaps, junk_data, layout_usability],
 }
 
@@ -1818,6 +1862,7 @@ STEP_LABELS = {
     web_to_lead: "Checking website leads",
     email_templates: "Checking email templates",
     activity_capture: "Checking activity on open deals",
+    eac_health: "Checking Einstein Activity Capture",
     validation_rules: "Reading validation rules",
     required_field_gaps: "Checking required fields",
     junk_data: "Looking for junk values",
