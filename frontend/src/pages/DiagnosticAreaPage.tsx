@@ -56,6 +56,7 @@ const GROUPS: Record<string, string> = {
   'Stuck Queue-Owned Leads': 'Leads',
   'Inactive Lead Assignment Rules': 'Leads',
   'Lead Assignment Criteria Mismatches': 'Leads',
+  'Opportunities with an Overdue Close Date': 'Opportunities',
   'Opportunities Without Contact Roles': 'Contacts',
   'Orphaned Contacts': 'Contacts',
   'Contacts to Multiple Accounts': 'Contacts',

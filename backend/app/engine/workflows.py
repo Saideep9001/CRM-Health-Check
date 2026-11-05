@@ -484,6 +484,55 @@ def lead_no_activity(ctx: Ctx) -> None:
     no_recent_activity(ctx, "Lead")
 
 
+OVERDUE = "CloseDate < TODAY"
+
+
+def overdue_close_dates(ctx: Ctx) -> None:
+    """Opportunities with an Overdue Close Date: open deals whose Close Date has already passed, most overdue first."""
+    total = ctx.count("Opportunity", OPEN_OPPS)
+    n = ctx.count("Opportunity", OPEN_OPPS, OVERDUE) if total else 0
+    score = rate_score(n / total, 0.3) if total else 100
+    # how far past: 1-30 days, 31-90 days, more than 90 days
+    over30 = ctx.count("Opportunity", OPEN_OPPS, OVERDUE, "CloseDate < LAST_N_DAYS:30") if n else 0
+    over90 = ctx.count("Opportunity", OPEN_OPPS, OVERDUE, "CloseDate < LAST_N_DAYS:90") if over30 else 0
+    value = ctx.amount("Opportunity", OPEN_OPPS, OVERDUE) if n else None
+    owners = ctx.by_owner("Opportunity", OPEN_OPPS, OVERDUE, amount=True) if n else []
+    ctx.metric(
+        "Opportunities with an Overdue Close Date", n, "count", "lower-better", score,
+        how="Open Opportunities whose Close Date is already in the past.",
+        rule="100 when no open deal is overdue, falling evenly to 0 when 30% of open deals are overdue.",
+        records=("Opportunity", OPEN_OPPS, OVERDUE),
+        columns=["Name", "CloseDate", "StageName", "Amount", "OwnerId"],
+        order="CloseDate",
+        criteria=[
+            ("Records checked", f"{total:,} open Opportunities (not Closed Won or Closed Lost)"),
+            ("Field checked", "Close Date"),
+            ("Overdue", "The deal is still open and its Close Date is before today"),
+            ("What's counted", f"{n:,} of {total:,} open deals ({pct(n, total):.0f}%) are overdue" + (f", worth {_money(value)}" if value else "")),
+            ("How far past", f"1–30 days: {n - over30:,} · 31–90 days: {over30 - over90:,} · more than 90 days: {over90:,}" if n else ""),
+            ("Most overdue deals owned by", _owners(owners)),
+            ("Records listed", "Every overdue open deal, most overdue first"),
+        ],
+    )
+    if n:
+        ctx.finding(
+            name="Open deals past their Close Date",
+            records=("Opportunity", OPEN_OPPS, OVERDUE),
+            value=value,
+            score=score,
+            affected=n,
+            description=f"{n:,} of {total:,} open Opportunities ({pct(n, total):.0f}%) are past their Close Date{_worth(value)}"
+                        + (f"; {over90:,} by more than 90 days" if over90 else "") + "."
+                        + (f" Most are owned by {_owners(owners)}." if owners else ""),
+            why="A Close Date in the past means the forecast counts revenue in a month that has already gone.",
+            impact="An unreliable forecast, and deals that quietly slip without anyone deciding their fate.",
+            action="Ask each owner to move the Close Date to a realistic date or close the deal as lost. Review overdue deals weekly, "
+                   "and consider a validation rule that blocks saving an open deal with a past Close Date.",
+            obj="Opportunity",
+            url=ctx.list_url("Opportunity"),
+        )
+
+
 # ---------------------------------------------------------------- area 4: account hierarchies & contact relationships
 
 NO_ROLES = "Id NOT IN (SELECT OpportunityId FROM OpportunityContactRole)"
@@ -1789,7 +1838,7 @@ def layout_usability(ctx: Ctx) -> None:
 
 
 AREAS = {
-    "area-3": [stuck_queue_leads, inactive_rules, criteria_mismatches, lead_no_activity, stale_leads],
+    "area-3": [stuck_queue_leads, inactive_rules, criteria_mismatches, lead_no_activity, stale_leads, overdue_close_dates],
     "area-4": [accounts_without_contacts, hierarchy_chains, inactive_parents, missing_parents,  # Accounts first, then Contacts
                contact_roles, orphaned_contacts, multiple_accounts, multi_deal_contacts],
     "area-5": [stuck_opportunities, missing_next_steps, closed_lost_reasons, stage_guidance],
@@ -1803,6 +1852,7 @@ STEP_LABELS = {
     criteria_mismatches: "Checking Leads against the active assignment rule",
     lead_no_activity: "Finding Leads with no activity in 6 months",
     stale_leads: "Finding stale Leads",
+    overdue_close_dates: "Finding deals past their Close Date",
     contact_roles: "Checking contact roles on deals",
     orphaned_contacts: "Finding Contacts without an Account",
     multiple_accounts: "Checking Contacts to Multiple Accounts",

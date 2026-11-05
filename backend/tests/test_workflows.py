@@ -108,6 +108,8 @@ COUNTS = [
     (("FROM Lead", "LeadSource IN", "LAST_N_DAYS:14"), 0),
     (("FROM Lead", "LeadHistory WHERE Field = 'Status' AND"), 20),  # stale: no Status change (Lead History)
     (("FROM Lead", "LastModifiedDate < LAST_N_DAYS"), 20),  # stale, where Status changes aren't tracked
+    (("CloseDate < TODAY", "CloseDate < LAST_N_DAYS:90"), 2),  # overdue by more than 90 days
+    (("CloseDate < TODAY", "CloseDate < LAST_N_DAYS:30"), 5),  # by more than 30 days
     (("CloseDate < TODAY",), 8),
     (("NOT IN (SELECT OpportunityId",), 15),
     (("LastStageChangeDate",), 10),
@@ -194,6 +196,11 @@ class FakeSalesOrg(FakeSalesforce):
             return GUESS_ACCOUNTS
         if q.startswith("SELECT AccountId, Email FROM Contact WHERE AccountId != null AND Email != null"):
             return [{"AccountId": "001A00000000011", "Email": "kim@orbitmedia.com"}, {"AccountId": "001A00000000009", "Email": "x@gmail.com"}]
+        if q.startswith("SELECT Id, Name, IsActive FROM RecordType WHERE SobjectType = 'Lead'"):  # Lead record types
+            return [{"Id": "012000000000001AAA", "Name": "Partner", "IsActive": True}, {"Id": "012000000000002AAA", "Name": "Direct", "IsActive": True},
+                    {"Id": "012000000000003AAA", "Name": "Old", "IsActive": False}]
+        if q.startswith("SELECT RecordTypeId r, COUNT(Id) c FROM Lead"):
+            return [{"r": "012000000000002AAA", "c": 7}, {"r": None, "c": 2}]
         if q.startswith("SELECT Id, Name FROM Account WHERE Id IN"):  # the top Accounts' names
             return [{"Id": "001000000000001", "Name": "Account A"}] if "'001000000000001'" in q else []
         if "FROM User WHERE Username IN" in q:  # who inactive rules assign to, by username
@@ -255,8 +262,11 @@ def test_all_workflow_areas(client, sf):
     ind = {i["label"]: i["value"] for x in res["areas"] for i in x["indicators"]}
     # No Activity in 6 Months (Leads) needs an activity date, which this fake org's Leads don't have (tested on its own below)
     assert [i["label"] for i in areas["area-3"]["indicators"]] == ["Stuck Queue-Owned Leads", "Inactive Lead Assignment Rules", "Lead Assignment Criteria Mismatches",
-                                                                   "Stale Leads"]
+                                                                   "Stale Leads", "Opportunities with an Overdue Close Date"]
     assert ind["Stale Leads"] == 20  # Status unchanged for 30+ days (Lead History)
+    assert ind["Opportunities with an Overdue Close Date"] == 8
+    overdue = next(i for i in areas["area-3"]["indicators"] if i["label"] == "Opportunities with an Overdue Close Date")
+    assert dict(overdue["criteria"])["How far past"] == "1–30 days: 3 · 31–90 days: 3 · more than 90 days: 2"
     assert ind["Stuck Queue-Owned Leads"] == 8  # in a queue more than 3 days
     assert ind["Inactive Lead Assignment Rules"] == 1 and ind["Lead Assignment Criteria Mismatches"] == 2  # 1 Lead in an inactive queue
     rule_reads = [x for x in sf.soap if "<met:type>AssignmentRules</met:type>" in x]
@@ -630,7 +640,7 @@ def test_lead_activity_cards_in_area_3(client, sf, monkeypatch):
     connect(client)
     _, res, findings = run(client)
     labels = [i["label"] for x in res["areas"] if x["areaId"] == "area-3" for i in x["indicators"]]
-    assert labels[-2:] == ["No Activity in 6 Months (Leads)", "Stale Leads"]  # moved from Area 1, and Stale Leads added
+    assert labels[-3:] == ["No Activity in 6 Months (Leads)", "Stale Leads", "Opportunities with an Overdue Close Date"]  # moved from Area 1, and Stale Leads added
     assert not any(i["label"] == "No Activity in 6 Months (Leads)" for x in res["areas"] if x["areaId"] == "area-1" for i in x["indicators"])
     assert {"Open Leads with no activity in 6 months", "Open Leads stuck in the same status for 14+ days"} <= {f["name"] for f in findings}
 
@@ -659,3 +669,21 @@ def test_stale_leads_period_and_status(client, sf):
     assert client.get(f"{base}/indicator-records", params={**params, "queue": "Working - Contacted"}).status_code == 200
     assert "AND Status = 'Working - Contacted'" in _lead_query(sf)
     assert client.get(f"{base}/indicator-records", params={**params, "queue": "New' OR Id != null --"}).status_code == 422
+    # the Record Type drop-down: active types (and inactive ones with Leads), most first, plus the Leads with none
+    types = client.get(f"{base}/indicator-record-types", params={**params, "period": "90"})
+    assert types.status_code == 200
+    assert [(t["id"], t["name"], t["count"]) for t in types.json()] == [
+        ("012000000000002AAA", "Direct", 7), ("none", "No record type", 2), ("012000000000001AAA", "Partner", 0)]
+    assert "LAST_N_DAYS:90" in next(q for q in reversed(sf.soql) if q.startswith("SELECT RecordTypeId r"))
+    # one record type: its Leads, and its Status counts
+    rt = {**params, "record_type": "012000000000002AAA"}
+    assert client.get(f"{base}/indicator-records", params={**rt, "queue": "Working - Contacted"}).status_code == 200
+    q = _lead_query(sf)
+    assert "AND RecordTypeId = '012000000000002AAA'" in q and "AND Status = 'Working - Contacted'" in q
+    assert client.get(f"{base}/indicator-queues", params=rt).status_code == 200
+    assert "RecordTypeId = '012000000000002AAA'" in next(q for q in reversed(sf.soql) if q.startswith("SELECT Status s, COUNT(Id) c FROM Lead"))
+    assert client.get(f"{base}/indicator-records", params={**params, "record_type": "none"}).status_code == 200
+    assert "AND RecordTypeId = null" in _lead_query(sf)
+    assert client.get(f"{base}/indicator-records", params={**params, "record_type": "x' OR Id != null"}).status_code == 422
+    other = client.get(f"{base}/indicator-records", params={"label": "Stuck Queue-Owned Leads", "object": "Lead", "record_type": "none"})
+    assert other.status_code == 422

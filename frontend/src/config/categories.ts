@@ -76,13 +76,14 @@ export const DIAGNOSTIC_AREAS: DiagnosticArea[] = [
     categoryId: 'workflows',
     name: 'Lead Queues & Assignment',
     description:
-      'Find Leads waiting too long in queues, inactive Lead Assignment Rules that would match existing Leads, Leads that no active assignment rule entry matches, and Leads nobody is working.',
+      'Find Leads waiting too long in queues, inactive Lead Assignment Rules that would match existing Leads, Leads that no active assignment rule entry matches, Leads nobody is working, and open deals past their Close Date.',
     indicators: [
       'Stuck Queue-Owned Leads',
       'Inactive Lead Assignment Rules',
       'Lead Assignment Criteria Mismatches',
       'No Activity in 6 Months (Leads)',
       'Stale Leads',
+      'Opportunities with an Overdue Close Date',
     ],
   },
   {

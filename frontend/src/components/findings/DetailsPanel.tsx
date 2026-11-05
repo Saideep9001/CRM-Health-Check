@@ -36,7 +36,7 @@ import { InlineError } from '../ui/States';
 import { ChangeBadge } from './AffectedRecords';
 import { FixPlanPanel } from './FixPlanPanel';
 import { ActivityPeriod } from './ActivityPeriod';
-import { QueueDays, QueueFilter, RuleTargetFilter, type PickedQueue } from './QueueFilter';
+import { QueueDays, QueueFilter, RuleTargetFilter, type PickedQueue, StaleFilters } from './QueueFilter';
 import { FieldPicker } from './FieldPicker';
 import { RecordsTable } from './RecordsTable';
 import { DuplicateResults } from './DuplicateFinder';
@@ -339,18 +339,21 @@ function Records({
   const byQueue = stuckQueue || byRule || stale;
   const [queueDays, setQueueDays] = useState(3);
   const [queue, setQueue] = useState<PickedQueue | undefined>();
+  // Stale Leads: only one record type's Leads (undefined = all)
+  const [recordType, setRecordType] = useState<PickedQueue | undefined>();
   // Areas 3 and 4: the fields picked to show as the table's columns (null = the measure's own).
   const pickFields = area.id === 'area-3' || area.id === 'area-4';
   const [shownCols, setShownCols] = useState<string[] | null>(null);
   useEffect(() => {
     setPeriod(undefined);
     setQueue(undefined);
+    setRecordType(undefined);
     setQueueDays(3);
     setShownCols(null);
   }, [object, indicator?.label]);
   const cols = shownCols ?? undefined;
   const days = stuckQueue ? queueDays : undefined;
-  const measureRecords = useIndicatorRecords(useMeasure ? measureAssessmentId : null, area.id, indicator?.label ?? '', object, filters, only, period, queue?.id, cols, days);
+  const measureRecords = useIndicatorRecords(useMeasure ? measureAssessmentId : null, area.id, indicator?.label ?? '', object, filters, only, period, queue?.id, cols, days, recordType?.id);
   const missing = /^missing/i.test(indicator?.label ?? '');
   // The flow follows what the person picked: the fields ticked in Check fields, and the table's column filters (its count).
   const standardization = /^data standardi/i.test(indicator?.label ?? '');
@@ -427,9 +430,9 @@ function Records({
           <QueueFilter assessmentId={measureAssessmentId!} areaId={area.id} label={indicator!.label} object={object!} value={queue} days={days} onChange={setQueue} />
         )}
         {stale && (
-          <QueueFilter assessmentId={measureAssessmentId!} areaId={area.id} label={indicator!.label} object={object!} value={queue} period={period} onChange={setQueue}
-            title="Stuck in Status" tip="The Status each stale Lead is stuck in, with how many Leads (for the period picked on the table). Pick one to see only those Leads."
-            empty="No stale Leads in this period." />
+          // Stale Leads: Record Type, then the Status the Leads are stuck in (of that record type), as drop-downs
+          <StaleFilters assessmentId={measureAssessmentId!} areaId={area.id} label={indicator!.label} object={object!} period={period}
+            recordType={recordType} onRecordType={(rt) => { setRecordType(rt); setQueue(undefined); }} status={queue} onStatus={setQueue} />
         )}
         {byRule && (
           // Inactive Lead Assignment Rules: the inactive rules, then who they assign to, then that owner's Leads
@@ -441,12 +444,12 @@ function Records({
           title={
             only.length
               ? `${objectLabel(object!)} · ${only.map((f) => choices.find((c) => c.field === f)?.label ?? f).join(', ')}`
-              : queue
-                ? `${objectLabel(object!)} · ${queue.name}`
+              : queue || recordType
+                ? [objectLabel(object!), recordType?.name, queue?.name].filter(Boolean).join(' · ')
                 : objectLabel(object!)
           }
           grouped={duplicates}
-          csvUrl={indicatorApi.csvUrl(measureAssessmentId!, area.id, indicator!.label, object!, filters, only, period, queue?.id, cols, days)}
+          csvUrl={indicatorApi.csvUrl(measureAssessmentId!, area.id, indicator!.label, object!, filters, only, period, queue?.id, cols, days, recordType?.id)}
           toolbar={
             noActivity ? <ActivityPeriod key={`${object}-${indicator!.label}`} onChange={setPeriod} />
               : stale ? <ActivityPeriod key={`${object}-${indicator!.label}`} onChange={setPeriod} own="30" what="No status change" />
@@ -457,8 +460,8 @@ function Records({
           keyFields={missing && only.length ? only : keyFields}
           markOnly={only}
           valuesSource={{
-            key: ['indicator', measureAssessmentId, area.id, indicator!.label, object, only, period, queue?.id, days],
-            load: (field, others, signal) => indicatorApi.values(measureAssessmentId!, area.id, indicator!.label, object!, field, others, signal, only, period, queue?.id, days),
+            key: ['indicator', measureAssessmentId, area.id, indicator!.label, object, only, period, queue?.id, days, recordType?.id],
+            load: (field, others, signal) => indicatorApi.values(measureAssessmentId!, area.id, indicator!.label, object!, field, others, signal, only, period, queue?.id, days, recordType?.id),
           }}
         />
         </div>

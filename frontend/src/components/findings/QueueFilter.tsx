@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
-import { Clock, GitBranch, User, Users, X } from 'lucide-react';
+import { Clock, GitBranch, Layers, User, Users, X } from 'lucide-react';
 import { indicatorApi } from '@/api/endpoints';
 import { InfoTip } from '@/components/ui/HelpTip';
 import { cx, fmtNumber } from '@/lib/format';
@@ -263,6 +263,125 @@ export function RuleTargetFilter({
           ]
         )}
       </ChipRow>
+    </div>
+  );
+}
+
+/** One labelled drop-down of the Stale Leads filters: "All" first, then each value with its count. */
+function CountSelect({
+  icon,
+  title,
+  tip,
+  allText,
+  value,
+  options,
+  loading,
+  error,
+  empty,
+  onChange,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  tip: string;
+  allText: string;
+  value: string | undefined;
+  options: { id: string; name: string; count: number }[];
+  loading: boolean;
+  error: boolean;
+  empty: string;
+  onChange: (picked: PickedQueue | undefined) => void;
+}) {
+  const total = options.reduce((n, o) => n + o.count, 0);
+  return (
+    <label className="inline-flex flex-wrap items-center gap-2">
+      <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">
+        {icon} {title}
+        <InfoTip label={`About ${title}`}>{tip}</InfoTip>
+      </span>
+      {loading ? (
+        <span className="text-xs text-ink-subtle">Loading…</span>
+      ) : error ? (
+        <span className="text-xs text-bad">Couldn’t load them.</span>
+      ) : !options.length ? (
+        <span className="text-xs text-ink-subtle">{empty}</span>
+      ) : (
+        <select
+          value={value ?? ''}
+          onChange={(e) => {
+            const o = options.find((x) => x.id === e.target.value);
+            onChange(o ? { id: o.id, name: o.name } : undefined);
+          }}
+          className="min-w-[12rem] rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs text-ink focus:border-brand focus:outline-none"
+        >
+          <option value="">{`${allText} (${fmtNumber(total)})`}</option>
+          {options.map((o) => (
+            <option key={o.id} value={o.id}>{`${o.name} (${fmtNumber(o.count)})`}</option>
+          ))}
+        </select>
+      )}
+    </label>
+  );
+}
+
+/** Stale Leads: Record Type, then the Status the Leads are stuck in, as drop-downs above the records. Picking a record type
+ *  lists only the Statuses its stale Leads are stuck in (and their counts); both follow the period picked on the table. */
+export function StaleFilters({
+  assessmentId,
+  areaId,
+  label,
+  object,
+  period,
+  recordType,
+  onRecordType,
+  status,
+  onStatus,
+}: {
+  assessmentId: string;
+  areaId: string;
+  label: string;
+  object: string;
+  period?: string;
+  recordType: PickedQueue | undefined;
+  onRecordType: (rt: PickedQueue | undefined) => void;
+  status: PickedQueue | undefined;
+  onStatus: (s: PickedQueue | undefined) => void;
+}) {
+  const types = useQuery({
+    queryKey: ['indicator-record-types', assessmentId, areaId, label, object, period],
+    queryFn: ({ signal }) => indicatorApi.recordTypes(assessmentId, areaId, label, object, signal, period),
+    staleTime: 60_000,
+  });
+  const statuses = useQuery({
+    queryKey: ['indicator-queues', assessmentId, areaId, label, object, undefined, period, recordType?.id],
+    queryFn: ({ signal }) => indicatorApi.queues(assessmentId, areaId, label, object, signal, undefined, period, recordType?.id),
+    staleTime: 60_000,
+  });
+  return (
+    <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+      <CountSelect
+        icon={<Layers className="h-3.5 w-3.5" />}
+        title="Record Type"
+        tip="The Lead record types, each with how many stale Leads have it (for the period picked on the table). Pick one to see only its Leads and the Statuses they are stuck in."
+        allText="All record types"
+        value={recordType?.id}
+        options={types.data ?? []}
+        loading={types.isLoading}
+        error={!!types.error}
+        empty="Leads have no record types."
+        onChange={onRecordType}
+      />
+      <CountSelect
+        icon={<Users className="h-3.5 w-3.5" />}
+        title="Stuck in Status"
+        tip={`The Status each stale Lead${recordType ? ` of “${recordType.name}”` : ''} is stuck in, with how many Leads (for the period picked on the table). Pick one to see only those Leads.`}
+        allText="All statuses"
+        value={status?.id}
+        options={statuses.data ?? []}
+        loading={statuses.isLoading}
+        error={!!statuses.error}
+        empty={recordType ? 'No stale Leads of this record type in this period.' : 'No stale Leads in this period.'}
+        onChange={onStatus}
+      />
     </div>
   );
 }

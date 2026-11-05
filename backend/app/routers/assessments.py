@@ -492,12 +492,13 @@ def _picked(fields: str | None, rec: dict | None = None) -> list[str] | None:
 
 def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str, obj: str | None,
                        only: str | None = None, period: str | None = None, queue: str | None = None,
-                       days: int | None = None) -> tuple[dict, str, str]:
+                       days: int | None = None, record_type: str | None = None) -> tuple[dict, str, str]:
     """(object, where, org id, title) for one measure of one area, as saved by the health check that measured it.
     `only` = comma-separated fields: just the records with a problem in one of them (a flagged value, or for a
     missing-fields measure an empty value). `period` (No Activity only) = "90", "180" or "range:YYYY-MM-DD:YYYY-MM-DD" instead of
     the health check's 6 months. `queue` (Stuck Queue-Owned Leads only) = just the Leads in that queue, by its id; `days` = the
-    Leads in a queue more than 3, 5 or 7 days (0 = every Lead in a queue; the card's own threshold when not given)."""
+    Leads in a queue more than 3, 5 or 7 days (0 = every Lead in a queue; the card's own threshold when not given).
+    `record_type` (Stale Leads only) = just the Leads of one record type, by its id ("none" = the Leads with no record type)."""
     row = _get(db, assessment_id)
     area = next((a for a in (row.results or {}).get("areas", []) if a.get("areaId") == area_id), None)
     ind = next((i for i in (area or {}).get("indicators", []) if i.get("label") == label), None)
@@ -523,6 +524,16 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
             rec = {**rec, "where": " AND ".join([explorer.and_part(rec["where"]), *queues.longer_than(picked, bool(rec.get("history")))])}
     elif days is not None:
         raise HTTPException(422, "Only the Stuck Queue-Owned Leads measure takes a number of days.")
+    if record_type:
+        if not rec.get("by_status"):
+            raise HTTPException(422, "Only the Stale Leads measure takes a record type.")
+        if record_type == "none":
+            cond = "RecordTypeId = null"
+        elif re.fullmatch(r"012[A-Za-z0-9]{12}([A-Za-z0-9]{3})?", record_type):
+            cond = f"RecordTypeId = '{record_type}'"
+        else:
+            raise HTTPException(422, "Unknown record type.")
+        rec = {**rec, "where": f"{explorer.and_part(rec['where'])} AND {cond}" if rec.get("where") else cond}
     if queue:
         if not _by_queue(rec):
             raise HTTPException(422, "Only the Stuck Queue-Owned Leads and Inactive Lead Assignment Rules measures take a queue.")
@@ -575,12 +586,13 @@ def indicator_records(
     queue: str | None = Query(None, max_length=80, description="A Lead queue's id (Stuck Queue-Owned Leads, Inactive Lead Assignment Rules)"),
     days: int | None = Query(None, ge=0, le=7, description="Stuck Queue-Owned Leads only: in a queue more than 3, 5 or 7 days (0 = all)"),
     fields: str | None = Query(None, max_length=1200, description="Comma-separated fields to show as the columns, instead of the measure's"),
+    record_type: str | None = Query(None, max_length=20, description='Stale Leads only: a Lead record type\'s id, or "none" (no record type)'),
     db: Session = Depends(get_db),
     http: httpx.Client = Depends(http_dep),
     settings: Settings = Depends(settings_dep),
 ):
     """The records a measure counted, live from Salesforce (200 per page)."""
-    rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, object, only, period, queue, days)
+    rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, object, only, period, queue, days, record_type)
     picked = _picked(fields, rec)
     page = _salesforce(db, http, settings, lambda sf: explorer.records_matching(
         sf, rec["object"], rec.get("where"), cursor, columns=picked or rec.get("columns"), order=rec.get("order"), filters=_filters(filters),
@@ -602,13 +614,14 @@ def indicator_queues(
     object: str | None = Query(None, max_length=80),
     days: int | None = Query(None, ge=0, le=7),
     period: str | None = Query(None, max_length=40, description="Stale Leads: the period picked on the card"),
+    record_type: str | None = Query(None, max_length=20, description='Stale Leads only: a Lead record type\'s id, or "none" (no record type)'),
     db: Session = Depends(get_db),
     http: httpx.Client = Depends(http_dep),
     settings: Settings = Depends(settings_dep),
 ):
     """Every queue that can own Leads, with how many of the measure's Leads sit in each (0 for the others), most first, for
-    its Queue filter (Stuck Queue-Owned Leads); for Stale Leads, each Status the Leads are stuck in."""
-    rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, object, period=period, days=days)
+    its Queue filter (Stuck Queue-Owned Leads); for Stale Leads, each Status the Leads are stuck in (of the record type picked)."""
+    rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, object, period=period, days=days, record_type=record_type)
     if not _by_queue(rec):
         raise HTTPException(422, "Only the Stuck Queue-Owned Leads and Inactive Lead Assignment Rules measures are listed by queue.")
     where = f" WHERE {rec['where']}" if rec.get("where") else ""
@@ -644,6 +657,44 @@ def indicator_queues(
         routed = rec.get("routed_queues")  # the queues the active rule assigns to, saved by the check (None = not known)
         out = [{"id": i, "name": n, "count": counts.get(n, 0), "active": None if routed is None else i in routed} for i, n in queues.items()]
         return sorted(out, key=lambda q: (-q["count"], q["name"].lower()))
+
+    return _salesforce(db, http, settings, load, org_id)
+
+
+@router.get("/assessments/{assessment_id}/areas/{area_id}/indicator-record-types", response_model=list[QueueCount])
+def indicator_record_types(
+    assessment_id: str,
+    area_id: str,
+    label: str = Query(..., max_length=200),
+    object: str | None = Query(None, max_length=80),
+    period: str | None = Query(None, max_length=40, description="Stale Leads: the period picked on the card"),
+    db: Session = Depends(get_db),
+    http: httpx.Client = Depends(http_dep),
+    settings: Settings = Depends(settings_dep),
+):
+    """Stale Leads: the org's Lead record types, each with how many of the stale Leads (for the period picked) have it, most
+    first, for the Record Type filter. Empty when Leads have no record types."""
+    rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, object, period=period)
+    if not rec.get("by_status"):
+        raise HTTPException(422, "Only the Stale Leads measure is listed by record type.")
+    where = f" WHERE {rec['where']}" if rec.get("where") else ""
+
+    def load(sf):
+        try:
+            types = {r["Id"]: (r.get("Name") or r["Id"], bool(r.get("IsActive"))) for r in sf.query(
+                f"SELECT Id, Name, IsActive FROM RecordType WHERE SobjectType = {soql_str(rec['object'])} ORDER BY Name LIMIT 200").get("records", [])}
+            if not types:
+                return []  # no record types: nothing to pick
+            counts = {r.get("r"): int(r.get("c") or 0) for r in sf.query(
+                f"SELECT RecordTypeId r, COUNT(Id) c FROM {rec['object']}{where} GROUP BY RecordTypeId").get("records", [])}
+        except SalesforceAuthExpired:
+            raise
+        except SalesforceError:  # no RecordTypeId on the object, or the record types can't be read
+            return []
+        out = [{"id": i, "name": n, "count": counts.get(i, 0)} for i, (n, active) in types.items() if active or counts.get(i)]
+        if counts.get(None):  # Leads with no record type
+            out.append({"id": "none", "name": "No record type", "count": counts[None]})
+        return sorted(out, key=lambda t: (-t["count"], t["name"].lower()))
 
     return _salesforce(db, http, settings, load, org_id)
 
@@ -699,12 +750,13 @@ def indicator_values(
     period: str | None = Query(None, max_length=40, description='No Activity only: "90", "180" or "range:YYYY-MM-DD:YYYY-MM-DD"'),
     queue: str | None = Query(None, max_length=80, description="A Lead queue's id (Stuck Queue-Owned Leads, Inactive Lead Assignment Rules)"),
     days: int | None = Query(None, ge=0, le=7, description="Stuck Queue-Owned Leads only: in a queue more than 3, 5 or 7 days (0 = all)"),
+    record_type: str | None = Query(None, max_length=20, description='Stale Leads only: a Lead record type\'s id, or "none" (no record type)'),
     db: Session = Depends(get_db),
     http: httpx.Client = Depends(http_dep),
     settings: Settings = Depends(settings_dep),
 ):
     """The values of one column among a measure's records, for its filter drop-down."""
-    rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, object, only, period, queue, days)
+    rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, object, only, period, queue, days, record_type)
     return _salesforce(db, http, settings, lambda sf: explorer.field_values(
         sf, rec["object"], field, None, _filters(filters), base_where=rec.get("where")), org_id)
 
@@ -721,11 +773,12 @@ def indicator_records_csv(
     queue: str | None = Query(None, max_length=80, description="A Lead queue's id (Stuck Queue-Owned Leads, Inactive Lead Assignment Rules)"),
     days: int | None = Query(None, ge=0, le=7, description="Stuck Queue-Owned Leads only: in a queue more than 3, 5 or 7 days (0 = all)"),
     fields: str | None = Query(None, max_length=1200, description="Comma-separated fields to show as the columns, instead of the measure's"),
+    record_type: str | None = Query(None, max_length=20, description='Stale Leads only: a Lead record type\'s id, or "none" (no record type)'),
     db: Session = Depends(get_db),
     http: httpx.Client = Depends(http_dep),
     settings: Settings = Depends(settings_dep),
 ):
-    rec, org_id, title = _indicator_records(db, assessment_id, area_id, label, object, only, period, queue, days)
+    rec, org_id, title = _indicator_records(db, assessment_id, area_id, label, object, only, period, queue, days, record_type)
     picked = _picked(fields, rec)
     return _records_csv(db, http, settings, org_id, rec["object"], rec.get("where"), title, picked or rec.get("columns"), rec.get("order"),
                         _filters(filters), notes=rec.get("notes"), rec=rec, exact=bool(picked))
