@@ -49,6 +49,8 @@ export function QueueFilter({
   title = 'Lead queues',
   tip,
   empty = 'No Lead queues found.',
+  neutral = false,
+  allTitle = 'Show every queue’s Leads',
 }: {
   assessmentId: string;
   areaId: string;
@@ -62,6 +64,10 @@ export function QueueFilter({
   title?: string;
   tip?: string;
   empty?: string;
+  /** Counts in grey, not red (they aren't problems, e.g. Accounts in a hierarchy). */
+  neutral?: boolean;
+  /** The "All" chip's tooltip. */
+  allTitle?: string;
 }) {
   const queues = useQuery({
     queryKey: ['indicator-queues', assessmentId, areaId, label, object, days],
@@ -90,7 +96,7 @@ export function QueueFilter({
             type="button"
             aria-pressed={!value}
             onClick={() => onChange(undefined)}
-            title="Show every queue’s Leads"
+            title={allTitle}
             className={cx(
               'inline-flex items-center rounded-full border px-2.5 py-1 text-xs transition',
               !value ? 'border-brand bg-brand-soft font-semibold text-brand-ink' : 'border-line hover:border-brand/40 hover:text-brand',
@@ -116,7 +122,7 @@ export function QueueFilter({
             >
               {q.name}
               {/* green: the active rule assigns to the queue; red: no active rule does */}
-              <span className={cx('rounded-full px-1.5 tabular-nums', on ? 'bg-surface' : q.count ? (q.active ? 'bg-good-soft text-good' : 'bg-bad-soft text-bad') : 'bg-muted')}>{fmtNumber(q.count)}</span>
+              <span className={cx('rounded-full px-1.5 tabular-nums', on ? 'bg-surface' : q.count && !neutral ? (q.active ? 'bg-good-soft text-good' : 'bg-bad-soft text-bad') : 'bg-muted')}>{fmtNumber(q.count)}</span>
               {on && <X className="h-3 w-3" aria-hidden="true" />}
             </button>
           );

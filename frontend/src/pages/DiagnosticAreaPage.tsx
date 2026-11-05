@@ -56,7 +56,8 @@ const GROUPS: Record<string, string> = {
   'Orphaned Contacts': 'Contacts',
   'Contacts to Multiple Accounts': 'Contacts',
   'Multi-Deal Contacts': 'Contacts',
-  'Account Hierarchy Loops': 'Accounts',
+  'Accounts Without Contacts': 'Accounts',
+  'Account Hierarchy Chains': 'Accounts',
 };
 
 function objectOf(label: string): { group: string; title: string } | null {

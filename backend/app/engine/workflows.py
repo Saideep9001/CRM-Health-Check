@@ -14,6 +14,7 @@ from ..salesforce import assignment, queues
 from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
 from .core import Ctx, FindingDraft, Unavailable, pct, rate_score
 from .core import in_list as soql_in
+from .data_quality import accounts_without_contacts
 
 OPEN_LEADS = "IsConverted = false"
 OPEN_OPPS = "IsClosed = false"
@@ -699,7 +700,6 @@ def multi_deal_contacts(ctx: Ctx) -> None:
 
 
 LOOP_ROWS = 200000  # Accounts with a Parent Account read to follow their hierarchies
-LOOP_LISTED = 500  # Accounts listed (with their loop) on Account Hierarchy Loops
 
 
 def _loops(parent: dict[str, str]) -> list[list[str]]:
@@ -723,74 +723,124 @@ def _loops(parent: dict[str, str]) -> list[list[str]]:
     return loops
 
 
-def hierarchy_loops(ctx: Ctx) -> None:
-    """Account Hierarchy Loops: Accounts whose Parent Account chain comes back to itself (A → B → C → A), so the hierarchy
-    never reaches a top Account. Every Account with a parent is read and each chain followed up; each loop counts once."""
-    label = "Account Hierarchy Loops"
+CHAIN_LISTED = 500  # Accounts listed when no top Account is picked
+CHAIN_TOPS = 30  # the largest hierarchies offered as chips above the table
+CHAIN_SAVED = 20000  # Accounts whose place in their hierarchy is saved for the table
+
+
+def hierarchy_chains(ctx: Ctx) -> None:
+    """Account Hierarchy Chains: how Accounts link up through Parent Account (A is the parent of B, B of C: A → B → C).
+    Every Account with a parent is read and its chain followed up to its top Account; each Account gets its top Account,
+    level and the Accounts below it. Shown for review, not scored; a chain that loops back on itself raises a problem."""
+    label = "Account Hierarchy Chains"
     if not ctx.has_field("Account", "ParentId"):
         raise Unavailable("Accounts in this org have no Parent Account field, so there are no hierarchies to check.")
     total = ctx.count("Account", recent=False)
     rows = ctx.rows("SELECT Id, Name, ParentId FROM Account WHERE ParentId != null", LOOP_ROWS) if total else []
     parent = {r["Id"]: r["ParentId"] for r in rows if r.get("Id") and r.get("ParentId")}
     names = {r["Id"]: r.get("Name") or r["Id"] for r in rows if r.get("Id")}
+    tops = sorted({p for p in parent.values() if p not in parent})  # parents with no parent of their own
+    for i in range(0, len(tops), 200):  # their names (they aren't in the rows above)
+        try:
+            for r in ctx.rows(f"SELECT Id, Name FROM Account WHERE {ctx.ids_in(tops[i:i + 200], 200)}", 200):
+                names[r["Id"]] = r.get("Name") or r["Id"]
+        except SalesforceAuthExpired:
+            raise
+        except SalesforceError:
+            break
     loops = _loops(parent)
-    members = [a for loop in loops for a in loop]
-    in_loop = set(members)
-    lead: dict[str, bool] = {}  # does this Account's chain run into a loop?
+    in_loop = {a for loop in loops for a in loop}
 
-    def leads_in(a: str) -> bool:
+    # each Account's chain from its top Account down to it (for a loop: round the loop, ending at the Account)
+    chain: dict[str, list[str]] = {t: [t] for t in tops}
+    for loop in loops:
+        for a in loop:  # walk up from a until back at a, then read it top-down
+            up, node = [a], parent[a]
+            while node != a:
+                up.append(node)
+                node = parent[node]
+            chain[a] = up[::-1]
+    for a in parent:
         seen: list[str] = []
         node = a
-        while node in parent and node not in in_loop and node not in lead and node not in seen:
+        while node not in chain and node in parent:
             seen.append(node)
             node = parent[node]
-        hit = node in in_loop or lead.get(node, False)
-        for s in seen:
-            lead[s] = hit
-        return hit
+        base = chain.get(node, [node])
+        for s in reversed(seen):
+            base = [*base, s]
+            chain[s] = base
+    members = sorted(set(tops) | set(parent), key=lambda a: (names.get(a) or a).lower())
+    below = {a: 0 for a in members}
+    for a in members:
+        for anc in chain[a][:-1]:
+            if anc != a:
+                below[anc] = below.get(anc, 0) + 1
+    looped = {a for a in members if chain[a][0] in in_loop or a in in_loop}  # in a loop, or under one
 
-    leading = sum(1 for a in parent if a not in in_loop and leads_in(a))
-    paths: dict[str, str] = {}  # each Account in a loop → its loop, starting from it
-    for loop in loops:
-        for i, a in enumerate(loop):
-            turn = loop[i:] + loop[:i]
-            paths[a] = " → ".join(names.get(x, x) for x in [*turn, a])
-    score = max(0.0, 100.0 - 20 * len(loops))
-    shown = "; ".join(paths[loop[0]] for loop in loops[:5]) + (f"; and {len(loops) - 5:,} more" if len(loops) > 5 else "")
+    def top_of(a: str) -> str | None:
+        return None if a in looped else chain[a][0]
+
+    def path_of(a: str) -> str:
+        text = " → ".join(names.get(x, x) for x in chain[a])
+        if a in looped:
+            # in a loop: the last Account is the parent of the first, so the chain goes round; under a loop: no top Account
+            return text + f" ↻ back to {names.get(chain[a][0], chain[a][0])}" if a in in_loop else f"↻ (loop) {text}"
+        return text
+
+    families: dict[str, list[str]] = {}
+    for a in members:
+        if top_of(a):
+            families.setdefault(top_of(a), []).append(a)
+    biggest = sorted(families, key=lambda t: (-len(families[t]), (names.get(t) or t).lower()))
+    deepest = max((a for a in members if a not in looped), key=lambda a: len(chain[a]), default=None)
+    loop_text = "; ".join(path_of(loop[0]) for loop in loops[:5]) + (f"; and {len(loops) - 5:,} more" if len(loops) > 5 else "")
     m = ctx.metric(
-        label, len(members), "count", "lower-better", score,
-        how="Accounts whose Parent Account chain comes back to itself: Account A’s parent is B, B’s parent is C and C’s parent is A, "
-        "so the hierarchy goes round in a circle and never reaches a top Account. We read every Account that has a Parent "
-        "Account and follow each chain up; each loop counts once.",
-        rule="100 with no loops, 20 points less for each loop (0 with 5 or more).",
-        columns=["Name", "ParentId", "OwnerId", "CreatedDate"],
+        label, len(members), "count", "lower-better", None,
+        how="How Accounts link up through Parent Account: Account A is the parent of B, B of C, so their chain is A → B → C. "
+        "We read every Account that has a Parent Account and follow it up to its top Account (the one with no parent); "
+        "an Account is in a hierarchy when it has a parent or at least one child.",
+        rule="Shown for review, not scored: hierarchies are neither good nor bad. A chain that loops back on itself "
+        "(A → B → C → A) has no top Account and raises a problem.",
+        columns=["Name", "OwnerId"],
         order="Name",
         criteria=[
             ("Records checked", f"{len(rows):,} Accounts with a Parent Account, of {total:,} Accounts"
              + (f" (the first {LOOP_ROWS:,})" if len(rows) >= LOOP_ROWS else "")),
-            ("Loop", "Following Parent Account up from an Account comes back to an Account already passed (an Account that is its own parent is a loop of one)"),
-            ("What's counted", f"{len(members):,} Accounts in {len(loops):,} loop{'' if len(loops) == 1 else 's'}"
-             + (f"; {leading:,} more Accounts sit under a loop, so their hierarchy never ends either" if leading else "")),
-            ("Loops", shown or "None"),
-            ("Records listed", f"Every Account in a loop (up to {LOOP_LISTED:,}), by name, each with its loop"),
+            ("In a hierarchy", "The Account has a Parent Account or is the Parent Account of another Account"),
+            ("What's counted", f"{len(members):,} of {total:,} Accounts ({pct(len(members), total):.0f}%) are in a hierarchy, "
+             f"across {len(families):,} hierarch{'y' if len(families) == 1 else 'ies'}"),
+            ("Deepest chain", f"{len(chain[deepest])} levels: {path_of(deepest)}" if deepest else "None"),
+            ("Largest hierarchy", f"{names.get(biggest[0], biggest[0])} ({len(families[biggest[0]]):,} Accounts)" if biggest else "None"),
+            ("Loops", f"{len(in_loop):,} Accounts in {len(loops):,} loop{'' if len(loops) == 1 else 's'}: {loop_text}" if loops else "None"),
+            ("Records listed", f"The Accounts in a hierarchy (up to {CHAIN_LISTED:,}; pick a top Account above the table for one "
+             "hierarchy), each with its top Account, level, the Accounts below it and its chain"),
         ],
-        records=("Account", ctx.ids_in(members, LOOP_LISTED)) if members else None,
+        records=("Account", ctx.ids_in(members, CHAIN_LISTED)) if members else None,
         recent=False,
-        extra="loop_path",
+        extra="hierarchy",
     )
+    m.out_of, m.out_of_label = total, "Accounts"
     if m.records:
-        m.records[0]["reasons"] = {a: paths[a] for a in members[:LOOP_LISTED]}
+        saved = members[:CHAIN_SAVED]
+        m.records[0].update({
+            "reasons": {a: {"top": names.get(top_of(a)) if top_of(a) else None, "level": None if a in looped else len(chain[a]),
+                            "below": below.get(a, 0), "path": path_of(a)} for a in saved},
+            # the largest hierarchies, for the chips above the table: each top Account with its Accounts
+            "hierarchies": [{"id": t, "name": names.get(t, t), "count": len(families[t]), "ids": families[t][:CHAIN_LISTED]}
+                            for t in biggest[:CHAIN_TOPS]],
+        })
     if loops:
+        members_in = sorted(in_loop)
         ctx.finding(
             name="Account hierarchies that loop back on themselves",
-            records=("Account", ctx.ids_in(members, LOOP_LISTED)),
+            records=("Account", ctx.ids_in(members_in, CHAIN_LISTED)),
             recent=False,
-            score=score,
+            score=50,
             min_score=101,  # raised for any loop
             severity="high",
-            affected=len(members),
-            description=f"{len(members):,} Accounts are in {len(loops):,} Parent Account loop{'' if len(loops) == 1 else 's'}, e.g. {paths[loops[0][0]]}."
-            + (f" {leading:,} more Accounts sit under a loop." if leading else ""),
+            affected=len(in_loop),
+            description=f"{len(in_loop):,} Accounts are in {len(loops):,} Parent Account loop{'' if len(loops) == 1 else 's'}, e.g. {path_of(loops[0][0])}.",
             why="A hierarchy that goes round in a circle has no top Account, so the hierarchy view, roll-up reports and anything "
             "that walks up to the parent company can’t work it out.",
             impact="Wrong or missing totals for the parent company, and Accounts that can’t be placed in their real company structure.",
@@ -1404,7 +1454,7 @@ def layout_usability(ctx: Ctx) -> None:
 
 AREAS = {
     "area-3": [stuck_queue_leads, inactive_rules, criteria_mismatches],
-    "area-4": [contact_roles, orphaned_contacts, multiple_accounts, multi_deal_contacts, hierarchy_loops],
+    "area-4": [contact_roles, orphaned_contacts, multiple_accounts, multi_deal_contacts, accounts_without_contacts, hierarchy_chains],
     "area-5": [stuck_opportunities, missing_next_steps, closed_lost_reasons, stage_guidance],
     "area-6": [missing_sales_activities, web_to_lead, email_templates, activity_capture],
     "area-7": [validation_rules, required_field_gaps, junk_data, layout_usability],
@@ -1418,7 +1468,8 @@ STEP_LABELS = {
     orphaned_contacts: "Finding Contacts without an Account",
     multiple_accounts: "Checking Contacts to Multiple Accounts",
     multi_deal_contacts: "Finding Contacts on several deals",
-    hierarchy_loops: "Following Account hierarchies",
+    accounts_without_contacts: "Finding Accounts without Contacts",
+    hierarchy_chains: "Following Account hierarchies",
     stuck_opportunities: "Finding stuck deals",
     missing_next_steps: "Checking next steps on deals",
     closed_lost_reasons: "Checking why deals were lost",

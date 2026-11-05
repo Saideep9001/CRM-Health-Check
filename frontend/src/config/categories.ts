@@ -20,7 +20,6 @@ export const DIAGNOSTIC_AREAS: DiagnosticArea[] = [
       'Missing Key Fields (Accounts)',
       'Data Standardization Issues (Accounts)',
       'No Activity in 6 Months (Accounts)',
-      'Accounts Without Contacts',
       'Accounts Without Open Opportunities',
       'Duplicate Contacts',
       'Missing Key Fields (Contacts)',
@@ -93,7 +92,8 @@ export const DIAGNOSTIC_AREAS: DiagnosticArea[] = [
       'Orphaned Contacts',
       'Contacts to Multiple Accounts',
       'Multi-Deal Contacts',
-      'Account Hierarchy Loops',
+      'Accounts Without Contacts',
+      'Account Hierarchy Chains',
     ],
   },
   {

@@ -350,7 +350,8 @@ def finding_records_csv(
 
 def _by_queue(rec: dict) -> bool:
     """Can this measure's records be narrowed to one Lead queue (Stuck Queue-Owned Leads, Inactive Lead Assignment Rules)?"""
-    return rec.get("extra") == "days_in_queue" or bool(rec.get("by_queue")) or rec.get("inactive_queues") is not None
+    return (rec.get("extra") == "days_in_queue" or bool(rec.get("by_queue")) or rec.get("inactive_queues") is not None
+            or rec.get("hierarchies") is not None)
 
 
 # one role per line, the last column, frozen so it stays in view while the table scrolls sideways
@@ -361,8 +362,11 @@ def _rule_owner_ids(rec: dict) -> set[str]:
     return {i for i in ids if re.fullmatch(r"00[5G][A-Za-z0-9]{12}([A-Za-z0-9]{3})?", i or "")}
 
 
-# Account Hierarchy Loops: each Account's loop (each Account → its Parent Account), the last column, frozen
-LOOP_COLUMN = {"name": "LoopPath", "label": "Loop Path (each → its parent)", "type": "string", "frozen": True}
+# Account Hierarchy Chains: each Account's place in its hierarchy, saved by the check; its chain is the last column, frozen
+HIERARCHY_COLUMNS = [{"name": "TopAccount", "label": "Top Account", "type": "string"},
+                     {"name": "HierarchyLevel", "label": "Level", "type": "int"},
+                     {"name": "AccountsBelow", "label": "Accounts Below", "type": "int"},
+                     {"name": "HierarchyPath", "label": "Hierarchy Path (parent → child)", "type": "string", "frozen": True}]
 DEAL_ROLES_COLUMN = {"name": "OpenDealRoles", "label": "Roles on Open Deals", "type": "lines", "frozen": True}
 # Contacts to Multiple Accounts: every Account a Contact is related to, one per line ("lines" = shown stacked in the table).
 RELATED_ACCOUNTS_COLUMN = {"name": "RelatedAccounts", "label": "Related Accounts", "type": "lines", "frozen": True}
@@ -401,11 +405,14 @@ def _with_extra(sf, rec: dict, columns: list[dict], records: list[dict]) -> list
         return assignment.add_reason(columns, records, rec.get("reasons") or {}, rec.get("reason"), column=assignment.MATCH_COLUMN)
     if rec.get("extra") == "related_accounts":
         return _add_related_accounts(sf, columns, records)
-    if rec.get("extra") == "loop_path":  # Account Hierarchy Loops: each Account's loop, saved by the check
-        reasons = rec.get("reasons") or {}
+    if rec.get("extra") == "hierarchy":  # Account Hierarchy Chains: each Account's top Account, level, Accounts below and chain
+        saved = rec.get("reasons") or {}
         for r in records:
-            r["values"][LOOP_COLUMN["name"]] = reasons.get(r.get("id") or "")
-        return [*(c for c in columns if c["name"] != LOOP_COLUMN["name"]), LOOP_COLUMN]
+            place = saved.get(r.get("id") or "") or {}
+            r["values"].update({"TopAccount": place.get("top"), "HierarchyLevel": place.get("level"),
+                                "AccountsBelow": place.get("below"), "HierarchyPath": place.get("path")})
+        names = {c["name"] for c in HIERARCHY_COLUMNS}
+        return [*(c for c in columns if c["name"] not in names), *HIERARCHY_COLUMNS]
     if rec.get("extra") == "deal_roles":  # Multi-Deal Contacts: each Contact's roles on open deals, saved by the check
         reasons = rec.get("reasons") or {}
         for r in records:
@@ -495,7 +502,13 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
     if queue:
         if not _by_queue(rec):
             raise HTTPException(422, "Only the Stuck Queue-Owned Leads and Inactive Lead Assignment Rules measures take a queue.")
-        if rec.get("inactive_queues") is not None:  # Inactive Lead Assignment Rules: an inactive queue, or a rule's queues and users
+        if rec.get("hierarchies") is not None:  # Account Hierarchy Chains: one top Account's hierarchy
+            family = next((h for h in rec["hierarchies"] if h["id"] == queue), None)
+            if family is None:
+                raise HTTPException(422, "Unknown top Account.")
+            ids = [i for i in family["ids"] if re.fullmatch(r"[A-Za-z0-9]{15,18}", i)]
+            rec = {**rec, "where": f"Id IN ({', '.join(repr(i) for i in ids)})" if ids else "Id = null"}
+        elif rec.get("inactive_queues") is not None:  # Inactive Lead Assignment Rules: an inactive queue, or a rule's queues and users
             picked = [q.strip() for q in queue.split(",") if q.strip()]
             allowed = _rule_owner_ids(rec)
             if not picked or len(picked) > 100 or any(q not in allowed for q in picked):
@@ -571,6 +584,8 @@ def indicator_queues(
     rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, object, days=days)
     if not _by_queue(rec):
         raise HTTPException(422, "Only the Stuck Queue-Owned Leads and Inactive Lead Assignment Rules measures are listed by queue.")
+    if rec.get("hierarchies") is not None:  # Account Hierarchy Chains: the largest hierarchies, by top Account (as the check saw them)
+        return [{"id": h["id"], "name": h["name"], "count": h["count"]} for h in rec["hierarchies"]]
     where = f" WHERE {rec['where']}" if rec.get("where") else ""
     if rec.get("inactive_queues") is not None:  # Inactive Lead Assignment Rules: only the queues out of the active routing
         def count(sf):

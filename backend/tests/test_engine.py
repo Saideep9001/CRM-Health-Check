@@ -137,16 +137,16 @@ def test_full_data_quality_run(client, sf):
     areas = {x["areaId"]: x for x in res["areas"]}
     ind = {i["label"]: i for i in areas["area-1"]["indicators"]}
     labels = [i["label"] for i in areas["area-1"]["indicators"]]
-    # Each object's cards together: Accounts get the four core cards plus two of their own.
-    assert labels[:6] == ["Duplicate Accounts", "Missing Key Fields (Accounts)", "Data Standardization Issues (Accounts)",
-                          "No Activity in 6 Months (Accounts)", "Accounts Without Contacts", "Accounts Without Open Opportunities"]
+    # Each object's cards together: Accounts get the four core cards plus one of their own (Accounts Without Contacts is in Area 4).
+    assert labels[:5] == ["Duplicate Accounts", "Missing Key Fields (Accounts)", "Data Standardization Issues (Accounts)",
+                          "No Activity in 6 Months (Accounts)", "Accounts Without Open Opportunities"]
+    assert "Accounts Without Contacts" not in ind
     assert {"Duplicate Contacts", "Missing Key Fields (Contacts)", "Data Standardization Issues (Contacts)", "No Activity in 6 Months (Contacts)",
             "Duplicate Leads", "Missing Key Fields (Leads)", "Missing Key Fields (Opportunities)"} <= set(ind)
     assert ind["Duplicate Accounts"]["value"] == 2 and ind["Duplicate Contacts"]["value"] == 0
     mk = ind["Missing Key Fields (Contacts)"]  # Email or Phone empty on 40 of 200 (the first condition counted by the fake)
     assert {k: mk[k] for k in ("value", "unit", "direction")} == {"value": 20.0, "unit": "%", "direction": "lower-better"}
     assert ind["Data Standardization Issues (Accounts)"]["value"] == 5  # all 4 phones lack a country code (e.g. "415-555-1234"), and "California" vs "CA"
-    assert ind["Accounts Without Contacts"]["value"] == 25
     # each data card charts its own number per field
     dup = {f["field"]: f for f in ind["Duplicate Accounts"]["fieldScores"]}
     assert dup["Website"] == {"field": "Website", "label": "Website", "count": 5, "of": 6, "pct": 83.3}  # acme.com ×3, globex.io ×2

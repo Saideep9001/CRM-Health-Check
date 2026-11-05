@@ -333,7 +333,9 @@ function Records({
   // Stuck Queue-Owned Leads: the Leads in a queue more than 3, 5 or 7 days (0 = any time), and only one queue's (undefined = all).
   const stuckQueue = indicator?.label === 'Stuck Queue-Owned Leads';
   // Stuck Queue-Owned Leads and Inactive Lead Assignment Rules: the org's Lead queues above the table, to pick one.
-  const byQueue = stuckQueue || indicator?.label === 'Inactive Lead Assignment Rules';
+  // Account Hierarchy Chains: the largest hierarchies' top Accounts, to see one hierarchy.
+  const byTop = indicator?.label === 'Account Hierarchy Chains';
+  const byQueue = stuckQueue || byTop || indicator?.label === 'Inactive Lead Assignment Rules';
   const [queueDays, setQueueDays] = useState(3);
   const [queue, setQueue] = useState<PickedQueue | undefined>();
   // Areas 3 and 4: the fields picked to show as the table's columns (null = the measure's own).
@@ -422,6 +424,11 @@ function Records({
         {stuckQueue && <QueueDays value={queueDays} onChange={setQueueDays} />}
         {stuckQueue && (
           <QueueFilter assessmentId={measureAssessmentId!} areaId={area.id} label={indicator!.label} object={object!} value={queue} days={days} onChange={setQueue} />
+        )}
+        {byTop && (
+          <QueueFilter assessmentId={measureAssessmentId!} areaId={area.id} label={indicator!.label} object={object!} value={queue} onChange={setQueue} neutral
+            title="Top Accounts" tip="The largest hierarchies, by their top Account (the one with no Parent Account), with how many Accounts each has. Pick one to see only that hierarchy."
+            empty="No Account hierarchies." allTitle="Show every Account in a hierarchy" />
         )}
         {byQueue && !stuckQueue && (
           // Inactive Lead Assignment Rules: the inactive rules, then who they assign to, then that owner's Leads
