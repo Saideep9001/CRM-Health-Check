@@ -439,7 +439,8 @@ export interface ResolvedFinding {
 export interface FindingRecordsPage {
   object: string;
   /** frozen: kept last and in view while the table scrolls sideways. */
-  columns: { name: string; label: string; type: string; frozen?: boolean; pinned?: boolean }[];
+  /** hidden: not shown as a column (it's another column's note; still in the CSV). note: a value shown under this one. */
+  columns: { name: string; label: string; type: string; frozen?: boolean; pinned?: boolean; hidden?: boolean; note?: string | null }[];
   records: DataRow[];
   totalSize: number | null;
   nextCursor: string | null;

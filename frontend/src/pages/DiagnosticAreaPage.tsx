@@ -59,7 +59,7 @@ const GROUPS: Record<string, string> = {
   'Accounts Without Contacts': 'Accounts',
   'Account Hierarchy Chains': 'Accounts',
   'Child Accounts Under Inactive Parents': 'Accounts',
-  'Self-Parented Accounts': 'Accounts',
+  'Possible Missing Parent Accounts': 'Accounts',
 };
 
 function objectOf(label: string): { group: string; title: string } | null {

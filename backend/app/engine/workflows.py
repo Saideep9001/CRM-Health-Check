@@ -701,7 +701,6 @@ def multi_deal_contacts(ctx: Ctx) -> None:
 
 
 LOOP_ROWS = 200000  # Accounts with a Parent Account read to follow their hierarchies
-LOOP_LISTED = 500  # self-parented Accounts listed
 
 
 def _loops(parent: dict[str, str]) -> list[list[str]]:
@@ -864,51 +863,242 @@ def _parent_links(ctx: Ctx) -> list[dict]:
     return ctx.memo["parent_links"]
 
 
-def self_parented(ctx: Ctx) -> None:
-    """Self-Parented Accounts: Accounts whose Parent Account is the Account itself (Account A is the parent of Account A).
-    SOQL can't compare two fields, so every Account with a parent is read and checked here."""
-    label = "Self-Parented Accounts"
+GUESS_ROWS = 50000  # Accounts read to look for a missing Parent Account
+GUESS_CONTACTS = 50000  # Contacts read for their email domains
+GUESS_LISTED = 200  # Accounts listed (one page, most likely first)
+
+# Words dropped before names are compared ("Acme Corp - West (UK)" → "acme"), and words too common to match on alone.
+_LEGAL = {"inc", "incorporated", "llc", "ltd", "limited", "corp", "corporation", "co", "company", "plc", "gmbh", "ag", "sa", "sarl",
+          "bv", "nv", "pty", "pvt", "lp", "llp", "group", "holdings", "holding", "the"}
+_PLACE = {"east", "west", "north", "south", "central", "northeast", "northwest", "southeast", "southwest", "region", "regional",
+          "division", "branch", "office", "hq", "headquarters", "subsidiary", "unit", "dept", "department", "europe", "emea", "apac",
+          "americas", "asia", "uk", "us", "usa", "india", "global", "international", "intl"}
+_COMMON = {"abc", "test", "sample", "services", "service", "solutions", "systems", "enterprises", "partners", "consulting",
+           "technologies", "technology", "tech", "industries", "trading", "new", "first", "united", "american", "national",
+           "general", "best", "my", "and", "of", "account", "individual", "customer", "zz", "do", "not", "use", "media", "labs"}
+_PERSONAL = {"gmail.com", "googlemail.com", "yahoo.com", "hotmail.com", "outlook.com", "live.com", "icloud.com", "me.com", "aol.com",
+             "msn.com", "mail.com", "gmx.com", "yandex.com", "zoho.com", "protonmail.com", "proton.me", "example.com", "example.org",
+             "test.com", "salesforce.com", "force.com"}
+_STRENGTH = {"sibling": 3, "duns": 3, "domain": 2, "contacts": 2, "name": 2, "phone": 1, "address": 1}
+
+
+def _clean_name(name: str) -> list[str]:
+    """A name's words without punctuation, (brackets), " - suffixes", legal words or places: "Acme Corp - West (UK)" → ["acme"]."""
+    base = re.split(r"\s[-–—|]\s", re.sub(r"\([^)]*\)", " ", name or ""))[0]
+    words = re.findall(r"[a-z0-9]+", base.lower().replace("&", " and "))
+    return [w for w in words if w not in _LEGAL and w not in _PLACE]
+
+
+def _domain(value: str | None) -> str | None:
+    """The company's own web domain from a website or email ("https://uk.acme.co.uk/x" → "acme.co.uk"); None for personal ones."""
+    if not value:
+        return None
+    host = value.strip().lower().split("@")[-1]
+    host = re.sub(r"^[a-z]+://", "", host).split("/")[0].split(":")[0].removeprefix("www.")
+    labels = [x for x in host.split(".") if x]
+    if len(labels) < 2:
+        return None
+    keep = 3 if len(labels) >= 3 and len(labels[-1]) == 2 and labels[-2] in ("co", "com", "org", "net", "ac", "gov", "ltd") else 2
+    d = ".".join(labels[-keep:])
+    return None if d in _PERSONAL else d
+
+
+def _phone(value: str | None) -> str | None:
+    digits = re.sub(r"\D", "", value or "")
+    return digits[-10:] if len(digits) >= 7 else None
+
+
+def missing_parents(ctx: Ctx) -> None:
+    """Possible Missing Parent Accounts: Accounts with no Parent Account that probably belong under another Account, guessed
+    from clues in the data (Ownership = Subsidiary, a sibling that already has a parent, the same website or Contact email
+    domain, a name that contains another Account's name, the same phone or billing address, D&B parent DUNS). Suggestions
+    only, for someone to confirm in Salesforce: shown for review, not scored."""
+    label = "Possible Missing Parent Accounts"
     if not ctx.has_field("Account", "ParentId"):
-        raise Unavailable("Accounts in this org have no Parent Account field, so there are no parent Accounts to check.")
-    total = ctx.count("Account", recent=False)
-    rows = _parent_links(ctx) if total else []
-    own = sorted((r for r in rows if r.get("Id") and r.get("ParentId") and r["Id"][:15] == r["ParentId"][:15]),
-                 key=lambda r: (r.get("Name") or "").lower())
-    ids = [r["Id"] for r in own]
-    n = len(ids)
-    score = max(0.0, 100.0 - 10 * n)
-    ctx.metric(
-        label, n, "count", "lower-better", score,
-        how="Accounts whose Parent Account is the Account itself (Account A is the parent of Account A), so it has no real "
-        "parent company and its hierarchy goes round on itself. We read every Account that has a Parent Account and compare the two.",
-        rule="100 with none, 10 points less for each (0 with 10 or more).",
-        columns=["Name", "ParentId", "Industry", "Type", "OwnerId", "CreatedDate"],
+        raise Unavailable("Accounts in this org have no Parent Account field, so there are no parent Accounts to suggest.")
+    fields = ctx.fields("Account")
+    want = ["Website", "Phone", "BillingStreet", "BillingPostalCode", "Ownership", "DunsNumber", "CreatedDate"]
+    have = [f for f in want if f in fields]
+    duns_parent = "DandbCompanyId" in fields and "DunsNumber" in fields
+    cols = ["Id", "Name", "ParentId", *have] + (["DandbCompany.ParentOrHqDunsNumber"] if duns_parent else [])
+    try:
+        rows = ctx.rows(f"SELECT {', '.join(cols)} FROM Account ORDER BY CreatedDate", GUESS_ROWS)
+    except SalesforceError:
+        if not duns_parent:
+            raise
+        duns_parent = False  # no access to D&B companies: go without
+        rows = ctx.rows(f"SELECT {', '.join(cols[:-1])} FROM Account ORDER BY CreatedDate", GUESS_ROWS)
+    acc = {r["Id"]: r for r in rows if r.get("Id")}
+    parent = {i: r["ParentId"] for i, r in acc.items() if r.get("ParentId")}
+    children: dict[str, int] = {}
+    for p in parent.values():
+        children[p] = children.get(p, 0) + 1
+    name = {i: r.get("Name") or i for i, r in acc.items()}
+    clean = {i: _clean_name(name[i]) for i in acc}
+    order = {i: n for n, i in enumerate(acc)}  # oldest first
+
+    def rank(i: str) -> tuple:  # the likely parent of a group: has children, then the shortest name, then the oldest
+        return (-children.get(i, 0), len(" ".join(clean[i])) or 99, len(name[i]), order[i])
+
+    def under(a: str, b: str) -> bool:  # is b somewhere under a (so it can't be a's parent)?
+        seen, node = set(), b
+        while node in parent and node not in seen:
+            seen.add(node)
+            node = parent[node]
+            if node == a:
+                return True
+        return False
+
+    clues: dict[str, dict[str, list[tuple[str, str]]]] = {}  # Account → suggested parent → [(clue, in words)]
+
+    def add(a: str, p: str | None, kind: str, text: str) -> int:
+        """Note a clue that p is a's parent; 1 when it's a new one (counted), 0 when it doesn't apply."""
+        if a in parent or not p or p == a or p not in acc or under(a, p):
+            return 0
+        clues.setdefault(a, {}).setdefault(p, [])
+        if any(k == kind for k, _ in clues[a][p]):
+            return 0
+        clues[a][p].append((kind, text))
+        return 1
+
+    def groups(key: dict[str, str | None], kind: str, text) -> int:
+        by: dict[str, list[str]] = {}
+        for i, k in key.items():
+            if k:
+                by.setdefault(k, []).append(i)
+        found = 0
+        for k, ids in by.items():
+            if len(ids) < 2 or len(ids) > 200:  # one Account, or a value shared too widely to mean anything
+                continue
+            head = min(ids, key=rank)
+            for i in ids:
+                if i != head:
+                    found += add(i, head, kind, text(k))
+        return found
+
+    counts: dict[str, int] = {}
+    # 1. the same website domain, or the same domain as the Account's Contacts' email
+    web = {i: _domain(r.get("Website")) for i, r in acc.items()}
+    counts["domain"] = groups(web, "domain", lambda d: f"Same website domain {d}")
+    mail: dict[str, str] = {}
+    try:
+        tally: dict[str, dict[str, int]] = {}
+        for c in ctx.rows("SELECT AccountId, Email FROM Contact WHERE AccountId != null AND Email != null", GUESS_CONTACTS):
+            d = _domain(c.get("Email"))
+            if d and c.get("AccountId") in acc:
+                tally.setdefault(c["AccountId"], {})[d] = tally.get(c["AccountId"], {}).get(d, 0) + 1
+        mail = {a: max(t, key=t.get) for a, t in tally.items()}
+    except SalesforceAuthExpired:
+        raise
+    except (SalesforceError, Unavailable):
+        pass
+    # an Account's Contacts' domain, with the Accounts whose website is on one of those domains
+    used = set(mail.values())
+    by_mail = {**{i: d for i, d in web.items() if d in used}, **mail}
+    counts["contacts"] = groups(by_mail, "contacts", lambda d: f"Contacts’ email domain {d} matches")
+    # 2. the same name once legal words, places and suffixes are dropped, or a name that contains another Account's name
+    by_clean: dict[str, list[str]] = {}
+    for i, words in clean.items():
+        if words and any(w not in _COMMON for w in words) and len(" ".join(words)) >= 4:
+            by_clean.setdefault(" ".join(words), []).append(i)
+    counts["name"] = groups({i: " ".join(w) for i, w in clean.items() if " ".join(w) in by_clean}, "name",
+                            lambda k: f"Same name once Inc, Corp, places and suffixes are dropped (“{k}”)")
+    for i, words in clean.items():
+        if i in parent:
+            continue
+        for size in range(len(words) - 1, 0, -1):
+            for start in range(0, len(words) - size + 1):
+                for p in by_clean.get(" ".join(words[start:start + size]), []):
+                    counts["name"] += add(i, p, "name", f"Name contains “{name[p]}”")
+    # 3. a sibling (the same first word) that already has a parent
+    brand = {i: w[0] for i, w in clean.items() if w and w[0] not in _COMMON and len(w[0]) >= 3}
+    taken: dict[str, dict[str, int]] = {}
+    for i, b in brand.items():
+        if i in parent:
+            taken.setdefault(b, {})[parent[i]] = taken.get(b, {}).get(parent[i], 0) + 1
+    counts["sibling"] = 0
+    for i, b in brand.items():
+        if i not in parent and b in taken:
+            p = max(taken[b], key=lambda x: (taken[b][x], -order.get(x, 0)))
+            sib = next(s for s, bb in brand.items() if bb == b and parent.get(s) == p)
+            counts["sibling"] += add(i, p, "sibling", f"Sibling “{name[sib]}” already has “{name.get(p, p)}” as parent")
+    # 4. the same main phone, or the same billing street and postal code
+    counts["phone"] = groups({i: _phone(r.get("Phone")) for i, r in acc.items()}, "phone", lambda p: f"Same phone ({p})")
+    street = {i: (re.sub(r"\W+", " ", (r.get("BillingStreet") or "").lower()).strip(), (r.get("BillingPostalCode") or "").strip().lower())
+              for i, r in acc.items()}
+    counts["address"] = groups({i: f"{s}|{z}" if s and z else None for i, (s, z) in street.items()}, "address",
+                               lambda k: f"Same billing address ({k.replace('|', ', ')})")
+    # 5. D&B: the parent or HQ DUNS is another Account's DUNS
+    counts["duns"] = 0
+    if duns_parent:
+        by_duns = {r["DunsNumber"]: i for i, r in acc.items() if r.get("DunsNumber")}
+        for i, r in acc.items():
+            pd = (r.get("DandbCompany") or {}).get("ParentOrHqDunsNumber")
+            if pd and by_duns.get(pd) not in (None, i):
+                counts["duns"] += add(i, by_duns[pd], "duns", f"D&B parent DUNS {pd} is “{name[by_duns[pd]]}”")
+    # 6. Ownership = Subsidiary with no Parent Account
+    subsidiary = [i for i, r in acc.items() if i not in parent and (r.get("Ownership") or "").strip().lower() == "subsidiary"]
+
+    guesses: dict[str, dict] = {}
+    for a in set(clues) | set(subsidiary):
+        best, why = None, []
+        if clues.get(a):
+            best = min(clues[a], key=lambda p: (-sum(_STRENGTH[k] for k, _ in clues[a][p]), rank(p)))  # most clues, then the likeliest parent
+            why = clues[a][best]
+        kinds = {k for k, _ in why}
+        sub = a in subsidiary
+        strong = len(kinds & {"domain", "contacts", "name"})
+        level = ("High" if sub or kinds & {"sibling", "duns"} or strong >= 2 else "Low" if kinds <= {"phone", "address"} and not strong
+                 else "Medium")
+        texts = (["Ownership is Subsidiary, but Parent Account is empty"] if sub else []) + [t for _, t in why]
+        guesses[a] = {"parent": name.get(best) if best else None, "why": "\n".join(texts), "confidence": level,
+                      "rank": {"High": 0, "Medium": 1, "Low": 2}[level]}
+    ids = sorted(guesses, key=lambda a: (guesses[a]["rank"], name[a].lower()))
+    by_level = {lv: sum(1 for g in guesses.values() if g["confidence"] == lv) for lv in ("High", "Medium", "Low")}
+    m = ctx.metric(
+        label, len(ids), "count", "lower-better", None,
+        how="Accounts with no Parent Account that probably belong under another Account, guessed from clues in the data: "
+        "Ownership is Subsidiary; a sibling (the same first word) already has a parent; the same website domain or Contact email "
+        "domain; a name that contains another Account’s name (after dropping Inc, Corp, places like West or UK, and “- …” suffixes); "
+        "the same main phone or billing address; or a D&B parent DUNS. The suggested parent is the Account with children, "
+        "then the shortest name, then the oldest.",
+        rule="Shown for review, not scored: these are suggestions. High = Subsidiary, a sibling’s parent, D&B, or two strong clues "
+        "agree; Medium = one domain or name clue; Low = only the phone or address matches.",
+        columns=["Name", "Website", "Phone", "Ownership", "OwnerId"],
         order="Name",
+        extra="parent_guess",
         criteria=[
-            ("Records checked", f"{len(rows):,} Accounts with a Parent Account, of {total:,} Accounts"
-             + (f" (the first {LOOP_ROWS:,})" if len(rows) >= LOOP_ROWS else "")),
-            ("Self-parented", "Parent Account is the same Account as the record itself"),
-            ("What's counted", f"{n:,} Account{'' if n == 1 else 's'} {'is its own' if n == 1 else 'are their own'} Parent Account"
-             + (": " + ", ".join(r.get("Name") or r["Id"] for r in own[:5]) + (f" and {n - 5:,} more" if n > 5 else "") if n else "")),
-            ("Records listed", f"Every self-parented Account (up to {LOOP_LISTED:,}), by name"),
+            ("Records checked", f"{len(acc):,} Accounts" + (f" (the first {GUESS_ROWS:,})" if len(rows) >= GUESS_ROWS else "")
+             + f", {len(acc) - len(parent):,} of them with no Parent Account"),
+            ("Clues found", f"Subsidiary {len(subsidiary):,} · sibling {counts['sibling']:,} · website domain {counts['domain']:,} · "
+             f"Contact email domain {counts['contacts']:,} · name {counts['name']:,} · phone {counts['phone']:,} · "
+             f"address {counts['address']:,}" + (f" · D&B {counts['duns']:,}" if duns_parent else "")),
+            ("Ignored", "Personal email and website domains (gmail.com, outlook.com, example.com…), very common words "
+             "(Global, Services, Solutions…) and values shared by more than 200 Accounts"),
+            ("What's counted", f"{len(ids):,} Accounts may be missing their Parent Account: High {by_level['High']:,}, "
+             f"Medium {by_level['Medium']:,}, Low {by_level['Low']:,}"),
+            ("Records listed", f"The most likely first (up to {GUESS_LISTED:,}), each with its suggested parent, why and how sure"),
         ],
-        records=("Account", ctx.ids_in(ids, LOOP_LISTED)) if ids else None,
+        records=("Account", ctx.ids_in(ids, GUESS_LISTED)) if ids else None,
         recent=False,
     )
-    if n:
+    if m.records:
+        m.records[0]["reasons"] = {a: guesses[a] for a in ids[:GUESS_LISTED]}
+    if by_level["High"]:
         ctx.finding(
-            name="Accounts that are their own parent",
-            records=("Account", ctx.ids_in(ids, LOOP_LISTED)),
+            name="Accounts that may be missing their Parent Account",
+            records=("Account", ctx.ids_in([a for a in ids if guesses[a]["confidence"] == "High"], GUESS_LISTED)),
             recent=False,
-            score=score,
-            min_score=101,  # raised for any
-            severity="high",
-            affected=n,
-            description=f"{n:,} Account{'' if n == 1 else 's'} {'has itself' if n == 1 else 'have themselves'} as Parent Account, e.g. {own[0].get('Name') or own[0]['Id']}.",
-            why="An Account that is its own parent has no real parent company, and its hierarchy goes round on itself, so the "
-            "hierarchy view and roll-up reports can’t place it.",
-            impact="The Account is missing from its real company structure, and totals rolled up to parents are wrong.",
-            action="Open each Account and clear its Parent Account, or set it to the real parent company.",
+            score=90,
+            min_score=101,  # raised for review whenever there's a likely one
+            severity="low",
+            affected=by_level["High"],
+            description=f"{by_level['High']:,} Accounts with no Parent Account very likely belong under another Account "
+            f"({len(ids):,} possible in all).",
+            why="An Account left out of its company hierarchy isn’t counted in its parent’s totals, account plans or territory, "
+            "and the team working the parent can’t see it.",
+            impact="Parent company revenue, pipeline and activity that look smaller than they are.",
+            action="Check each suggestion and set the Parent Account in Salesforce where it’s right.",
             obj="Account",
             url=ctx.list_url("Account"),
             measure=label,
@@ -963,7 +1153,7 @@ def inactive_parents(ctx: Ctx) -> None:
         "used. A Parent Account counts as inactive when " + "; or ".join(signs) + ".",
         rule="100 when no child Account sits under an inactive parent, falling evenly to 0 when 20% of child Accounts do.",
         columns=["ParentId", "Name", "Industry", "Type", "OwnerId"],
-        order="Name",
+        order="Parent.Name",  # grouped by the inactive parent
         extra="inactive_parent",
         criteria=[
             ("Records checked", f"{children:,} Accounts with a Parent Account"),
@@ -1595,7 +1785,7 @@ def layout_usability(ctx: Ctx) -> None:
 
 AREAS = {
     "area-3": [stuck_queue_leads, inactive_rules, criteria_mismatches],
-    "area-4": [contact_roles, orphaned_contacts, multiple_accounts, multi_deal_contacts, accounts_without_contacts, hierarchy_chains, inactive_parents, self_parented],
+    "area-4": [contact_roles, orphaned_contacts, multiple_accounts, multi_deal_contacts, accounts_without_contacts, hierarchy_chains, inactive_parents, missing_parents],
     "area-5": [stuck_opportunities, missing_next_steps, closed_lost_reasons, stage_guidance],
     "area-6": [missing_sales_activities, web_to_lead, email_templates, activity_capture],
     "area-7": [validation_rules, required_field_gaps, junk_data, layout_usability],
@@ -1612,7 +1802,7 @@ STEP_LABELS = {
     accounts_without_contacts: "Finding Accounts without Contacts",
     hierarchy_chains: "Following Account hierarchies",
     inactive_parents: "Finding Accounts under inactive parents",
-    self_parented: "Finding Accounts that are their own parent",
+    missing_parents: "Looking for missing Parent Accounts",
     stuck_opportunities: "Finding stuck deals",
     missing_next_steps: "Checking next steps on deals",
     closed_lost_reasons: "Checking why deals were lost",

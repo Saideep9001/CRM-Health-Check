@@ -439,6 +439,7 @@ def records_matching(sf: SalesforceClient, name: str, where: str | None, cursor:
     descending = bool(order and order.startswith("-"))  # "-Amount" = biggest first
     order_field = (order or "").lstrip("-") or None
     by_account = order_field == "Account.Name" and "AccountId" in fields  # rows grouped by their Account (sorted_by AccountId)
+    by_parent = order_field == "Parent.Name" and "ParentId" in fields  # Accounts grouped by their Parent Account (sorted_by ParentId)
     first = list(dict.fromkeys(c for c in (columns or []) if c in fields))  # each once: Salesforce refuses a field selected twice
     first = [c for c in first if fields[c]["type"] not in _NO_COLUMN] if exact else first
     cols = (["Id", *[c for c in first if c != "Id"]] if exact
@@ -450,8 +451,8 @@ def records_matching(sf: SalesforceClient, name: str, where: str | None, cursor:
             raise ValueError("Invalid page cursor.")
         body = sf.query_more(cursor, size)
     else:
-        if by_account:  # grouped by Account: A→Z by its name, then the records' own names
-            sort = " ORDER BY Account.Name ASC NULLS LAST" + (", Name ASC" if "Name" in fields else "")
+        if by_account or by_parent:  # grouped by Account (or Parent Account): A→Z by its name, then the records' own names
+            sort = f" ORDER BY {'Account' if by_account else 'Parent'}.Name ASC NULLS LAST" + (", Name ASC" if "Name" in fields else "")
         elif order_field in fields and fields[order_field].get("sortable"):
             sort = f" ORDER BY {order_field} {'DESC' if descending else 'ASC'} NULLS LAST"
         else:
@@ -469,7 +470,7 @@ def records_matching(sf: SalesforceClient, name: str, where: str | None, cursor:
         "total_size": body.get("totalSize"),
         "next_cursor": next_url if next_url and _CURSOR_RE.match(next_url) else None,
         "record_url_prefix": f"{sf.base}/",
-        "sorted_by": "AccountId" if by_account else order_field if order_field in fields and fields[order_field].get("sortable") else None,
+        "sorted_by": "AccountId" if by_account else "ParentId" if by_parent else order_field if order_field in fields and fields[order_field].get("sortable") else None,
     }
 
 

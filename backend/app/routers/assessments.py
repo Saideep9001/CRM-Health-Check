@@ -363,6 +363,11 @@ def _rule_owner_ids(rec: dict) -> set[str]:
 
 # Account Hierarchy Chains: each parent Account's batch (the table groups its rows by it) and its Child Accounts, one per
 # line, the last column, frozen; both saved by the check
+# Possible Missing Parent Accounts: how sure, why (one clue per line) and the suggested parent (last, frozen); saved by the check
+# The note (why it was guessed) shows under the suggested parent in the table, and as its own column in the CSV.
+GUESS_COLUMNS = [{"name": "Confidence", "label": "Confidence", "type": "string"},
+                 {"name": "WhyParent", "label": "Note (why it was guessed)", "type": "lines", "hidden": True},
+                 {"name": "SuggestedParent", "label": "Suggested Parent Account", "type": "string", "frozen": True, "note": "WhyParent"}]
 BATCH_COLUMN = {"name": "HierarchyBatch", "label": "Batch", "type": "int"}
 CHILDREN_COLUMN = {"name": "ChildAccounts", "label": "Child Accounts", "type": "lines", "frozen": True}
 DEAL_ROLES_COLUMN = {"name": "OpenDealRoles", "label": "Roles on Open Deals", "type": "lines", "frozen": True}
@@ -403,6 +408,15 @@ def _with_extra(sf, rec: dict, columns: list[dict], records: list[dict]) -> list
         return assignment.add_reason(columns, records, rec.get("reasons") or {}, rec.get("reason"), column=assignment.MATCH_COLUMN)
     if rec.get("extra") == "related_accounts":
         return _add_related_accounts(sf, columns, records)
+    if rec.get("extra") == "parent_guess":  # Possible Missing Parent Accounts: the most likely first
+        saved = rec.get("reasons") or {}
+        guess = lambda r: saved.get(r.get("id") or "") or {}  # noqa: E731
+        for r in records:
+            r["values"].update({"Confidence": guess(r).get("confidence"), "WhyParent": guess(r).get("why"),
+                                "SuggestedParent": guess(r).get("parent")})
+        records.sort(key=lambda r: (guess(r).get("rank", 9), str(r["values"].get("Name") or "").lower()))
+        names = {c["name"] for c in GUESS_COLUMNS}
+        return [*(c for c in columns if c["name"] not in names), *GUESS_COLUMNS]
     if rec.get("extra") == "inactive_parent":  # Child Accounts Under Inactive Parents: the inactive parent first, pinned on the left
         parent = next((c for c in columns if c["name"] == "ParentId"), None)
         if parent is None:
@@ -535,6 +549,8 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
             where = f"{explorer.and_part(rec['where'])} AND ({where})"
         cols = rec.get("columns") or []  # the chosen fields right after the name, so they're always in view
         rec = {**rec, "where": where, "columns": list(dict.fromkeys(cols[:1] + fields + cols[1:]))}
+    if rec.get("extra") == "inactive_parent":  # Child Accounts Under Inactive Parents: grouped by the parent (checks saved before it was)
+        rec = {**rec, "order": "Parent.Name"}
     return rec, row.org_id, f"{label} {rec['object']}"
 
 

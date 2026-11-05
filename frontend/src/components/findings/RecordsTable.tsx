@@ -65,10 +65,13 @@ export function RecordsTable({
   };
   // Rows kept together: duplicate groups (the same cleaned value of the matched field), or records grouped by their
   // Account (the server sorts them by Account name), with the Account named first in each block.
-  const byAccount = first?.sortedBy === 'AccountId';
+  // Grouped by a parent record the server sorted by: the Account (Contacts, deals) or the Parent Account (child Accounts)
+  const refCol = first?.sortedBy === 'AccountId' || first?.sortedBy === 'ParentId' ? first.sortedBy : null;
+  const byAccount = !!refCol;
+  const refLabel = (first?.columns.find((c) => c.name === refCol)?.label ?? 'Account').replace(/ ID$/, '');
   // Account Hierarchy Chains: rows already in batch order from the server, each batch banded and numbered
   const byBatch = first?.sortedBy === 'HierarchyBatch';
-  const groupCol = byAccount ? 'AccountId' : byBatch ? 'HierarchyBatch' : grouped ? first?.sortedBy ?? null : null;
+  const groupCol = byAccount ? refCol : byBatch ? 'HierarchyBatch' : grouped ? first?.sortedBy ?? null : null;
   const [filter, setFilter] = useState('');
   const term = filter.trim().toLowerCase();
   // Filter the loaded records by any value (name, email, city, owner…).
@@ -79,7 +82,7 @@ export function RecordsTable({
     ? [...loaded].sort((a, b) => matchKey(a.values[groupCol], groupCol).localeCompare(matchKey(b.values[groupCol], groupCol)))
     : loaded;
   // The server lists the columns that explain the result first (e.g. Name, Website for duplicates).
-  const shown = first ? first.columns.filter((c) => c.type !== 'id' && !(byAccount && c.name === 'AccountId') && !(byBatch && c.name === 'HierarchyBatch')) : []; // the Account (or batch) heads its block
+  const shown = first ? first.columns.filter((c) => c.type !== 'id' && !c.hidden && !(byAccount && c.name === refCol) && !(byBatch && c.name === 'HierarchyBatch')) : []; // the Account (or batch) heads its block
   // Frozen columns (e.g. Roles on Open Deals) go last and stay in view on the right while the table scrolls sideways.
   // Pinned columns (e.g. Inactive Parent Account) go first and stay in view on the left the same way.
   const frozen = shown.filter((c) => c.frozen);
@@ -110,7 +113,7 @@ export function RecordsTable({
     let g = 0;
     let prev = '\u0000';
     rows.forEach((r) => {
-      const k = byAccount ? String(r.values.AccountId ?? '') : matchKey(r.values[groupCol], groupCol);
+      const k = byAccount ? String(r.values[refCol!] ?? '') : matchKey(r.values[groupCol], groupCol);
       if (k !== prev) {
         g += 1;
         prev = k;
@@ -191,7 +194,7 @@ export function RecordsTable({
             <table className="w-full min-w-[640px] text-left text-xs">
               <thead className="sticky top-0 z-10 bg-surface shadow-[0_1px_0_rgb(var(--line))]">
                 <tr>
-                  {groupCol && <th className="whitespace-nowrap px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">{byAccount ? 'Account' : byBatch ? 'Batch' : 'Group'}</th>}
+                  {groupCol && <th className={cx('whitespace-nowrap px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink-subtle', refCol === 'ParentId' && pin)}>{byAccount ? refLabel : byBatch ? 'Batch' : 'Group'}</th>}
                   {cols.map((c) => {
                     const meta = fieldOf(c.name);
                     const filtered = !!columnFilter(filters, c.name);
@@ -228,12 +231,12 @@ export function RecordsTable({
                       className={cx('group hover:bg-muted/60', row.className, groupCol && groupOf[i] % 2 === 0 && 'bg-brand-soft/30', groupCol && i > 0 && groupOf[i] !== groupOf[i - 1] && 'border-t-2 border-t-brand/20')}
                     >
                       {groupCol && (
-                        <td className={cx('px-3 py-2', byAccount ? 'max-w-[14rem] align-top' : 'whitespace-nowrap')}>
+                        <td className={cx('px-3 py-2', byAccount ? 'max-w-[14rem] align-top' : 'whitespace-nowrap', refCol === 'ParentId' && cx(pin, 'group-hover:bg-muted'))}>
                           {(i === 0 || groupOf[i] !== groupOf[i - 1]) &&
                             (byAccount ? (
                               <span className="block">
-                                <span className="block truncate font-semibold text-ink" title={r.refNames.AccountId ?? undefined}>
-                                  {r.refNames.AccountId ?? (r.values.AccountId ? String(r.values.AccountId) : 'No Account')}
+                                <span className="block truncate font-semibold text-ink" title={r.refNames[refCol!] ?? undefined}>
+                                  {r.refNames[refCol!] ?? (r.values[refCol!] ? String(r.values[refCol!]) : `No ${refLabel}`)}
                                 </span>
                                 <span className="text-[11px] text-ink-muted">{fmtNumber(groupSize.get(groupOf[i]) ?? 0)} record{groupSize.get(groupOf[i]) === 1 ? '' : 's'}</span>
                               </span>
@@ -267,7 +270,8 @@ export function RecordsTable({
                         return (
                           <td
                             key={c.name}
-                            className={cx('max-w-[16rem] truncate px-3 py-2 align-top', c.pinned && cx(pin, 'font-medium group-hover:bg-muted'), reason ? 'bg-bad-soft/60' : columnFilter(filters, c.name) && 'bg-brand-soft/40')}
+                            className={cx('max-w-[16rem] truncate px-3 py-2 align-top', c.pinned && cx(pin, 'font-medium group-hover:bg-muted'),
+                              c.frozen && cx(stick, 'group-hover:bg-muted'), c.note && 'min-w-[16rem] max-w-[20rem]', reason ? 'bg-bad-soft/60' : columnFilter(filters, c.name) && 'bg-brand-soft/40')}
                             title={reason ? `${v === '—' ? 'Empty' : v}
 Why it’s flagged: ${reason}` : v}
                           >
@@ -275,6 +279,15 @@ Why it’s flagged: ${reason}` : v}
                               <RecordLink object={first!.object} id={r.id!}>{v === '—' ? r.id : v}</RecordLink>
                             ) : (
                               <span className={v === '—' ? 'text-ink-subtle' : ''}>{v}</span>
+                            )}
+                            {c.note && r.values[c.note] != null && String(r.values[c.note]) !== '' && (
+                              // e.g. why this parent was suggested: one clue per line, under the suggestion
+                              <span className="mt-1 block whitespace-normal rounded-md bg-muted/70 px-2 py-1 text-[10.5px] leading-snug text-ink-muted">
+                                <span className="font-semibold text-ink">Note: </span>
+                                {String(r.values[c.note]).split('\n').map((line, li) => (
+                                  <span key={li} className="block">{line}</span>
+                                ))}
+                              </span>
                             )}
                             {reason && (
                               <span className="mt-0.5 flex min-w-[11rem] items-start gap-1 whitespace-normal text-[10.5px] font-medium leading-snug text-bad">

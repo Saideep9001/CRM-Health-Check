@@ -71,6 +71,23 @@ ACCOUNT_PARENTS = [
     {"Id": "001000000000007", "Name": "Loop Z", "ParentId": "001000000000005"},
     {"Id": "001000000000008", "Name": "Self S", "ParentId": "001000000000008"},
 ]
+# Accounts for Possible Missing Parent Accounts: Acme East (domain, name and sibling → Acme Corp), Zenith Retail (Subsidiary),
+# Nova Labs UK (domain and name → Nova Labs), Harbor Logistics (phone only → Harbor Freight Co), two gmail.com sites (ignored),
+# Orbit Media Group (its domain is Orbit Media's Contacts' → Orbit Media).
+GUESS_ACCOUNTS = [
+    {"Id": "001A00000000001", "Name": "Acme Corp", "Website": "acme.com"},
+    {"Id": "001A00000000002", "Name": "Acme West", "ParentId": "001A00000000001"},
+    {"Id": "001A00000000003", "Name": "Acme East", "Website": "https://www.acme.com/east"},
+    {"Id": "001A00000000004", "Name": "Zenith Retail", "Ownership": "Subsidiary"},
+    {"Id": "001A00000000005", "Name": "Nova Labs", "Website": "novalabs.co.uk"},
+    {"Id": "001A00000000006", "Name": "Nova Labs UK", "Website": "https://uk.novalabs.co.uk"},
+    {"Id": "001A00000000007", "Name": "Harbor Freight Co", "Phone": "(415) 555-0100"},
+    {"Id": "001A00000000008", "Name": "Harbor Logistics", "Phone": "415-555-0100"},
+    {"Id": "001A00000000009", "Name": "Solo Person", "Website": "gmail.com"},
+    {"Id": "001A00000000010", "Name": "Another Solo", "Website": "www.gmail.com"},
+    {"Id": "001A00000000011", "Name": "Orbit Media"},
+    {"Id": "001A00000000012", "Name": "Orbit Media Group", "Website": "orbitmedia.com"},
+]
 LEADS = [  # open Leads read to compare with the rules
     {"Id": "00Q000000000001", "OwnerId": "00G000000000002", "Owner": {"Name": "Web Queue"}, "CreatedById": "005000000000009", "LeadSource": "Web"},  # active entry 1
     {"Id": "00Q000000000002", "OwnerId": "005000000000002", "Owner": {"Name": "Bob Ray"}, "CreatedById": "005000000000002", "LeadSource": "Partner"},  # no match, waiting
@@ -173,6 +190,10 @@ class FakeSalesOrg(FakeSalesforce):
             return [{"LeadId": "00Q000000000003"}]  # its owner was changed after it was created
         if q.startswith("SELECT Id, Name, ParentId FROM Account WHERE ParentId != null"):
             return ACCOUNT_PARENTS
+        if q.startswith("SELECT Id, Name, ParentId") and " FROM Account ORDER BY CreatedDate" in q:  # Accounts, for missing parents
+            return GUESS_ACCOUNTS
+        if q.startswith("SELECT AccountId, Email FROM Contact WHERE AccountId != null AND Email != null"):
+            return [{"AccountId": "001A00000000011", "Email": "kim@orbitmedia.com"}, {"AccountId": "001A00000000009", "Email": "x@gmail.com"}]
         if q.startswith("SELECT Id, Name FROM Account WHERE Id IN"):  # the top Accounts' names
             return [{"Id": "001000000000001", "Name": "Account A"}] if "'001000000000001'" in q else []
         if "FROM User WHERE Username IN" in q:  # who inactive rules assign to, by username
@@ -240,7 +261,7 @@ def test_all_workflow_areas(client, sf):
     assert [i["label"] for i in areas["area-4"]["indicators"]] == ["Opportunities Without Contact Roles", "Orphaned Contacts",
                                                                    "Contacts to Multiple Accounts", "Multi-Deal Contacts",
                                                                    "Accounts Without Contacts", "Account Hierarchy Chains",
-                                                                   "Child Accounts Under Inactive Parents", "Self-Parented Accounts"]
+                                                                   "Child Accounts Under Inactive Parents", "Possible Missing Parent Accounts"]
     assert ind["Child Accounts Under Inactive Parents"] == 3
     assert ind["Accounts Without Contacts"] == 30
     assert ind["Opportunities Without Contact Roles"] == 15 and ind["Orphaned Contacts"] == 9
@@ -553,6 +574,9 @@ def test_child_accounts_under_inactive_parents(client, sf, monkeypatch):
     assert "Parent.Active__c IN ('No', 'False', 'N', 'Inactive') OR Parent.Account_Status__c IN ('Closed', 'Dormant')" in q
     assert "Parent.Name LIKE '%Defunct%'" in q
     assert "Child Accounts under inactive parent Accounts" in {f["name"] for f in findings}
+    live = client.get(f"{API}/assessments/{a['id']}/areas/area-4/indicator-records", params={"label": card["label"], "object": "Account"}).json()
+    assert live["sortedBy"] == "ParentId"  # grouped by the inactive parent
+    assert "ORDER BY Parent.Name ASC NULLS LAST, Name ASC" in next(q for q in reversed(sf.soql) if "FROM Account WHERE ParentId != null AND" in q)
     page = {"object": "Account", "columns": [{"name": "Name", "label": "Account Name", "type": "string"},
                                              {"name": "Industry", "label": "Industry", "type": "picklist"},
                                              {"name": "ParentId", "label": "Parent Account ID", "type": "reference"}],
@@ -563,17 +587,37 @@ def test_child_accounts_under_inactive_parents(client, sf, monkeypatch):
     params = {"label": card["label"], "object": "Account", "fields": "Name,Industry"}
     body = client.get(f"{API}/assessments/{a['id']}/areas/area-4/indicator-records", params=params).json()
     assert seen["columns"][0] == "ParentId"  # the parent is read even when not picked
+    assert seen["order"] == "Parent.Name"
     first = body["columns"][0]
     assert (first["name"], first["label"], first["pinned"]) == ("ParentId", "Inactive Parent Account", True)
 
 
-def test_self_parented_accounts(client, sf):
+def test_possible_missing_parent_accounts(client, sf, monkeypatch):
+    monkeypatch.setitem(DESCRIBE, "Account", [*DESCRIBE["Account"], _f("Website", type="url"), _f("Ownership", type="picklist"),
+                                              _f("BillingStreet", type="textarea"), _f("BillingPostalCode"), _f("CreatedDate", type="datetime")])
     connect(client)
     a, res, findings = run(client)
-    card = next(i for x in res["areas"] for i in x["indicators"] if i["label"] == "Self-Parented Accounts")
+    card = next(i for x in res["areas"] for i in x["indicators"] if i["label"] == "Possible Missing Parent Accounts")
     crit = dict(card["criteria"])
-    assert card["value"] == 1 and card["score"] == 90  # Self S is its own parent; Loop X → Y → Z isn't
-    assert crit["What's counted"] == "1 Account is its own Parent Account: Self S"
-    found = next(f for f in findings if f["name"] == "Accounts that are their own parent")
-    assert found["severity"] == "high" and found["affectedRecords"] == 1
-    assert sum(q.startswith("SELECT Id, Name, ParentId FROM Account WHERE ParentId != null") for q in sf.soql) == 1  # read once for both cards
+    assert card["value"] == 5 and card["score"] is None
+    assert crit["What's counted"] == "5 Accounts may be missing their Parent Account: High 4, Medium 0, Low 1"
+    assert crit["Clues found"].startswith("Subsidiary 1 · sibling 1 · website domain 2 · Contact email domain 1")
+    found = next(f for f in findings if f["name"] == "Accounts that may be missing their Parent Account")
+    assert found["severity"] == "low" and found["affectedRecords"] == 4
+    assert not any("@gmail" in q for q in sf.soql)
+    _page(monkeypatch, ["001A00000000008", "001A00000000003", "001A00000000012", "001A00000000006", "001A00000000004"])
+    body = client.get(f"{API}/assessments/{a['id']}/areas/area-4/indicator-records", params={"label": card["label"], "object": "Account"}).json()
+    assert [c["label"] for c in body["columns"]][-3:] == ["Confidence", "Note (why it was guessed)", "Suggested Parent Account"]
+    parent_col, note_col = body["columns"][-1], body["columns"][-2]
+    assert parent_col["frozen"] and parent_col["note"] == "WhyParent" and note_col["hidden"]  # the note shows under the suggestion
+    rows = [(r["id"], r["values"]["Confidence"], r["values"]["SuggestedParent"]) for r in body["records"]]  # the most likely first
+    assert rows[-1] == ("001A00000000008", "Low", "Harbor Freight Co")  # Harbor Logistics: only the phone matches
+    got = {i: (c, p) for i, c, p in rows}
+    assert got["001A00000000003"] == ("High", "Acme Corp")  # Acme East
+    assert got["001A00000000006"] == ("High", "Nova Labs")  # Nova Labs UK: same domain and name
+    assert got["001A00000000012"] == ("High", "Orbit Media")  # Orbit Media Group: its domain is Orbit Media's Contacts'
+    assert got["001A00000000004"] == ("High", None)  # Zenith Retail: Subsidiary, no parent to suggest
+    acme = next(r["values"]["WhyParent"] for r in body["records"] if r["id"] == "001A00000000003")
+    assert acme.split("\n") == ["Same website domain acme.com", "Same name once Inc, Corp, places and suffixes are dropped (“acme”)",
+                                 "Sibling “Acme West” already has “Acme Corp” as parent"]
+

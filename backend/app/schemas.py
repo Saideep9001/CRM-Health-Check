@@ -202,6 +202,8 @@ class DataColumn(ApiModel):
     type: str
     frozen: bool = False  # kept last and in view while the table scrolls sideways
     pinned: bool = False  # kept first and in view on the left while the table scrolls sideways
+    hidden: bool = False  # not a column of its own in the table (shown as another column's note), but in the CSV
+    note: str | None = None  # another value shown under this one in the table, e.g. why a parent was suggested
 
 
 class DataRelatedPage(ApiModel):
