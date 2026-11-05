@@ -150,7 +150,7 @@ export default function DiagnosticAreaPage() {
   // After a check, show what it measured, in its order: checking just Accounts shows the Account measures (including a
   // "Missing …" card per key field), not Contacts or Leads.
   const checked = assessed && result?.indicators.length ? result.indicators.map((x) => x.label) : area.indicators;
-  // Area 4: in the area's own order (Accounts, then Contacts), also for checks run before it changed
+  // Area 4: in the area's own order (Accounts, then Contacts, then Opportunities), also for checks run before it changed
   const place = (label: string) => (area.indicators.indexOf(label) + 1 || 999);
   const measured = area.id === 'area-4' ? [...checked].sort((a, b) => place(a) - place(b)) : checked;
   // The objects the check behind these results looked at.

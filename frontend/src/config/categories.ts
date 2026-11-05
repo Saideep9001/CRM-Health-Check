@@ -74,14 +74,13 @@ export const DIAGNOSTIC_AREAS: DiagnosticArea[] = [
     categoryId: 'workflows',
     name: 'Lead Queues & Assignment',
     description:
-      'Find Leads waiting too long in queues, inactive Lead Assignment Rules that would match existing Leads, Leads that no active assignment rule entry matches, Leads nobody is working, and open deals past their Close Date.',
+      'Find Leads waiting too long in queues, inactive Lead Assignment Rules that would match existing Leads, Leads that no active assignment rule entry matches, and Leads nobody is working.',
     indicators: [
       'Stuck Queue-Owned Leads',
       'Inactive Lead Assignment Rules',
       'Lead Assignment Criteria Mismatches',
       'No Activity in 6 Months (Leads)',
       'Stale Leads',
-      'Opportunities with an Overdue Close Date',
     ],
   },
   {
@@ -90,7 +89,7 @@ export const DIAGNOSTIC_AREAS: DiagnosticArea[] = [
     categoryId: 'workflows',
     name: 'Account Hierarchies & Contact Relationships',
     description:
-      'Assess Account hierarchies and parent links, then Contact Roles on open Opportunities, Contacts with no Account, Contacts related to multiple Accounts, and Contacts on several deals.',
+      'Assess Account hierarchies and parent links, then Contact Roles on open Opportunities, Contacts with no Account, Contacts related to multiple Accounts, Contacts on several deals, and open deals past their Close Date.',
     indicators: [
       'Accounts Without Contacts',
       'Account Hierarchy Chains',
@@ -100,6 +99,7 @@ export const DIAGNOSTIC_AREAS: DiagnosticArea[] = [
       'Orphaned Contacts',
       'Contacts to Multiple Accounts',
       'Multi-Deal Contacts',
+      'Opportunities with an Overdue Close Date',
     ],
   },
   {
