@@ -237,6 +237,9 @@ export type EacUser = {
   login?: string;
   /** the user's Active flag in Salesforce */
   isActive?: boolean;
+  email?: string | null;
+  title?: string | null;
+  phone?: string | null;
 };
 
 /** Einstein Activity Capture (EAC) Health, live from Salesforce (only what its APIs expose; null = not available). */

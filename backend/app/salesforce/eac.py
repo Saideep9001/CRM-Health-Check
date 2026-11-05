@@ -113,7 +113,7 @@ def users(sf: SalesforceClient, ids: set[str]) -> dict:
     ordered = sorted(ids)
     for i in range(0, len(ordered), 200):
         chunk = ", ".join(f"'{x}'" for x in ordered[i:i + 200])
-        rows += _try(lambda: sf.query(f"SELECT Id, Name, Profile.Name, IsActive, LastLoginDate FROM User WHERE Id IN ({chunk})")
+        rows += _try(lambda: sf.query(f"SELECT Id, Name, Email, Title, Phone, Profile.Name, IsActive, LastLoginDate FROM User WHERE Id IN ({chunk})")
                      .get("records", []), [])
     issues, everyone, active = [], [], 0
     for u in rows:
@@ -131,7 +131,7 @@ def users(sf: SalesforceClient, ids: set[str]) -> dict:
             status, tone, login = "Active", "good", f"Logged in to Salesforce on {last}" + (" (today)" if days == 0 else f" ({days} days ago)")
         row = {"id": u["Id"], "name": u.get("Name") or u["Id"], "profile": (u.get("Profile") or {}).get("Name"),
                "status": status, "tone": tone, "lastLogin": last, "login": login,
-               "isActive": bool(u.get("IsActive"))}  # the user's Active flag in Salesforce (the User Status filter)
+               "isActive": bool(u.get("IsActive")), "email": u.get("Email"), "title": u.get("Title"), "phone": u.get("Phone")}  # the user's Active flag in Salesforce (the User Status filter)
         everyone.append(row)
         if tone != "good":
             issues.append(row)

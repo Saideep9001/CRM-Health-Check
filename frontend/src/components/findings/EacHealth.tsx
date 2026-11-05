@@ -36,10 +36,11 @@ function Stat({ icon, label, value }: { icon: ReactNode; label: string; value: R
 /** A row of filter chips: "All", then each value with how many users have it. Clicking a picked chip again clears it. */
 function FilterChips({ title, options, value, onChange }: {
   title: string;
-  options: { key: string; label: string; count: number }[];
+  options: { key: string; label: string; count: number; tone?: 'good' | 'bad' }[];
   value: string | undefined;
   onChange: (v: string | undefined) => void;
 }) {
+  const toned = { good: 'border-good/40 bg-good-soft text-good', bad: 'border-bad/40 bg-bad-soft text-bad' };
   const chip = (on: boolean) =>
     cx('inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs transition',
       on ? 'border-brand bg-brand-soft font-semibold text-brand-ink' : 'border-line hover:border-brand/40 hover:text-brand');
@@ -49,7 +50,8 @@ function FilterChips({ title, options, value, onChange }: {
       <button type="button" aria-pressed={!value} onClick={() => onChange(undefined)} className={chip(!value)}>All</button>
       {options.map((o) => (
         <button key={o.key} type="button" aria-pressed={value === o.key} onClick={() => onChange(value === o.key ? undefined : o.key)}
-          className={cx(chip(value === o.key), !o.count && value !== o.key && 'text-ink-subtle')}>
+          className={cx(chip(value === o.key), o.tone && toned[o.tone], o.tone && value === o.key && 'ring-2 ring-brand ring-offset-1',
+            !o.count && value !== o.key && !o.tone && 'text-ink-subtle')}>
           {o.label}
           <span className={cx('rounded-full px-1.5 tabular-nums', value === o.key ? 'bg-surface' : 'bg-muted')}>{fmtNumber(o.count)}</span>
         </button>
@@ -176,8 +178,8 @@ export function EacHealth({ assessmentId }: { assessmentId: string }) {
                   options={profiles.map((p) => ({ key: p, label: p, count: byStatus.filter((u) => profileOf(u) === p).length }))} />
                 <FilterChips title="User Status" value={userStatus} onChange={setUserStatus}
                   options={[
-                    { key: 'active', label: 'Active', count: byProfile.filter((u) => statusOf(u) === 'active').length },
-                    { key: 'inactive', label: 'Inactive', count: byProfile.filter((u) => statusOf(u) === 'inactive').length },
+                    { key: 'active', label: 'Active', tone: 'good', count: byProfile.filter((u) => statusOf(u) === 'active').length },
+                    { key: 'inactive', label: 'Inactive', tone: 'bad', count: byProfile.filter((u) => statusOf(u) === 'inactive').length },
                   ]} />
               </div>
             )}
@@ -185,21 +187,29 @@ export function EacHealth({ assessmentId }: { assessmentId: string }) {
               <table className="w-full text-left text-sm">
                 <thead className="text-xs text-ink-muted">
                   <tr className="border-b border-line">
-                    <th className="px-3 py-2 font-medium">User</th>
+                    <th className="px-3 py-2 font-medium">User Name</th>
                     <th className="px-3 py-2 font-medium">Profile</th>
+                    <th className="px-3 py-2 font-medium">Email</th>
+                    <th className="px-3 py-2 font-medium">Title</th>
+                    <th className="px-3 py-2 font-medium">Phone</th>
                     <th className="px-3 py-2 font-medium">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line">
                   {!shown.length && (
                     <tr>
-                      <td colSpan={3} className="px-3 py-4 text-center text-xs text-ink-subtle">No users match these filters.</td>
+                      <td colSpan={6} className="px-3 py-4 text-center text-xs text-ink-subtle">No users match these filters.</td>
                     </tr>
                   )}
                   {shown.map((u) => (
                     <tr key={u.id}>
                       <td className="px-3 py-2"><RecordLink object="User" id={u.id}>{u.name}</RecordLink></td>
                       <td className="px-3 py-2 text-ink-muted">{u.profile ?? '—'}</td>
+                      <td className="px-3 py-2 text-ink-muted">
+                        {u.email ? <a href={`mailto:${u.email}`} className="hover:text-brand hover:underline">{u.email}</a> : '—'}
+                      </td>
+                      <td className="px-3 py-2 text-ink-muted">{u.title || '—'}</td>
+                      <td className="whitespace-nowrap px-3 py-2 text-ink-muted">{u.phone || '—'}</td>
                       <td className="px-3 py-2">
                         <span
                           className={cx(

@@ -794,7 +794,8 @@ def test_stage_chips_on_area_5_opportunity_cards(client, sf):
 
 # Users assigned EAC: one fine, one deactivated, one who never logged in, one not logged in for years
 EAC_USERS = [
-    {"Id": "005000000000011AAA", "Name": "Priya Nair", "Profile": {"Name": "Sales Rep"}, "IsActive": True, "LastLoginDate": "2099-01-01T00:00:00.000+0000"},
+    {"Id": "005000000000011AAA", "Name": "Priya Nair", "Email": "priya@acme.test", "Title": "Account Manager", "Phone": "(415) 555-0101",
+     "Profile": {"Name": "Sales Rep"}, "IsActive": True, "LastLoginDate": "2099-01-01T00:00:00.000+0000"},
     {"Id": "005000000000012AAA", "Name": "Daniel Ortiz", "Profile": {"Name": "Sales Manager"}, "IsActive": False, "LastLoginDate": None},
     {"Id": "005000000000013AAA", "Name": "Aisha Khan", "Profile": {"Name": "Sales Rep"}, "IsActive": True, "LastLoginDate": None},
     {"Id": "005000000000014AAA", "Name": "Marcus Lee", "Profile": {"Name": "Account Executive"}, "IsActive": True, "LastLoginDate": "2020-01-01T00:00:00.000+0000"},
@@ -813,7 +814,7 @@ def test_eac_health_card_in_area_6(client, sf, monkeypatch):
             return [{"Id": "0PL000000000001AAA", "MasterLabel": "Einstein Activity Capture"}]
         if q.startswith("SELECT AssigneeId FROM PermissionSetLicenseAssign WHERE PermissionSetLicenseId IN ('0PL000000000001AAA')"):
             return [{"AssigneeId": EAC_USERS[0]["Id"]}, {"AssigneeId": EAC_USERS[3]["Id"]}]  # Priya twice: counted once
-        if q.startswith("SELECT Id, Name, Profile.Name, IsActive, LastLoginDate FROM User WHERE Id IN"):
+        if q.startswith("SELECT Id, Name, Email, Title, Phone, Profile.Name, IsActive, LastLoginDate FROM User WHERE Id IN"):
             return [u for u in EAC_USERS if f"'{u['Id']}'" in q]
         return records(q)
 
@@ -846,4 +847,7 @@ def test_eac_health_card_in_area_6(client, sf, monkeypatch):
     active = {u["name"]: u["isActive"] for u in d["users"]["all"]}  # the User Status filter: Salesforce's Active flag
     assert active == {"Priya Nair": True, "Daniel Ortiz": False, "Aisha Khan": True, "Marcus Lee": True}
     assert {u["profile"] for u in d["users"]["all"]} == {"Sales Rep", "Sales Manager", "Account Executive"}  # the Profile filter
+    priya = next(u for u in d["users"]["all"] if u["name"] == "Priya Nair")
+    assert (priya["email"], priya["title"], priya["phone"]) == ("priya@acme.test", "Account Manager", "(415) 555-0101")
+    assert next(u for u in d["users"]["all"] if u["name"] == "Aisha Khan")["email"] is None  # not set in Salesforce
     assert {p["key"]: p["value"] for p in d["pipeline"]} == {"metrics7": 12, "metrics30": 40, "task": 9, "event": 3}
