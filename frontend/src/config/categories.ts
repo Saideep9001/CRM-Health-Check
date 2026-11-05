@@ -94,6 +94,8 @@ export const DIAGNOSTIC_AREAS: DiagnosticArea[] = [
       'Multi-Deal Contacts',
       'Accounts Without Contacts',
       'Account Hierarchy Chains',
+      'Child Accounts Under Inactive Parents',
+      'Self-Parented Accounts',
     ],
   },
   {

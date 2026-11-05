@@ -58,6 +58,8 @@ const GROUPS: Record<string, string> = {
   'Multi-Deal Contacts': 'Contacts',
   'Accounts Without Contacts': 'Accounts',
   'Account Hierarchy Chains': 'Accounts',
+  'Child Accounts Under Inactive Parents': 'Accounts',
+  'Self-Parented Accounts': 'Accounts',
 };
 
 function objectOf(label: string): { group: string; title: string } | null {

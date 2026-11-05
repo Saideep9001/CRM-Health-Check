@@ -100,6 +100,8 @@ COUNTS = [
     (("FROM Opportunity", "LastActivityDate"), 22),
     (("Amount = null",), 4),
     (("FROM Account", "NOT IN (SELECT AccountId FROM Contact"), 30),
+    (("FROM Account", "ParentId != null", "Parent.Name LIKE"), 3),  # child Accounts under an inactive parent
+    (("FROM Account", "ParentId != null"), 12),  # child Accounts
     (("ParentId != null",), 0),
     (("FROM Contact", "AccountId = null"), 9),
     (("FROM EmailTemplate",), 2),
@@ -237,7 +239,9 @@ def test_all_workflow_areas(client, sf):
     assert len(rule_reads) == 1 and "<fullNames>Lead</fullNames>" in rule_reads[0]  # read once for both cards
     assert [i["label"] for i in areas["area-4"]["indicators"]] == ["Opportunities Without Contact Roles", "Orphaned Contacts",
                                                                    "Contacts to Multiple Accounts", "Multi-Deal Contacts",
-                                                                   "Accounts Without Contacts", "Account Hierarchy Chains"]
+                                                                   "Accounts Without Contacts", "Account Hierarchy Chains",
+                                                                   "Child Accounts Under Inactive Parents", "Self-Parented Accounts"]
+    assert ind["Child Accounts Under Inactive Parents"] == 3
     assert ind["Accounts Without Contacts"] == 30
     assert ind["Opportunities Without Contact Roles"] == 15 and ind["Orphaned Contacts"] == 9
     assert ind["Contacts to Multiple Accounts"] == 0 and ind["Multi-Deal Contacts"] == 1  # the feature is off; Pat is on 2 open deals
@@ -523,15 +527,53 @@ def test_account_hierarchy_chains(client, sf, monkeypatch):
     assert found["severity"] == "high" and found["affectedRecords"] == 4
     base = f"{API}/assessments/{a['id']}/areas/area-4"
     params = {"label": card["label"], "object": "Account"}
-    batches = client.get(f"{base}/indicator-queues", params=params).json()  # each hierarchy is a batch, largest first, then loops
-    assert [(b["id"], b["name"], b["count"]) for b in batches] == [
-        ("001000000000001", "Batch 1 · Account A", 4), ("001000000000005", "Batch 2 · Loop X (loop)", 3), ("001000000000008", "Batch 3 · Self S (loop)", 1)]
-    assert client.get(f"{base}/indicator-records", params={**params, "queue": "001000000000009"}).status_code == 422
+    assert client.get(f"{base}/indicator-queues", params=params).status_code == 422  # no Batches chips
+    assert client.get(f"{base}/indicator-records", params={**params, "queue": "001000000000001"}).status_code == 422
     _page(monkeypatch, ["001000000000002", "001000000000001", "001000000000099"])
-    body = client.get(f"{base}/indicator-records", params={**params, "queue": "001000000000001"}).json()
+    body = client.get(f"{base}/indicator-records", params=params).json()
     assert body["sortedBy"] == "HierarchyBatch"  # the table groups the rows by batch
     assert body["columns"][0]["label"] == "Batch" and (body["columns"][-1]["label"], body["columns"][-1]["frozen"]) == ("Child Accounts", True)
     top, b, other = (r["values"] for r in body["records"])  # batch by batch, the top Account first
     assert (top["HierarchyBatch"], top["ChildAccounts"]) == (1, "Account B\nAccount D")
     assert (b["HierarchyBatch"], b["ChildAccounts"]) == (1, "Account C")
     assert other["HierarchyBatch"] is None and other["ChildAccounts"] is None
+
+
+def test_child_accounts_under_inactive_parents(client, sf, monkeypatch):
+    monkeypatch.setitem(DESCRIBE, "Account", [*DESCRIBE["Account"], _f("Active__c", label="Active", type="picklist"),
+                                              _f("Account_Status__c", label="Account Status", type="picklist",
+                                                 picklistValues=[{"value": "Open"}, {"value": "Closed"}, {"value": "Dormant"}])])
+    connect(client)
+    a, res, findings = run(client)
+    card = next(i for x in res["areas"] for i in x["indicators"] if i["label"] == "Child Accounts Under Inactive Parents")
+    crit = dict(card["criteria"])
+    assert card["value"] == 3 and crit["What's counted"] == "3 of 12 child Accounts (25%) are under an inactive Parent Account"
+    assert crit["Inactive parent"].startswith("The Parent Account Active is No; or Account Status is Closed or Dormant; or its name says “Inactive”")
+    q = next(q for q in sf.soql if q.startswith("SELECT COUNT() FROM Account WHERE ParentId != null AND ("))
+    assert "Parent.Active__c IN ('No', 'False', 'N', 'Inactive') OR Parent.Account_Status__c IN ('Closed', 'Dormant')" in q
+    assert "Parent.Name LIKE '%Defunct%'" in q
+    assert "Child Accounts under inactive parent Accounts" in {f["name"] for f in findings}
+    page = {"object": "Account", "columns": [{"name": "Name", "label": "Account Name", "type": "string"},
+                                             {"name": "Industry", "label": "Industry", "type": "picklist"},
+                                             {"name": "ParentId", "label": "Parent Account ID", "type": "reference"}],
+            "total_size": 1, "next_cursor": None, "record_url_prefix": "https://acme.my.salesforce.com/",
+            "records": [{"id": "001000000000002", "values": {"Name": "Kid"}, "ref_names": {"ParentId": "Old Co (Defunct)"}}]}
+    seen = {}
+    monkeypatch.setattr(explorer, "records_matching", lambda *a, **k: seen.update(k) or page)
+    params = {"label": card["label"], "object": "Account", "fields": "Name,Industry"}
+    body = client.get(f"{API}/assessments/{a['id']}/areas/area-4/indicator-records", params=params).json()
+    assert seen["columns"][0] == "ParentId"  # the parent is read even when not picked
+    first = body["columns"][0]
+    assert (first["name"], first["label"], first["pinned"]) == ("ParentId", "Inactive Parent Account", True)
+
+
+def test_self_parented_accounts(client, sf):
+    connect(client)
+    a, res, findings = run(client)
+    card = next(i for x in res["areas"] for i in x["indicators"] if i["label"] == "Self-Parented Accounts")
+    crit = dict(card["criteria"])
+    assert card["value"] == 1 and card["score"] == 90  # Self S is its own parent; Loop X → Y → Z isn't
+    assert crit["What's counted"] == "1 Account is its own Parent Account: Self S"
+    found = next(f for f in findings if f["name"] == "Accounts that are their own parent")
+    assert found["severity"] == "high" and found["affectedRecords"] == 1
+    assert sum(q.startswith("SELECT Id, Name, ParentId FROM Account WHERE ParentId != null") for q in sf.soql) == 1  # read once for both cards

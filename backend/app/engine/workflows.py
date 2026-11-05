@@ -14,6 +14,7 @@ from ..salesforce import assignment, queues
 from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
 from .core import Ctx, FindingDraft, Unavailable, pct, rate_score
 from .core import in_list as soql_in
+from .core import soql_str
 from .data_quality import accounts_without_contacts
 
 OPEN_LEADS = "IsConverted = false"
@@ -700,6 +701,7 @@ def multi_deal_contacts(ctx: Ctx) -> None:
 
 
 LOOP_ROWS = 200000  # Accounts with a Parent Account read to follow their hierarchies
+LOOP_LISTED = 500  # self-parented Accounts listed
 
 
 def _loops(parent: dict[str, str]) -> list[list[str]]:
@@ -724,7 +726,6 @@ def _loops(parent: dict[str, str]) -> list[list[str]]:
 
 
 CHAIN_LISTED = 200  # parent Accounts listed (one page), by batch
-CHAIN_TOPS = 30  # the largest hierarchies offered as chips above the table
 CHAIN_SAVED = 20000  # Accounts whose place in their hierarchy is saved for the table
 
 
@@ -736,7 +737,7 @@ def hierarchy_chains(ctx: Ctx) -> None:
     if not ctx.has_field("Account", "ParentId"):
         raise Unavailable("Accounts in this org have no Parent Account field, so there are no hierarchies to check.")
     total = ctx.count("Account", recent=False)
-    rows = ctx.rows("SELECT Id, Name, ParentId FROM Account WHERE ParentId != null", LOOP_ROWS) if total else []
+    rows = _parent_links(ctx) if total else []
     parent = {r["Id"]: r["ParentId"] for r in rows if r.get("Id") and r.get("ParentId")}
     names = {r["Id"]: r.get("Name") or r["Id"] for r in rows if r.get("Id")}
     tops = sorted({p for p in parent.values() if p not in parent})  # parents with no parent of their own
@@ -791,13 +792,8 @@ def hierarchy_chains(ctx: Ctx) -> None:
     # Batches: each hierarchy (its top Account and everything under it), largest first, then each loop with the Accounts under it.
     loop_rep = {x: loop[0] for loop in loops for x in loop}
     batch_key = {a: (top_of(a) or loop_rep[chain[a][0]]) for a in members}
-    loop_groups: dict[str, list[str]] = {}
-    for a in members:
-        if a in looped:
-            loop_groups.setdefault(batch_key[a], []).append(a)
     order = [*biggest, *(loop[0] for loop in loops)]
     batch_no = {k: n for n, k in enumerate(order, 1)}
-    groups = {**families, **loop_groups}
     kids: dict[str, list[str]] = {}
     for child, p in parent.items():
         kids.setdefault(p, []).append(child)
@@ -827,7 +823,7 @@ def hierarchy_chains(ctx: Ctx) -> None:
             ("Batches", f"Each hierarchy is a batch (its top Account and every Account under it), largest first"
              + (", then each loop" if loops else "") + f": {len(order):,} batch{'' if len(order) == 1 else 'es'}"),
             ("Records listed", f"The parent Accounts (those with a child Account), grouped by batch and top Account first, each with "
-             f"its Child Accounts (up to {CHAIN_LISTED:,}; pick a batch above the table to see one)"),
+             f"its Child Accounts (up to {CHAIN_LISTED:,}, the largest batches first)"),
         ],
         records=("Account", ctx.ids_in(parents, CHAIN_LISTED)) if parents else None,
         recent=False,
@@ -839,10 +835,6 @@ def hierarchy_chains(ctx: Ctx) -> None:
             # each parent Account's batch, level (0 in a loop, to sort by) and Child Accounts (their names, one per line)
             "reasons": {a: {"batch": batch_no[batch_key[a]], "level": 0 if a in looped else len(chain[a]),
                             "children": "\n".join(sorted((names.get(k) or k for k in kids[a]), key=str.lower))} for a in parents[:CHAIN_SAVED]},
-            # the largest batches, for the chips above the table: each with its parent Accounts
-            "hierarchies": [{"id": k, "name": f"Batch {batch_no[k]} · {names.get(k, k)}" + ("" if k in families else " (loop)"),
-                             "count": len(groups[k]), "ids": [a for a in parents if batch_key[a] == k][:CHAIN_LISTED]}
-                            for k in order[:CHAIN_TOPS]],
         })
     if loops:
         members_in = sorted(in_loop)
@@ -859,6 +851,141 @@ def hierarchy_chains(ctx: Ctx) -> None:
             "that walks up to the parent company can’t work it out.",
             impact="Wrong or missing totals for the parent company, and Accounts that can’t be placed in their real company structure.",
             action="Open one Account in each loop and correct or clear its Parent Account so the chain ends at the real top company.",
+            obj="Account",
+            url=ctx.list_url("Account"),
+            measure=label,
+        )
+
+
+def _parent_links(ctx: Ctx) -> list[dict]:
+    """Every Account that has a Parent Account (Id, Name, ParentId), read once per check for the hierarchy cards."""
+    if "parent_links" not in ctx.memo:
+        ctx.memo["parent_links"] = ctx.rows("SELECT Id, Name, ParentId FROM Account WHERE ParentId != null", LOOP_ROWS)
+    return ctx.memo["parent_links"]
+
+
+def self_parented(ctx: Ctx) -> None:
+    """Self-Parented Accounts: Accounts whose Parent Account is the Account itself (Account A is the parent of Account A).
+    SOQL can't compare two fields, so every Account with a parent is read and checked here."""
+    label = "Self-Parented Accounts"
+    if not ctx.has_field("Account", "ParentId"):
+        raise Unavailable("Accounts in this org have no Parent Account field, so there are no parent Accounts to check.")
+    total = ctx.count("Account", recent=False)
+    rows = _parent_links(ctx) if total else []
+    own = sorted((r for r in rows if r.get("Id") and r.get("ParentId") and r["Id"][:15] == r["ParentId"][:15]),
+                 key=lambda r: (r.get("Name") or "").lower())
+    ids = [r["Id"] for r in own]
+    n = len(ids)
+    score = max(0.0, 100.0 - 10 * n)
+    ctx.metric(
+        label, n, "count", "lower-better", score,
+        how="Accounts whose Parent Account is the Account itself (Account A is the parent of Account A), so it has no real "
+        "parent company and its hierarchy goes round on itself. We read every Account that has a Parent Account and compare the two.",
+        rule="100 with none, 10 points less for each (0 with 10 or more).",
+        columns=["Name", "ParentId", "Industry", "Type", "OwnerId", "CreatedDate"],
+        order="Name",
+        criteria=[
+            ("Records checked", f"{len(rows):,} Accounts with a Parent Account, of {total:,} Accounts"
+             + (f" (the first {LOOP_ROWS:,})" if len(rows) >= LOOP_ROWS else "")),
+            ("Self-parented", "Parent Account is the same Account as the record itself"),
+            ("What's counted", f"{n:,} Account{'' if n == 1 else 's'} {'is its own' if n == 1 else 'are their own'} Parent Account"
+             + (": " + ", ".join(r.get("Name") or r["Id"] for r in own[:5]) + (f" and {n - 5:,} more" if n > 5 else "") if n else "")),
+            ("Records listed", f"Every self-parented Account (up to {LOOP_LISTED:,}), by name"),
+        ],
+        records=("Account", ctx.ids_in(ids, LOOP_LISTED)) if ids else None,
+        recent=False,
+    )
+    if n:
+        ctx.finding(
+            name="Accounts that are their own parent",
+            records=("Account", ctx.ids_in(ids, LOOP_LISTED)),
+            recent=False,
+            score=score,
+            min_score=101,  # raised for any
+            severity="high",
+            affected=n,
+            description=f"{n:,} Account{'' if n == 1 else 's'} {'has itself' if n == 1 else 'have themselves'} as Parent Account, e.g. {own[0].get('Name') or own[0]['Id']}.",
+            why="An Account that is its own parent has no real parent company, and its hierarchy goes round on itself, so the "
+            "hierarchy view and roll-up reports can’t place it.",
+            impact="The Account is missing from its real company structure, and totals rolled up to parents are wrong.",
+            action="Open each Account and clear its Parent Account, or set it to the real parent company.",
+            obj="Account",
+            url=ctx.list_url("Account"),
+            measure=label,
+        )
+
+
+# Signs an Account is inactive: a yes/no "Active" field set to No, a status field set to an inactive value, or its name.
+INACTIVE_VALUES = ("No", "False", "N", "Inactive", "Closed", "Defunct", "Dormant", "Obsolete", "Out of Business", "Dissolved",
+                   "Former Customer", "Do Not Use")
+INACTIVE_NAMES = ("Inactive", "Defunct", "Closed", "Obsolete", "Dormant", "Do Not Use", "Out of Business", "Dissolved")
+
+
+def _inactive_parent(ctx: Ctx) -> tuple[str, list[str]]:
+    """(SOQL condition on Account.Parent, the signs it uses in words): the Parent Account is inactive."""
+    fields = ctx.fields("Account")
+    conds: list[str] = []
+    signs: list[str] = []
+    for name, f in fields.items():
+        low, label = name.lower(), (f.get("label") or name).lower()
+        if not f.get("filterable", True):
+            continue
+        if low in ("active__c", "isactive__c", "is_active__c", "account_active__c") or label in ("active", "is active", "account active"):
+            if f.get("type") == "boolean":
+                conds.append(f"Parent.{name} = false")
+                signs.append(f"{f.get('label') or name} is unticked")
+            elif f.get("type") in ("picklist", "string"):
+                conds.append(f"Parent.{name} IN ('No', 'False', 'N', 'Inactive')")
+                signs.append(f"{f.get('label') or name} is No")
+        elif f.get("type") == "picklist" and "status" in low:
+            hits = [v["value"] for v in f.get("picklistValues") or [] if v.get("value") and v["value"].strip().lower() in {x.lower() for x in INACTIVE_VALUES}]
+            if hits:
+                conds.append(f"Parent.{name} IN ({', '.join(soql_str(v) for v in hits)})")
+                signs.append(f"{f.get('label') or name} is " + " or ".join(hits))
+    conds += [f"Parent.Name LIKE '%{w}%'" for w in INACTIVE_NAMES]
+    signs.append("its name says " + ", ".join(f"“{w}”" for w in INACTIVE_NAMES))
+    return f"({' OR '.join(conds)})", signs
+
+
+def inactive_parents(ctx: Ctx) -> None:
+    """Child Accounts Under Inactive Parents: Accounts whose Parent Account is inactive (an Active field set to No, an
+    inactive status, or a name such as “Defunct” or “Closed”), so they roll up to a company that no longer trades."""
+    label = "Child Accounts Under Inactive Parents"
+    if not ctx.has_field("Account", "ParentId"):
+        raise Unavailable("Accounts in this org have no Parent Account field, so there are no parent Accounts to check.")
+    cond, signs = _inactive_parent(ctx)
+    children = ctx.count("Account", "ParentId != null", recent=False)
+    n = ctx.count("Account", "ParentId != null", cond, recent=False) if children else 0
+    score = rate_score(n / children, 0.2) if children else 100
+    ctx.metric(
+        label, n, "count", "lower-better", score,
+        how="Child Accounts whose Parent Account is inactive, so they roll up to a company that no longer trades or shouldn’t be "
+        "used. A Parent Account counts as inactive when " + "; or ".join(signs) + ".",
+        rule="100 when no child Account sits under an inactive parent, falling evenly to 0 when 20% of child Accounts do.",
+        columns=["ParentId", "Name", "Industry", "Type", "OwnerId"],
+        order="Name",
+        extra="inactive_parent",
+        criteria=[
+            ("Records checked", f"{children:,} Accounts with a Parent Account"),
+            ("Inactive parent", "The Parent Account " + "; or ".join(signs)),
+            ("What's counted", f"{n:,} of {children:,} child Accounts ({pct(n, children):.0f}%) are under an inactive Parent Account"),
+            ("Records listed", "Every child Account under an inactive parent, with that parent first"),
+        ],
+        records=("Account", "ParentId != null", cond),
+        recent=False,
+    )
+    if n:
+        ctx.finding(
+            name="Child Accounts under inactive parent Accounts",
+            records=("Account", "ParentId != null", cond),
+            recent=False,
+            score=score,
+            affected=n,
+            description=f"{n:,} of {children:,} child Accounts ({pct(n, children):.0f}%) have an inactive Parent Account.",
+            why="A child Account under a closed or defunct parent rolls up to the wrong company, so hierarchy reports and "
+            "account plans show business under a company that no longer exists.",
+            impact="Revenue and activity credited to the wrong parent, and live customers hidden under inactive ones.",
+            action="Move each child Account to its current parent (or clear Parent Account), or reactivate the parent if it’s still in business.",
             obj="Account",
             url=ctx.list_url("Account"),
             measure=label,
@@ -1468,7 +1595,7 @@ def layout_usability(ctx: Ctx) -> None:
 
 AREAS = {
     "area-3": [stuck_queue_leads, inactive_rules, criteria_mismatches],
-    "area-4": [contact_roles, orphaned_contacts, multiple_accounts, multi_deal_contacts, accounts_without_contacts, hierarchy_chains],
+    "area-4": [contact_roles, orphaned_contacts, multiple_accounts, multi_deal_contacts, accounts_without_contacts, hierarchy_chains, inactive_parents, self_parented],
     "area-5": [stuck_opportunities, missing_next_steps, closed_lost_reasons, stage_guidance],
     "area-6": [missing_sales_activities, web_to_lead, email_templates, activity_capture],
     "area-7": [validation_rules, required_field_gaps, junk_data, layout_usability],
@@ -1484,6 +1611,8 @@ STEP_LABELS = {
     multi_deal_contacts: "Finding Contacts on several deals",
     accounts_without_contacts: "Finding Accounts without Contacts",
     hierarchy_chains: "Following Account hierarchies",
+    inactive_parents: "Finding Accounts under inactive parents",
+    self_parented: "Finding Accounts that are their own parent",
     stuck_opportunities: "Finding stuck deals",
     missing_next_steps: "Checking next steps on deals",
     closed_lost_reasons: "Checking why deals were lost",

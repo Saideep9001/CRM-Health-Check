@@ -350,8 +350,7 @@ def finding_records_csv(
 
 def _by_queue(rec: dict) -> bool:
     """Can this measure's records be narrowed to one Lead queue (Stuck Queue-Owned Leads, Inactive Lead Assignment Rules)?"""
-    return (rec.get("extra") == "days_in_queue" or bool(rec.get("by_queue")) or rec.get("inactive_queues") is not None
-            or rec.get("hierarchies") is not None)
+    return rec.get("extra") == "days_in_queue" or bool(rec.get("by_queue")) or rec.get("inactive_queues") is not None
 
 
 # one role per line, the last column, frozen so it stays in view while the table scrolls sideways
@@ -404,6 +403,11 @@ def _with_extra(sf, rec: dict, columns: list[dict], records: list[dict]) -> list
         return assignment.add_reason(columns, records, rec.get("reasons") or {}, rec.get("reason"), column=assignment.MATCH_COLUMN)
     if rec.get("extra") == "related_accounts":
         return _add_related_accounts(sf, columns, records)
+    if rec.get("extra") == "inactive_parent":  # Child Accounts Under Inactive Parents: the inactive parent first, pinned on the left
+        parent = next((c for c in columns if c["name"] == "ParentId"), None)
+        if parent is None:
+            return columns
+        return [{**parent, "label": "Inactive Parent Account", "pinned": True}, *(c for c in columns if c["name"] != "ParentId")]
     if rec.get("extra") == "hierarchy":  # Account Hierarchy Chains: parent Accounts by batch, each with its Child Accounts
         saved = rec.get("reasons") or {}
         place = lambda r: saved.get(r.get("id") or "") or {}  # noqa: E731
@@ -467,6 +471,8 @@ def _picked(fields: str | None, rec: dict | None = None) -> list[str] | None:
         raise HTTPException(422, f"Pick up to {MAX_PICKED} fields.")
     if (rec or {}).get("extra") == "days_in_queue":  # Days in Queue counts from the Created Date when the owner never changed
         names.append("CreatedDate")
+    if (rec or {}).get("extra") == "inactive_parent":  # Child Accounts Under Inactive Parents: the parent is always the first column
+        names.insert(0, "ParentId")
     return list(dict.fromkeys(names))
 
 def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str, obj: str | None,
@@ -502,13 +508,7 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
     if queue:
         if not _by_queue(rec):
             raise HTTPException(422, "Only the Stuck Queue-Owned Leads and Inactive Lead Assignment Rules measures take a queue.")
-        if rec.get("hierarchies") is not None:  # Account Hierarchy Chains: one top Account's hierarchy
-            family = next((h for h in rec["hierarchies"] if h["id"] == queue), None)
-            if family is None:
-                raise HTTPException(422, "Unknown top Account.")
-            ids = [i for i in family["ids"] if re.fullmatch(r"[A-Za-z0-9]{15,18}", i)]
-            rec = {**rec, "where": f"Id IN ({', '.join(repr(i) for i in ids)})" if ids else "Id = null"}
-        elif rec.get("inactive_queues") is not None:  # Inactive Lead Assignment Rules: an inactive queue, or a rule's queues and users
+        if rec.get("inactive_queues") is not None:  # Inactive Lead Assignment Rules: an inactive queue, or a rule's queues and users
             picked = [q.strip() for q in queue.split(",") if q.strip()]
             allowed = _rule_owner_ids(rec)
             if not picked or len(picked) > 100 or any(q not in allowed for q in picked):
@@ -586,8 +586,6 @@ def indicator_queues(
     rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, object, days=days)
     if not _by_queue(rec):
         raise HTTPException(422, "Only the Stuck Queue-Owned Leads and Inactive Lead Assignment Rules measures are listed by queue.")
-    if rec.get("hierarchies") is not None:  # Account Hierarchy Chains: the largest hierarchies, by top Account (as the check saw them)
-        return [{"id": h["id"], "name": h["name"], "count": h["count"]} for h in rec["hierarchies"]]
     where = f" WHERE {rec['where']}" if rec.get("where") else ""
     if rec.get("inactive_queues") is not None:  # Inactive Lead Assignment Rules: only the queues out of the active routing
         def count(sf):

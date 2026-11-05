@@ -81,8 +81,13 @@ export function RecordsTable({
   // The server lists the columns that explain the result first (e.g. Name, Website for duplicates).
   const shown = first ? first.columns.filter((c) => c.type !== 'id' && !(byAccount && c.name === 'AccountId') && !(byBatch && c.name === 'HierarchyBatch')) : []; // the Account (or batch) heads its block
   // Frozen columns (e.g. Roles on Open Deals) go last and stay in view on the right while the table scrolls sideways.
+  // Pinned columns (e.g. Inactive Parent Account) go first and stay in view on the left the same way.
   const frozen = shown.filter((c) => c.frozen);
-  const cols = [...shown.filter((c) => !c.frozen).slice(0, 12 - frozen.length), ...frozen];
+  const pinned = shown.filter((c) => c.pinned && !c.frozen);
+  const cols = [...pinned, ...shown.filter((c) => !c.frozen && !c.pinned).slice(0, 12 - frozen.length - pinned.length), ...frozen];
+  const pin = 'sticky left-0 z-[1] bg-surface shadow-[6px_0_8px_-6px_rgb(0_0_0/0.18)]';
+  // the record's link: on its name when the name isn't the first column (e.g. after a pinned parent)
+  const linkAt = Math.max(0, cols.findIndex((c) => c.name === 'Name'));
   const hasFrozen = frozen.length > 0;
   const stick = 'sticky right-8 z-[1] bg-surface shadow-[-6px_0_8px_-6px_rgb(0_0_0/0.18)]';
   const asField = (c: { name: string; label: string; type: string }) => c as unknown as DataField;
@@ -196,6 +201,7 @@ export function RecordsTable({
                         className={cx(
                           'whitespace-nowrap px-3 py-2 text-[11px] font-semibold uppercase tracking-wide',
                           c.frozen && stick,
+                          c.pinned && pin,
                           filtered ? 'bg-brand-soft text-brand-ink shadow-[inset_0_-2px_0_rgb(var(--brand))]' : 'text-ink-subtle',
                         )}
                       >
@@ -261,11 +267,11 @@ export function RecordsTable({
                         return (
                           <td
                             key={c.name}
-                            className={cx('max-w-[16rem] truncate px-3 py-2 align-top', reason ? 'bg-bad-soft/60' : columnFilter(filters, c.name) && 'bg-brand-soft/40')}
+                            className={cx('max-w-[16rem] truncate px-3 py-2 align-top', c.pinned && cx(pin, 'font-medium group-hover:bg-muted'), reason ? 'bg-bad-soft/60' : columnFilter(filters, c.name) && 'bg-brand-soft/40')}
                             title={reason ? `${v === '—' ? 'Empty' : v}
 Why it’s flagged: ${reason}` : v}
                           >
-                            {ci === 0 && href ? (
+                            {ci === linkAt && href ? (
                               <RecordLink object={first!.object} id={r.id!}>{v === '—' ? r.id : v}</RecordLink>
                             ) : (
                               <span className={v === '—' ? 'text-ink-subtle' : ''}>{v}</span>
