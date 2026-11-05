@@ -226,13 +226,26 @@ export type SalesPathData = {
   guided: number;
 };
 
+/** One user assigned EAC: their status, and whether and when they last logged in to Salesforce. */
+export type EacUser = {
+  id: string;
+  name: string;
+  profile: string | null;
+  status: string;
+  tone: 'bad' | 'warn' | 'good';
+  lastLogin?: string | null;
+  login?: string;
+  /** the user's Active flag in Salesforce */
+  isActive?: boolean;
+};
+
 /** Einstein Activity Capture (EAC) Health, live from Salesforce (only what its APIs expose; null = not available). */
 export type EacHealthData = {
   status: 'Healthy' | 'Warning' | 'Not set up';
   settings: { available: boolean; flags: { name: string; label: string; on: boolean }[]; error: string | null };
   tiles: { key: string; label: string; on: boolean | null; setting: string | null }[];
   sources: string[];
-  users: { total: number; active: number; attention: number; issues: { id: string; name: string; profile: string | null; status: string; tone: 'bad' | 'warn' }[] };
+  users: { total: number; active: number; attention: number; issues: EacUser[]; all?: EacUser[] };
   pipeline: { key: string; label: string; value: number | null }[];
 };
 

@@ -837,4 +837,13 @@ def test_eac_health_card_in_area_6(client, sf, monkeypatch):
     issues = {u["name"]: u["status"] for u in d["users"]["issues"]}
     assert d["users"]["issues"][0]["name"] == "Daniel Ortiz" and issues["Daniel Ortiz"] == "Deactivated user"  # the worst first
     assert issues["Aisha Khan"] == "Never logged in" and issues["Marcus Lee"].startswith("No login in")
+    logins = {u["name"]: u["login"] for u in d["users"]["all"]}  # everyone assigned, with whether and when they logged in
+    assert len(d["users"]["all"]) == 4 and d["users"]["all"][-1]["status"] == "Active"
+    assert logins["Priya Nair"].startswith("Logged in to Salesforce on 2099-01-01")
+    assert logins["Aisha Khan"] == "Has never logged in to Salesforce"
+    assert logins["Marcus Lee"] == "Last logged in to Salesforce on 2020-01-01"
+    assert logins["Daniel Ortiz"] == "Can’t log in (deactivated); never logged in"
+    active = {u["name"]: u["isActive"] for u in d["users"]["all"]}  # the User Status filter: Salesforce's Active flag
+    assert active == {"Priya Nair": True, "Daniel Ortiz": False, "Aisha Khan": True, "Marcus Lee": True}
+    assert {u["profile"] for u in d["users"]["all"]} == {"Sales Rep", "Sales Manager", "Account Executive"}  # the Profile filter
     assert {p["key"]: p["value"] for p in d["pipeline"]} == {"metrics7": 12, "metrics30": 40, "task": 9, "event": 3}

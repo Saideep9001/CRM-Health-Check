@@ -115,22 +115,30 @@ def users(sf: SalesforceClient, ids: set[str]) -> dict:
         chunk = ", ".join(f"'{x}'" for x in ordered[i:i + 200])
         rows += _try(lambda: sf.query(f"SELECT Id, Name, Profile.Name, IsActive, LastLoginDate FROM User WHERE Id IN ({chunk})")
                      .get("records", []), [])
-    issues, active = [], 0
+    issues, everyone, active = [], [], 0
     for u in rows:
         days = _days_ago(u.get("LastLoginDate"))
+        last = (u.get("LastLoginDate") or "")[:10] or None  # YYYY-MM-DD
         if not u.get("IsActive"):
             status, tone = "Deactivated user", "bad"
+            login = f"Can’t log in (deactivated); last logged in {last}" if last else "Can’t log in (deactivated); never logged in"
         elif days is None:
-            status, tone = "Never logged in", "warn"
+            status, tone, login = "Never logged in", "warn", "Has never logged in to Salesforce"
         elif days > STALE_LOGIN_DAYS:
-            status, tone = f"No login in {days} days", "warn"
+            status, tone, login = f"No login in {days} days", "warn", f"Last logged in to Salesforce on {last}"
         else:
             active += 1
-            continue
-        issues.append({"id": u["Id"], "name": u.get("Name") or u["Id"], "profile": (u.get("Profile") or {}).get("Name"),
-                       "status": status, "tone": tone})
-    issues.sort(key=lambda r: (r["tone"] != "bad", r["name"].lower()))
-    return {"total": len(rows), "active": active, "attention": len(issues), "issues": issues}
+            status, tone, login = "Active", "good", f"Logged in to Salesforce on {last}" + (" (today)" if days == 0 else f" ({days} days ago)")
+        row = {"id": u["Id"], "name": u.get("Name") or u["Id"], "profile": (u.get("Profile") or {}).get("Name"),
+               "status": status, "tone": tone, "lastLogin": last, "login": login,
+               "isActive": bool(u.get("IsActive"))}  # the user's Active flag in Salesforce (the User Status filter)
+        everyone.append(row)
+        if tone != "good":
+            issues.append(row)
+    rank = {"bad": 0, "warn": 1, "good": 2}
+    issues.sort(key=lambda r: (rank[r["tone"]], r["name"].lower()))
+    everyone.sort(key=lambda r: (rank[r["tone"]], r["name"].lower()))
+    return {"total": len(rows), "active": active, "attention": len(issues), "issues": issues, "all": everyone}
 
 
 def pipeline(sf: SalesforceClient, ids: set[str]) -> list[dict]:
