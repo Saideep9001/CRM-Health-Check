@@ -28,7 +28,6 @@ export const DIAGNOSTIC_AREAS: DiagnosticArea[] = [
       'Duplicate Leads',
       'Missing Key Fields (Leads)',
       'Data Standardization Issues (Leads)',
-      'No Activity in 6 Months (Leads)',
       'Campaign Association Gaps (Leads)',
       'Duplicate Opportunities',
       'Missing Key Fields (Opportunities)',
@@ -77,8 +76,14 @@ export const DIAGNOSTIC_AREAS: DiagnosticArea[] = [
     categoryId: 'workflows',
     name: 'Lead Queues & Assignment',
     description:
-      'Find Leads waiting too long in queues, inactive Lead Assignment Rules that would match existing Leads, and Leads that no active assignment rule entry matches.',
-    indicators: ['Stuck Queue-Owned Leads', 'Inactive Lead Assignment Rules', 'Lead Assignment Criteria Mismatches'],
+      'Find Leads waiting too long in queues, inactive Lead Assignment Rules that would match existing Leads, Leads that no active assignment rule entry matches, and Leads nobody is working.',
+    indicators: [
+      'Stuck Queue-Owned Leads',
+      'Inactive Lead Assignment Rules',
+      'Lead Assignment Criteria Mismatches',
+      'No Activity in 6 Months (Leads)',
+      'Stale Leads',
+    ],
   },
   {
     id: 'area-4',
@@ -86,16 +91,16 @@ export const DIAGNOSTIC_AREAS: DiagnosticArea[] = [
     categoryId: 'workflows',
     name: 'Account Hierarchies & Contact Relationships',
     description:
-      'Assess Contact Roles on open Opportunities, Contacts with no Account, Contacts related to multiple Accounts, and Contacts on several deals.',
+      'Assess Account hierarchies and parent links, then Contact Roles on open Opportunities, Contacts with no Account, Contacts related to multiple Accounts, and Contacts on several deals.',
     indicators: [
-      'Opportunities Without Contact Roles',
-      'Orphaned Contacts',
-      'Contacts to Multiple Accounts',
-      'Multi-Deal Contacts',
       'Accounts Without Contacts',
       'Account Hierarchy Chains',
       'Child Accounts Under Inactive Parents',
       'Possible Missing Parent Accounts',
+      'Opportunities Without Contact Roles',
+      'Orphaned Contacts',
+      'Contacts to Multiple Accounts',
+      'Multi-Deal Contacts',
     ],
   },
   {

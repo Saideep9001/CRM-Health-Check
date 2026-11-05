@@ -850,7 +850,8 @@ def contact_cards(ctx: Ctx) -> None:
 
 def lead_cards(ctx: Ctx) -> None:
     ctx.selected("Lead")
-    _cards(ctx, "Lead", *CORE_CARDS, leads_without_campaign)  # Stale Leads is in Area 3 (lead assignment & progression)
+    # No Activity in 6 Months and Stale Leads are in Area 3 (Lead queues & assignment)
+    _cards(ctx, "Lead", duplicates_on_fields, missing_key_fields, data_standardization, leads_without_campaign)
 
 
 def opportunity_cards(ctx: Ctx) -> None:

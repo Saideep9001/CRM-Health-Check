@@ -253,15 +253,18 @@ def test_all_workflow_areas(client, sf):
     areas = {x["areaId"]: x for x in res["areas"]}
     assert all(areas[i]["status"] == "assessed" and areas[i]["score"] is not None for i in AREAS), areas
     ind = {i["label"]: i["value"] for x in res["areas"] for i in x["indicators"]}
-    assert [i["label"] for i in areas["area-3"]["indicators"]] == ["Stuck Queue-Owned Leads", "Inactive Lead Assignment Rules", "Lead Assignment Criteria Mismatches"]
+    # No Activity in 6 Months (Leads) needs an activity date, which this fake org's Leads don't have (tested on its own below)
+    assert [i["label"] for i in areas["area-3"]["indicators"]] == ["Stuck Queue-Owned Leads", "Inactive Lead Assignment Rules", "Lead Assignment Criteria Mismatches",
+                                                                   "Stale Leads"]
+    assert ind["Stale Leads"] == 20  # Status unchanged for 30+ days (Lead History)
     assert ind["Stuck Queue-Owned Leads"] == 8  # in a queue more than 3 days
     assert ind["Inactive Lead Assignment Rules"] == 1 and ind["Lead Assignment Criteria Mismatches"] == 2  # 1 Lead in an inactive queue
     rule_reads = [x for x in sf.soap if "<met:type>AssignmentRules</met:type>" in x]
     assert len(rule_reads) == 1 and "<fullNames>Lead</fullNames>" in rule_reads[0]  # read once for both cards
-    assert [i["label"] for i in areas["area-4"]["indicators"]] == ["Opportunities Without Contact Roles", "Orphaned Contacts",
-                                                                   "Contacts to Multiple Accounts", "Multi-Deal Contacts",
-                                                                   "Accounts Without Contacts", "Account Hierarchy Chains",
-                                                                   "Child Accounts Under Inactive Parents", "Possible Missing Parent Accounts"]
+    assert [i["label"] for i in areas["area-4"]["indicators"]] == ["Accounts Without Contacts", "Account Hierarchy Chains",  # Accounts first
+                                                                   "Child Accounts Under Inactive Parents", "Possible Missing Parent Accounts",
+                                                                   "Opportunities Without Contact Roles", "Orphaned Contacts",
+                                                                   "Contacts to Multiple Accounts", "Multi-Deal Contacts"]
     assert ind["Child Accounts Under Inactive Parents"] == 3
     assert ind["Accounts Without Contacts"] == 30
     assert ind["Opportunities Without Contact Roles"] == 15 and ind["Orphaned Contacts"] == 9
@@ -621,3 +624,12 @@ def test_possible_missing_parent_accounts(client, sf, monkeypatch):
     assert acme.split("\n") == ["Same website domain acme.com", "Same name once Inc, Corp, places and suffixes are dropped (“acme”)",
                                  "Sibling “Acme West” already has “Acme Corp” as parent"]
 
+
+def test_lead_activity_cards_in_area_3(client, sf, monkeypatch):
+    monkeypatch.setitem(DESCRIBE, "Lead", [*DESCRIBE["Lead"], _f("LastActivityDate", type="date"), _f("CreatedDate", type="datetime")])
+    connect(client)
+    _, res, findings = run(client)
+    labels = [i["label"] for x in res["areas"] if x["areaId"] == "area-3" for i in x["indicators"]]
+    assert labels[-2:] == ["No Activity in 6 Months (Leads)", "Stale Leads"]  # moved from Area 1, and Stale Leads added
+    assert not any(i["label"] == "No Activity in 6 Months (Leads)" for x in res["areas"] if x["areaId"] == "area-1" for i in x["indicators"])
+    assert {"Open Leads with no activity in 6 months", "Open Leads stuck in the same status for 14+ days"} <= {f["name"] for f in findings}

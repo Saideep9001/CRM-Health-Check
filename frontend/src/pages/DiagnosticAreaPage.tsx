@@ -50,8 +50,12 @@ type Tab = 'indicators' | 'findings' | 'recommendations';
 
 /** The object a measure is about and its title within that object: "Completeness (Leads)" → Leads / Completeness,
  *  "Duplicate Accounts" → Accounts / Duplicates. Null for measures that aren't about one object. */
-// Area 4's cards, by the object they're about (their names don't say it the way Area 1's do).
+// Cards whose names don't say their object the way Area 1's do (Areas 3 and 4), by the object they're about.
 const GROUPS: Record<string, string> = {
+  // Area 3: all about Leads, so its first cards sit under the same Leads heading as No Activity and Stale Leads
+  'Stuck Queue-Owned Leads': 'Leads',
+  'Inactive Lead Assignment Rules': 'Leads',
+  'Lead Assignment Criteria Mismatches': 'Leads',
   'Opportunities Without Contact Roles': 'Contacts',
   'Orphaned Contacts': 'Contacts',
   'Contacts to Multiple Accounts': 'Contacts',
@@ -136,7 +140,10 @@ export default function DiagnosticAreaPage() {
   const next = DIAGNOSTIC_AREAS[idx + 1];
   // After a check, show what it measured, in its order: checking just Accounts shows the Account measures (including a
   // "Missing …" card per key field), not Contacts or Leads.
-  const measured = assessed && result?.indicators.length ? result.indicators.map((x) => x.label) : area.indicators;
+  const checked = assessed && result?.indicators.length ? result.indicators.map((x) => x.label) : area.indicators;
+  // Area 4: in the area's own order (Accounts, then Contacts), also for checks run before it changed
+  const place = (label: string) => (area.indicators.indexOf(label) + 1 || 999);
+  const measured = area.id === 'area-4' ? [...checked].sort((a, b) => place(a) - place(b)) : checked;
   // The objects the check behind these results looked at.
   const checkedObjects = source.data ? (source.data.scope.objects?.length ? source.data.scope.objects : DEFAULT_DQ_OBJECTS) : null;
 

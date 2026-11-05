@@ -15,7 +15,7 @@ from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
 from .core import Ctx, FindingDraft, Unavailable, pct, rate_score
 from .core import in_list as soql_in
 from .core import soql_str
-from .data_quality import accounts_without_contacts
+from .data_quality import accounts_without_contacts, no_recent_activity, stale_leads
 
 OPEN_LEADS = "IsConverted = false"
 OPEN_OPPS = "IsClosed = false"
@@ -477,6 +477,11 @@ def criteria_mismatches(ctx: Ctx) -> None:
             obj="Lead",
             url=ctx.list_url("Lead"),
         )
+
+
+def lead_no_activity(ctx: Ctx) -> None:
+    """No Activity in 6 Months (Leads): open Leads with no task, event, call or email logged in 6 months (moved here from Area 1)."""
+    no_recent_activity(ctx, "Lead")
 
 
 # ---------------------------------------------------------------- area 4: account hierarchies & contact relationships
@@ -1784,8 +1789,9 @@ def layout_usability(ctx: Ctx) -> None:
 
 
 AREAS = {
-    "area-3": [stuck_queue_leads, inactive_rules, criteria_mismatches],
-    "area-4": [contact_roles, orphaned_contacts, multiple_accounts, multi_deal_contacts, accounts_without_contacts, hierarchy_chains, inactive_parents, missing_parents],
+    "area-3": [stuck_queue_leads, inactive_rules, criteria_mismatches, lead_no_activity, stale_leads],
+    "area-4": [accounts_without_contacts, hierarchy_chains, inactive_parents, missing_parents,  # Accounts first, then Contacts
+               contact_roles, orphaned_contacts, multiple_accounts, multi_deal_contacts],
     "area-5": [stuck_opportunities, missing_next_steps, closed_lost_reasons, stage_guidance],
     "area-6": [missing_sales_activities, web_to_lead, email_templates, activity_capture],
     "area-7": [validation_rules, required_field_gaps, junk_data, layout_usability],
@@ -1795,6 +1801,8 @@ STEP_LABELS = {
     stuck_queue_leads: "Finding Leads stuck in queues",
     inactive_rules: "Checking inactive Lead Assignment Rules",
     criteria_mismatches: "Checking Leads against the active assignment rule",
+    lead_no_activity: "Finding Leads with no activity in 6 months",
+    stale_leads: "Finding stale Leads",
     contact_roles: "Checking contact roles on deals",
     orphaned_contacts: "Finding Contacts without an Account",
     multiple_accounts: "Checking Contacts to Multiple Accounts",
