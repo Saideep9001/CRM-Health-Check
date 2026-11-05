@@ -32,8 +32,8 @@ function Guidance({ lines }: { lines: string[] }) {
   );
 }
 
-/** Sales stage guidance gaps: the org's Opportunity Sales Paths (green = active, red = inactive). Picking one shows every
- *  stage of its sales process with its "Guidance for Success" and key fields, read live from Salesforce Setup. */
+/** Sales stage guidance gaps: every Opportunity Sales Process (green = it has an active Sales Path, red = it hasn't). Picking
+ *  one shows each of its stages with the Path's "Guidance for Success" and key fields, read live from Salesforce Setup. */
 export function SalesPaths({ assessmentId }: { assessmentId: string }) {
   const data = useQuery({
     queryKey: ['sales-paths', assessmentId],
@@ -53,17 +53,17 @@ export function SalesPaths({ assessmentId }: { assessmentId: string }) {
   if (!list.length)
     return (
       <p className="rounded-lg bg-muted/50 px-4 py-3 text-sm text-ink-muted">
-        No Sales Paths for Opportunities in Setup, so reps get no on-screen guidance at any stage.
+        No Opportunity Sales Processes or Sales Paths found in Setup.
       </p>
     );
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Sales Paths">
+      <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Sales Processes">
         <span className="mr-1 inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">
-          <Route className="h-3.5 w-3.5" /> Sales Paths
-          <InfoTip label="About Sales Paths">
-            The Opportunity Paths in Setup. Green: active. Red: inactive. Pick one to see each stage of its sales process with the guidance reps see.
+          <Route className="h-3.5 w-3.5" /> Sales Processes
+          <InfoTip label="About Sales Processes">
+            Every Opportunity Sales Process in Setup. Green: it has an active Sales Path. Red: its Path is inactive, or it has none. Pick one to see each of its stages with the guidance reps see.
           </InfoTip>
         </span>
         {list.map((p) => {
@@ -74,7 +74,7 @@ export function SalesPaths({ assessmentId }: { assessmentId: string }) {
               type="button"
               aria-pressed={on}
               onClick={() => setPicked(p.id)}
-              title={`${p.active ? 'Active' : 'Inactive'} · ${p.guided} of ${p.openStages} open stages have guidance`}
+              title={`${p.pathName ? `Sales Path: ${p.pathName} (${p.pathActive ? 'active' : 'inactive'})` : 'No Sales Path'}${p.processActive ? '' : ' · the Sales Process is inactive'} · ${p.guided} of ${p.openStages} open stages have guidance`}
               className={cx(
                 'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition',
                 p.active ? 'border-good/40 bg-good-soft text-good' : 'border-bad/40 bg-bad-soft text-bad',
@@ -95,11 +95,21 @@ export function SalesPaths({ assessmentId }: { assessmentId: string }) {
         <div className="overflow-hidden rounded-xl border border-line">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-line bg-muted/40 px-4 py-2.5 text-xs text-ink-muted">
             <span className="text-sm font-semibold text-ink">{path.name}</span>
-            <span className={cx('rounded-full px-2 py-0.5 font-medium', path.active ? 'bg-good-soft text-good' : 'bg-bad-soft text-bad')}>
-              {path.active ? 'Active' : 'Inactive'}
+            {!path.processActive && <span className="rounded-full bg-muted px-2 py-0.5 font-medium">Sales Process inactive</span>}
+            <span>
+              Sales Path:{' '}
+              {path.pathName ? (
+                <>
+                  <span className="font-medium text-ink">{path.pathName}</span>{' '}
+                  <span className={cx('rounded-full px-2 py-0.5 font-medium', path.pathActive ? 'bg-good-soft text-good' : 'bg-bad-soft text-bad')}>
+                    {path.pathActive ? 'Active' : 'Inactive'}
+                  </span>
+                </>
+              ) : (
+                <span className="rounded-full bg-bad-soft px-2 py-0.5 font-medium text-bad">None</span>
+              )}
             </span>
-            {path.salesProcess && <span>Sales Process: <span className="font-medium text-ink">{path.salesProcess}</span></span>}
-            {path.recordType && <span>Record Type: <span className="font-medium text-ink">{path.recordType}</span></span>}
+            {path.recordType && <span>Record Types: <span className="font-medium text-ink">{path.recordType}</span></span>}
             <span>{path.guided} of {path.openStages} open stages have guidance</span>
           </div>
           <div className="overflow-x-auto">
@@ -124,7 +134,7 @@ export function SalesPaths({ assessmentId }: { assessmentId: string }) {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-ink-muted">
-                      {s.details.length ? <Guidance lines={s.details} /> : <span className="text-ink-subtle">No guidance for this stage on the Path.</span>}
+                      {s.details.length ? <Guidance lines={s.details} /> : <span className="text-ink-subtle">{path.pathName ? 'No guidance for this stage on the Path.' : 'No Sales Path for this Sales Process.'}</span>}
                       {s.keyFields.length > 0 && (
                         <p className="mt-1.5 text-[11px] text-ink-subtle">
                           <span className="font-semibold">Key fields:</span> {s.keyFields.join(', ')}
@@ -138,7 +148,7 @@ export function SalesPaths({ assessmentId }: { assessmentId: string }) {
           </div>
         </div>
       )}
-      <p className="text-[11px] text-ink-subtle">Read live from Salesforce Setup (Path Settings). The guidance is exactly as entered there.</p>
+      <p className="text-[11px] text-ink-subtle">Read live from Salesforce Setup (Sales Processes and Path Settings). The guidance is exactly as entered there.</p>
     </div>
   );
 }

@@ -723,11 +723,18 @@ def test_sales_paths_with_stage_guidance(client, sf, monkeypatch):
             return [{"Metadata": {"recordTypeName": "__MASTER__", "pathAssistantSteps": []}}]
         if q == "SELECT Id, Name, Metadata FROM BusinessProcess WHERE Id = '019000000000001AAA'":
             return [{"Name": "Channel Sales Process", "Metadata": {"values": [{"fullName": "Prospecting"}, {"fullName": "Proposal"}]}}]
+        if q == "SELECT Id, Name, Metadata FROM BusinessProcess WHERE Id = '019000000000002AAA'":
+            return [{"Name": "Direct Sales Process", "Metadata": {"values": [{"fullName": "Proposal"}]}}]
         return tooling(q)
 
     def paths_records(q):
-        if q.startswith("SELECT Name, BusinessProcessId FROM RecordType WHERE SobjectType = 'Opportunity' AND DeveloperName = 'Channel'"):
-            return [{"Name": "Channel", "BusinessProcessId": "019000000000001AAA"}]
+        if q.startswith("SELECT Name, DeveloperName, BusinessProcessId, IsActive FROM RecordType WHERE SobjectType = 'Opportunity'"):
+            return [{"Name": "Channel", "DeveloperName": "Channel", "BusinessProcessId": "019000000000001AAA", "IsActive": True},
+                    {"Name": "Partner", "DeveloperName": "Partner", "BusinessProcessId": "019000000000001AAA", "IsActive": True},
+                    {"Name": "Direct", "DeveloperName": "Direct", "BusinessProcessId": "019000000000002AAA", "IsActive": True}]
+        if q.startswith("SELECT Id, Name, IsActive FROM BusinessProcess WHERE TableEnumOrId = 'Opportunity'"):
+            return [{"Id": "019000000000001AAA", "Name": "Channel Sales Process", "IsActive": True},
+                    {"Id": "019000000000002AAA", "Name": "Direct Sales Process", "IsActive": False}]
         return records(q)
 
     monkeypatch.setattr(FakeSalesOrg, "tooling", staticmethod(paths_tooling))
@@ -736,9 +743,12 @@ def test_sales_paths_with_stage_guidance(client, sf, monkeypatch):
     a, _, _ = run(client)
     body = client.get(f"{API}/assessments/{a['id']}/sales-paths")
     assert body.status_code == 200, body.text
-    channel, master = body.json()  # active first; the Lead path isn't listed
-    assert (channel["name"], channel["active"], channel["salesProcess"], channel["recordType"]) == ("Channel Sales Path", True, "Channel Sales Process", "Channel")
-    assert (master["name"], master["active"], master["recordType"], master["salesProcess"]) == ("Master Path", False, "Master", None)
+    channel, direct, master = body.json()  # every Sales Process, those with an active Path first; the Lead path isn't listed
+    assert (channel["name"], channel["active"], channel["pathName"], channel["recordType"]) == ("Channel Sales Process", True, "Channel Sales Path", "Channel, Partner")
+    assert (direct["name"], direct["active"], direct["pathName"], direct["processActive"]) == ("Direct Sales Process", False, None, False)
+    assert [(s["stage"], s["available"]) for s in direct["stages"]] == [("Proposal", False)]  # no Path: no guidance
+    assert (master["name"], master["active"], master["pathName"], master["pathActive"], master["recordType"]) == (
+        "Master (no record type)", False, "Master Path", False, "Master")
     assert [s["stage"] for s in channel["stages"]] == ["Prospecting", "Proposal"] and (channel["guided"], channel["openStages"]) == (1, 2)
     prospecting, proposal = channel["stages"]
     assert not prospecting["available"] and prospecting["details"] == []  # only a blank paragraph: no guidance

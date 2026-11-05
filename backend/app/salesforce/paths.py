@@ -69,32 +69,32 @@ def _path_metadata(sf: SalesforceClient, path: dict) -> dict:
     return {}
 
 
-def _process_stages(sf: SalesforceClient, record_type: str | None) -> tuple[str | None, str | None, list[str] | None]:
-    """(record type label, sales process name, its stage API names in order) for a Path's record type ("Opportunity.Channel");
-    None for the stages when it's the Master record type or can't be read."""
-    dev = (record_type or "").split(".", 1)[-1]
-    if not dev or dev == "__MASTER__" or not re.fullmatch(r"\w+", dev):
-        return ("Master" if dev == "__MASTER__" else None), None, None
+def _process_values(sf: SalesforceClient, process_id: str) -> tuple[str | None, list[str] | None]:
+    """A Sales Process's (name, stages as API names in its order); None for what can't be read."""
     try:
-        rt = sf.query(f"SELECT Name, BusinessProcessId FROM RecordType WHERE SobjectType = 'Opportunity' AND DeveloperName = '{dev}' LIMIT 1").get("records", [])
-        if not rt:
-            return dev, None, None
-        name, bp = rt[0].get("Name") or dev, rt[0].get("BusinessProcessId")
-        if not bp or not SAFE_ID.fullmatch(bp):
-            return name, None, None
-        rows = _tooling(sf, f"SELECT Id, Name, Metadata FROM BusinessProcess WHERE Id = '{bp}'")
-        if not rows:
-            return name, None, None
-        values = (rows[0].get("Metadata") or {}).get("values") or []
-        return name, rows[0].get("Name"), [v["fullName"] for v in values if v.get("fullName")] or None
+        rows = _tooling(sf, f"SELECT Id, Name, Metadata FROM BusinessProcess WHERE Id = '{process_id}'")
     except SalesforceAuthExpired:
         raise
     except SalesforceError:
-        return dev, None, None
+        return None, None
+    row = rows[0] if rows else {}
+    values = (row.get("Metadata") or {}).get("values") or []
+    return row.get("Name"), [v["fullName"] for v in values if v.get("fullName")] or None
+
+
+def _query(sf: SalesforceClient, soql: str) -> list[dict]:
+    try:
+        return sf.query(soql).get("records", [])
+    except SalesforceAuthExpired:
+        raise
+    except SalesforceError:
+        return []
 
 
 def sales_paths(sf: SalesforceClient) -> list[dict]:
-    """Every Opportunity Sales Path (active first), each with its stages and their guidance, read live from Setup."""
+    """Every Opportunity Sales Process (those with an active Path first), each with the Path for its record types and every
+    stage of the process with that Path's guidance, read live from Setup. A Master Path (Opportunities with no record type)
+    and any Path whose sales process can't be found are listed too."""
     try:
         paths = [p for p in _tooling(sf, "SELECT Id, DeveloperName, MasterLabel, SobjectType, IsActive FROM PathAssistant")
                  if p.get("SobjectType") == "Opportunity" and SAFE_ID.fullmatch(str(p.get("Id") or ""))]
@@ -110,21 +110,50 @@ def sales_paths(sf: SalesforceClient) -> list[dict]:
         raise
     except Exception:  # noqa: BLE001 - labels are a nicety; the API names still say which field
         labels = {}
-    out = []
-    for p in paths:
+    for p in paths:  # each Path's steps and record type ("Opportunity.Channel", or "__MASTER__")
         meta = _path_metadata(sf, p)
-        steps = {s.get("picklistValueName"): s for s in meta.get("pathAssistantSteps") or [] if s.get("picklistValueName")}
-        rt_name, process, order = _process_stages(sf, meta.get("recordTypeName"))
-        names = order or list(by_api)
+        p["_steps"] = {st.get("picklistValueName"): st for st in meta.get("pathAssistantSteps") or [] if st.get("picklistValueName")}
+        p["_rt"] = (meta.get("recordTypeName") or "").split(".", 1)[-1]
+    rtypes = _query(sf, "SELECT Name, DeveloperName, BusinessProcessId, IsActive FROM RecordType WHERE SobjectType = 'Opportunity' ORDER BY Name")
+    processes = _query(sf, "SELECT Id, Name, IsActive FROM BusinessProcess WHERE TableEnumOrId = 'Opportunity' ORDER BY Name")
+    known = {b["Id"] for b in processes}
+    for r in rtypes:  # a process a record type uses but the list didn't show (e.g. no access to BusinessProcess)
+        bp = r.get("BusinessProcessId")
+        if bp and bp not in known:
+            known.add(bp)
+            processes.append({"Id": bp, "Name": None, "IsActive": True})
+
+    def entry(key: str, name: str, process_active: bool, order: list[str] | None, rts: list[str], on: list[dict]) -> dict:
+        shown = next((p for p in on if p.get("IsActive")), on[0] if on else None)  # the active Path, else an inactive one
+        steps = shown["_steps"] if shown else {}
         rows = []
-        for api in names:
+        for api in order or list(by_api):
             stage, step = by_api.get(api, {}), steps.get(api) or {}
             lines = guidance_lines(step.get("info"))
             rows.append({"stage": stage.get("MasterLabel") or api, "apiName": api, "closed": bool(stage.get("IsClosed")),
                          "available": bool(lines), "details": lines,
                          "keyFields": [labels.get(f, f) for f in step.get("fieldNames") or []]})
         open_rows = [r for r in rows if not r["closed"]]
-        out.append({"id": p["Id"], "name": p.get("MasterLabel") or p.get("DeveloperName") or "Sales Path", "active": bool(p.get("IsActive")),
-                    "recordType": rt_name, "salesProcess": process, "stages": rows,
-                    "openStages": len(open_rows), "guided": sum(r["available"] for r in open_rows)})
+        return {"id": key, "name": name, "active": bool(shown and shown.get("IsActive")), "processActive": process_active,
+                "pathName": (shown.get("MasterLabel") or shown.get("DeveloperName")) if shown else None,
+                "pathActive": bool(shown and shown.get("IsActive")) if shown else None,
+                "recordType": ", ".join(rts) or None, "salesProcess": name, "stages": rows,
+                "openStages": len(open_rows), "guided": sum(r["available"] for r in open_rows)}
+
+    out, used = [], set()
+    for b in processes:
+        if not SAFE_ID.fullmatch(str(b.get("Id") or "")):
+            continue
+        rts = [r for r in rtypes if r.get("BusinessProcessId") == b["Id"]]
+        devs = {r.get("DeveloperName") for r in rts}
+        on = [p for p in paths if p["_rt"] in devs]
+        used.update(p["Id"] for p in on)
+        name, order = _process_values(sf, b["Id"])
+        out.append(entry(b["Id"], b.get("Name") or name or "Sales Process", bool(b.get("IsActive")), order,
+                         [r.get("Name") or r.get("DeveloperName") for r in rts], on))
+    for p in paths:  # the Master Path, and Paths whose sales process wasn't found: every active stage
+        if p["Id"] not in used:
+            master = p["_rt"] == "__MASTER__"
+            out.append(entry(p["Id"], "Master (no record type)" if master else (p.get("MasterLabel") or "Sales Path"), True, None,
+                             ["Master"] if master else ([p["_rt"]] if p["_rt"] else []), [p]))
     return sorted(out, key=lambda x: (not x["active"], x["name"].lower()))

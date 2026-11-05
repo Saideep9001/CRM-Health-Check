@@ -153,11 +153,14 @@ class PathStage(ApiModel):
 
 
 class SalesPath(ApiModel):
-    id: str
-    name: str  # the Path's name in Setup
-    active: bool
-    record_type: str | None = None  # the record type it's for ("Master" = every Opportunity without one)
-    sales_process: str | None = None  # that record type's Sales Process
+    id: str  # the Sales Process (or, for a Master Path, the Path)
+    name: str  # the Sales Process's name in Setup
+    active: bool  # it has an active Sales Path
+    process_active: bool = True  # the Sales Process itself is active
+    path_name: str | None = None  # the Sales Path shown for it (None = no Path)
+    path_active: bool | None = None
+    record_type: str | None = None  # the record types that use it ("Master" = Opportunities with no record type)
+    sales_process: str | None = None
     stages: list[PathStage]
     open_stages: int  # stages that aren't closed
     guided: int  # of them, with guidance

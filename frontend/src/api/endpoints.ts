@@ -211,8 +211,14 @@ const filterParam = (filters: DataFilter[]) =>
 /** One Opportunity Sales Path with every stage of its sales process and that stage's guidance, live from Setup. */
 export type SalesPathData = {
   id: string;
+  /** the Sales Process's name (or "Master (no record type)") */
   name: string;
+  /** it has an active Sales Path */
   active: boolean;
+  processActive: boolean;
+  /** the Sales Path shown for it (null = none) */
+  pathName: string | null;
+  pathActive: boolean | null;
   recordType: string | null;
   salesProcess: string | null;
   stages: { stage: string; apiName: string; closed: boolean; available: boolean; details: string[]; keyFields: string[] }[];
