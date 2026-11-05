@@ -361,6 +361,8 @@ def _rule_owner_ids(rec: dict) -> set[str]:
     return {i for i in ids if re.fullmatch(r"00[5G][A-Za-z0-9]{12}([A-Za-z0-9]{3})?", i or "")}
 
 
+# Account Hierarchy Loops: each Account's loop (each Account → its Parent Account), the last column, frozen
+LOOP_COLUMN = {"name": "LoopPath", "label": "Loop Path (each → its parent)", "type": "string", "frozen": True}
 DEAL_ROLES_COLUMN = {"name": "OpenDealRoles", "label": "Roles on Open Deals", "type": "lines", "frozen": True}
 # Contacts to Multiple Accounts: every Account a Contact is related to, one per line ("lines" = shown stacked in the table).
 RELATED_ACCOUNTS_COLUMN = {"name": "RelatedAccounts", "label": "Related Accounts", "type": "lines", "frozen": True}
@@ -399,6 +401,11 @@ def _with_extra(sf, rec: dict, columns: list[dict], records: list[dict]) -> list
         return assignment.add_reason(columns, records, rec.get("reasons") or {}, rec.get("reason"), column=assignment.MATCH_COLUMN)
     if rec.get("extra") == "related_accounts":
         return _add_related_accounts(sf, columns, records)
+    if rec.get("extra") == "loop_path":  # Account Hierarchy Loops: each Account's loop, saved by the check
+        reasons = rec.get("reasons") or {}
+        for r in records:
+            r["values"][LOOP_COLUMN["name"]] = reasons.get(r.get("id") or "")
+        return [*(c for c in columns if c["name"] != LOOP_COLUMN["name"]), LOOP_COLUMN]
     if rec.get("extra") == "deal_roles":  # Multi-Deal Contacts: each Contact's roles on open deals, saved by the check
         reasons = rec.get("reasons") or {}
         for r in records:

@@ -93,6 +93,7 @@ export const DIAGNOSTIC_AREAS: DiagnosticArea[] = [
       'Orphaned Contacts',
       'Contacts to Multiple Accounts',
       'Multi-Deal Contacts',
+      'Account Hierarchy Loops',
     ],
   },
   {

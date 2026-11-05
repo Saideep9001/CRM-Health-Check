@@ -50,7 +50,17 @@ type Tab = 'indicators' | 'findings' | 'recommendations';
 
 /** The object a measure is about and its title within that object: "Completeness (Leads)" → Leads / Completeness,
  *  "Duplicate Accounts" → Accounts / Duplicates. Null for measures that aren't about one object. */
+// Area 4's cards, by the object they're about (their names don't say it the way Area 1's do).
+const GROUPS: Record<string, string> = {
+  'Opportunities Without Contact Roles': 'Contacts',
+  'Orphaned Contacts': 'Contacts',
+  'Contacts to Multiple Accounts': 'Contacts',
+  'Multi-Deal Contacts': 'Contacts',
+  'Account Hierarchy Loops': 'Accounts',
+};
+
 function objectOf(label: string): { group: string; title: string } | null {
+  if (GROUPS[label]) return { group: GROUPS[label], title: label };
   let m = label.match(/^(.+) \(([^)]+)\)$/);
   if (m) return { group: m[2], title: m[1] };
   m = label.match(/^Duplicate (.+)$/);

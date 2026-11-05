@@ -698,6 +698,109 @@ def multi_deal_contacts(ctx: Ctx) -> None:
         m.records[0]["reasons"] = {c: "\n".join(multi[c]) for c in ids[:ROLE_LISTED]}  # one "Role on Deal" per line
 
 
+LOOP_ROWS = 200000  # Accounts with a Parent Account read to follow their hierarchies
+LOOP_LISTED = 500  # Accounts listed (with their loop) on Account Hierarchy Loops
+
+
+def _loops(parent: dict[str, str]) -> list[list[str]]:
+    """Every loop in the parent links (each Account → its Parent Account), once each, in the order the links go:
+    A's parent B, B's parent C, C's parent A gives [A, B, C]; an Account that is its own parent gives [A]."""
+    done: set[str] = set()
+    loops: list[list[str]] = []
+    for start in parent:
+        if start in done:
+            continue
+        path: list[str] = []
+        at: dict[str, int] = {}
+        node = start
+        while node in parent and node not in done and node not in at:
+            at[node] = len(path)
+            path.append(node)
+            node = parent[node]
+        if node in at:  # came back to an Account on this path: the rest of the path from there is a loop
+            loops.append(path[at[node]:])
+        done.update(path)
+    return loops
+
+
+def hierarchy_loops(ctx: Ctx) -> None:
+    """Account Hierarchy Loops: Accounts whose Parent Account chain comes back to itself (A → B → C → A), so the hierarchy
+    never reaches a top Account. Every Account with a parent is read and each chain followed up; each loop counts once."""
+    label = "Account Hierarchy Loops"
+    if not ctx.has_field("Account", "ParentId"):
+        raise Unavailable("Accounts in this org have no Parent Account field, so there are no hierarchies to check.")
+    total = ctx.count("Account", recent=False)
+    rows = ctx.rows("SELECT Id, Name, ParentId FROM Account WHERE ParentId != null", LOOP_ROWS) if total else []
+    parent = {r["Id"]: r["ParentId"] for r in rows if r.get("Id") and r.get("ParentId")}
+    names = {r["Id"]: r.get("Name") or r["Id"] for r in rows if r.get("Id")}
+    loops = _loops(parent)
+    members = [a for loop in loops for a in loop]
+    in_loop = set(members)
+    lead: dict[str, bool] = {}  # does this Account's chain run into a loop?
+
+    def leads_in(a: str) -> bool:
+        seen: list[str] = []
+        node = a
+        while node in parent and node not in in_loop and node not in lead and node not in seen:
+            seen.append(node)
+            node = parent[node]
+        hit = node in in_loop or lead.get(node, False)
+        for s in seen:
+            lead[s] = hit
+        return hit
+
+    leading = sum(1 for a in parent if a not in in_loop and leads_in(a))
+    paths: dict[str, str] = {}  # each Account in a loop → its loop, starting from it
+    for loop in loops:
+        for i, a in enumerate(loop):
+            turn = loop[i:] + loop[:i]
+            paths[a] = " → ".join(names.get(x, x) for x in [*turn, a])
+    score = max(0.0, 100.0 - 20 * len(loops))
+    shown = "; ".join(paths[loop[0]] for loop in loops[:5]) + (f"; and {len(loops) - 5:,} more" if len(loops) > 5 else "")
+    m = ctx.metric(
+        label, len(members), "count", "lower-better", score,
+        how="Accounts whose Parent Account chain comes back to itself: Account A’s parent is B, B’s parent is C and C’s parent is A, "
+        "so the hierarchy goes round in a circle and never reaches a top Account. We read every Account that has a Parent "
+        "Account and follow each chain up; each loop counts once.",
+        rule="100 with no loops, 20 points less for each loop (0 with 5 or more).",
+        columns=["Name", "ParentId", "OwnerId", "CreatedDate"],
+        order="Name",
+        criteria=[
+            ("Records checked", f"{len(rows):,} Accounts with a Parent Account, of {total:,} Accounts"
+             + (f" (the first {LOOP_ROWS:,})" if len(rows) >= LOOP_ROWS else "")),
+            ("Loop", "Following Parent Account up from an Account comes back to an Account already passed (an Account that is its own parent is a loop of one)"),
+            ("What's counted", f"{len(members):,} Accounts in {len(loops):,} loop{'' if len(loops) == 1 else 's'}"
+             + (f"; {leading:,} more Accounts sit under a loop, so their hierarchy never ends either" if leading else "")),
+            ("Loops", shown or "None"),
+            ("Records listed", f"Every Account in a loop (up to {LOOP_LISTED:,}), by name, each with its loop"),
+        ],
+        records=("Account", ctx.ids_in(members, LOOP_LISTED)) if members else None,
+        recent=False,
+        extra="loop_path",
+    )
+    if m.records:
+        m.records[0]["reasons"] = {a: paths[a] for a in members[:LOOP_LISTED]}
+    if loops:
+        ctx.finding(
+            name="Account hierarchies that loop back on themselves",
+            records=("Account", ctx.ids_in(members, LOOP_LISTED)),
+            recent=False,
+            score=score,
+            min_score=101,  # raised for any loop
+            severity="high",
+            affected=len(members),
+            description=f"{len(members):,} Accounts are in {len(loops):,} Parent Account loop{'' if len(loops) == 1 else 's'}, e.g. {paths[loops[0][0]]}."
+            + (f" {leading:,} more Accounts sit under a loop." if leading else ""),
+            why="A hierarchy that goes round in a circle has no top Account, so the hierarchy view, roll-up reports and anything "
+            "that walks up to the parent company can’t work it out.",
+            impact="Wrong or missing totals for the parent company, and Accounts that can’t be placed in their real company structure.",
+            action="Open one Account in each loop and correct or clear its Parent Account so the chain ends at the real top company.",
+            obj="Account",
+            url=ctx.list_url("Account"),
+            measure=label,
+        )
+
+
 # ---------------------------------------------------------------- area 5: sales path, playbooks, feedback loops
 
 def stuck_opportunities(ctx: Ctx) -> None:
@@ -1301,7 +1404,7 @@ def layout_usability(ctx: Ctx) -> None:
 
 AREAS = {
     "area-3": [stuck_queue_leads, inactive_rules, criteria_mismatches],
-    "area-4": [contact_roles, orphaned_contacts, multiple_accounts, multi_deal_contacts],
+    "area-4": [contact_roles, orphaned_contacts, multiple_accounts, multi_deal_contacts, hierarchy_loops],
     "area-5": [stuck_opportunities, missing_next_steps, closed_lost_reasons, stage_guidance],
     "area-6": [missing_sales_activities, web_to_lead, email_templates, activity_capture],
     "area-7": [validation_rules, required_field_gaps, junk_data, layout_usability],
@@ -1315,6 +1418,7 @@ STEP_LABELS = {
     orphaned_contacts: "Finding Contacts without an Account",
     multiple_accounts: "Checking Contacts to Multiple Accounts",
     multi_deal_contacts: "Finding Contacts on several deals",
+    hierarchy_loops: "Following Account hierarchies",
     stuck_opportunities: "Finding stuck deals",
     missing_next_steps: "Checking next steps on deals",
     closed_lost_reasons: "Checking why deals were lost",

@@ -61,6 +61,15 @@ ROLES = [
     {"ContactId": "003000000000001", "Role": "Decision Maker", "Opportunity": {"Name": "Globex Expansion"}},
     {"ContactId": "003000000000002", "Role": None, "Opportunity": {"Name": "Acme Renewal"}},
 ]
+# Accounts with a parent: A → B → C → A loop, D sits under the loop, E → F is a normal hierarchy, G is its own parent.
+ACCOUNT_PARENTS = [
+    {"Id": "001000000000001", "Name": "Account A", "ParentId": "001000000000002"},
+    {"Id": "001000000000002", "Name": "Account B", "ParentId": "001000000000003"},
+    {"Id": "001000000000003", "Name": "Account C", "ParentId": "001000000000001"},
+    {"Id": "001000000000004", "Name": "Account D", "ParentId": "001000000000001"},
+    {"Id": "001000000000005", "Name": "Account E", "ParentId": "001000000000006"},
+    {"Id": "001000000000007", "Name": "Account G", "ParentId": "001000000000007"},
+]
 LEADS = [  # open Leads read to compare with the rules
     {"Id": "00Q000000000001", "OwnerId": "00G000000000002", "Owner": {"Name": "Web Queue"}, "CreatedById": "005000000000009", "LeadSource": "Web"},  # active entry 1
     {"Id": "00Q000000000002", "OwnerId": "005000000000002", "Owner": {"Name": "Bob Ray"}, "CreatedById": "005000000000002", "LeadSource": "Partner"},  # no match, waiting
@@ -159,6 +168,8 @@ class FakeSalesOrg(FakeSalesforce):
             return [{"Id": "00G000000000001AAA", "Name": "Jane Doe"}] if "'Jane Doe'" in q else []
         if "FROM LeadHistory WHERE Field = 'Owner' AND LeadId IN" in q:
             return [{"LeadId": "00Q000000000003"}]  # its owner was changed after it was created
+        if q.startswith("SELECT Id, Name, ParentId FROM Account WHERE ParentId != null"):
+            return ACCOUNT_PARENTS
         if "FROM User WHERE Username IN" in q:  # who inactive rules assign to, by username
             return [{"Id": "005000000000002", "Name": "Bob Ray", "Username": "bob@acme.test"}] if "'bob@acme.test'" in q else []
         if "FROM User" in q:
@@ -222,7 +233,8 @@ def test_all_workflow_areas(client, sf):
     rule_reads = [x for x in sf.soap if "<met:type>AssignmentRules</met:type>" in x]
     assert len(rule_reads) == 1 and "<fullNames>Lead</fullNames>" in rule_reads[0]  # read once for both cards
     assert [i["label"] for i in areas["area-4"]["indicators"]] == ["Opportunities Without Contact Roles", "Orphaned Contacts",
-                                                                   "Contacts to Multiple Accounts", "Multi-Deal Contacts"]
+                                                                   "Contacts to Multiple Accounts", "Multi-Deal Contacts",
+                                                                   "Account Hierarchy Loops"]
     assert ind["Opportunities Without Contact Roles"] == 15 and ind["Orphaned Contacts"] == 9
     assert ind["Contacts to Multiple Accounts"] == 0 and ind["Multi-Deal Contacts"] == 1  # the feature is off; Pat is on 2 open deals
     assert ind["Stuck Opportunities"] == 10 and ind["Missing Next Steps"] == 18 and ind["Missing Closed Lost reasons"] == 6
@@ -491,3 +503,21 @@ def test_inactive_rules_chips_by_rule_and_assignee(client, sf):
         assert client.get(f"{base}/indicator-records", params={**params, "queue": bad}).status_code == 422
     other = {"label": "Stuck Queue-Owned Leads", "object": "Lead"}
     assert client.get(f"{base}/indicator-rule-targets", params=other).status_code == 422
+
+
+def test_account_hierarchy_loops(client, sf, monkeypatch):
+    connect(client)
+    a, res, findings = run(client)
+    card = next(i for x in res["areas"] for i in x["indicators"] if i["label"] == "Account Hierarchy Loops")
+    crit = dict(card["criteria"])
+    assert card["value"] == 4 and card["score"] == 60  # A, B, C and G, in 2 loops
+    assert crit["What's counted"] == "4 Accounts in 2 loops; 1 more Accounts sit under a loop, so their hierarchy never ends either"
+    assert crit["Loops"] == "Account A → Account B → Account C → Account A; Account G → Account G"
+    found = next(f for f in findings if f["name"] == "Account hierarchies that loop back on themselves")
+    assert found["severity"] == "high" and found["affectedRecords"] == 4
+    _page(monkeypatch, ["001000000000002", "001000000000005"])
+    body = client.get(f"{API}/assessments/{a['id']}/areas/area-4/indicator-records", params={"label": card["label"], "object": "Account"}).json()
+    loop = body["columns"][-1]  # last, frozen
+    assert (loop["label"], loop["frozen"]) == ("Loop Path (each → its parent)", True)
+    assert body["records"][0]["values"]["LoopPath"] == "Account B → Account C → Account A → Account B"  # starts from the Account itself
+    assert body["records"][1]["values"]["LoopPath"] is None
