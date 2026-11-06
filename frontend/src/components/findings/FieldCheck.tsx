@@ -21,9 +21,9 @@ type Pick = { field: string; kind: FinderKind };
  *  field's own duplicates, CUSTOM = a condition over the numbered fields, e.g. 1 AND (2 OR 3). */
 export type MatchMode = 'AND' | 'OR' | 'CUSTOM';
 const MODES: { value: MatchMode; label: string; help: string }[] = [
-  { value: 'AND', label: 'AND', help: 'Only records that are duplicates on every chosen field together (common duplicates).' },
-  { value: 'OR', label: 'OR', help: 'Each field’s own duplicates, field by field.' },
-  { value: 'CUSTOM', label: 'Custom', help: 'Your own condition over the numbered fields, e.g. 1 AND (2 OR 3).' },
+  { value: 'AND', label: 'AND', help: 'Only records that are duplicates on every ticked field together (common duplicates).' },
+  { value: 'OR', label: 'OR', help: 'Each ticked field’s own duplicates, field by field.' },
+  { value: 'CUSTOM', label: 'Custom', help: 'Your own condition over the ticked fields’ numbers, e.g. 1 AND (2 OR 3).' },
 ];
 const MAX_GROUPS = 5; // OR'd groups the check takes
 const MAX_GROUP_FIELDS = 6; // fields in one AND group
@@ -304,6 +304,9 @@ export function FieldCheck({
   const [mode, setMode] = useState<MatchMode>('AND');
   const [logic, setLogic] = useState('');
   const [ranMode, setRanMode] = useState<MatchMode>('AND'); // the mode of the result shown
+  // Duplicates page: the fields ticked in the results, which AND / OR / Custom apply to
+  const [ticked, setTicked] = useState<string[]>([]);
+  const dupTicks = focus === 'duplicates' && !!onPickFields;
   const [fieldQuery, setFieldQuery] = useState('');
   const [listOpen, setListOpen] = useState(true);
   const [pick, setPick] = useState<Pick | null>(null);
@@ -338,28 +341,31 @@ export function FieldCheck({
   const label = (name: string) => fields.find((f) => f.name === name)?.label ?? name;
   const what = objectLabel(object).toLowerCase();
 
-  /** The rule sent with the check: AND = all fields as one group, OR = no rule (each field on its own), CUSTOM = the condition. */
-  const rulesFor = (names: string[], how: MatchMode): string[][] | undefined => {
+  /** The rule sent with the check, over the fields `on` (the ticked ones; all chosen at first): AND = them as one group,
+   *  OR = no rule (each field on its own), CUSTOM = the condition over their numbers. */
+  const rulesFor = (on: string[], how: MatchMode): string[][] | undefined => {
     if (how === 'OR') return [];
     if (how === 'CUSTOM') {
-      const parsed = parseLogic(logic, names.length);
-      return 'groups' in parsed ? parsed.groups.map((g) => g.map((k) => names[k - 1])) : undefined;
+      const parsed = parseLogic(logic, on.length);
+      return 'groups' in parsed ? parsed.groups.map((g) => g.map((k) => on[k - 1])) : undefined;
     }
-    return [names.slice(0, MAX_GROUP_FIELDS)];
+    return on.length > 1 ? [on.slice(0, MAX_GROUP_FIELDS)] : [];
   };
-  function runWith(fieldNames: string[], tellPage: boolean, how: MatchMode = mode) {
+  /** `on`: the ticked fields the rule is about (a re-run from the results); without it, a fresh check of all chosen fields. */
+  function runWith(fieldNames: string[], tellPage: boolean, how: MatchMode = mode, on?: string[]) {
     setListOpen(false);
     run.mutate(
-      { object, fields: fieldNames, rules: rulesFor(fieldNames, how) },
+      { object, fields: fieldNames, rules: rulesFor(on ?? fieldNames, how) },
       {
         onSuccess: (r: FieldCheckResult) => {
           setRanMode(how);
           if (tellPage) onResult?.(r);
           onLiveResult?.(r);
-          // the page's records table shows what was asked: the common duplicates (AND / Custom) or each field's own (OR)
+          // the page's records table shows what was asked: the common duplicates (AND / Custom) or each ticked field's own (OR)
           if (focus === 'duplicates' && onPickFields) {
-            if (how !== 'OR' && r.combined) onPickFields([ALL]);
-            else onPickFields(r.fields.filter((f) => f.duplicates).map((f) => f.name));
+            const ticks = on ?? r.fields.filter((f) => f.duplicates).map((f) => f.name);
+            setTicked(ticks);
+            onPickFields(how !== 'OR' && r.combined ? [ALL] : ticks);
           }
           const kind = focus ?? 'empty';
           // open the field with the most to look at for this page (e.g. Account Phone's odd values)
@@ -383,29 +389,56 @@ export function FieldCheck({
     runWith(names, true, 'AND');
   };
   const andOr = shows('duplicates') && chosen.length > 1;
+  // the fields AND / OR / Custom apply to: the ticked ones on a duplicates page, otherwise every chosen field
+  const ruleOn = dupTicks ? ticked : chosen;
+  /** Applies the mode to the ticked fields: OR just shows their own groups; AND checks them together again. */
+  const applyTicks = (next: string[], how: MatchMode = mode) => {
+    setTicked(next);
+    if (how === 'OR' || (how === 'AND' && next.length < 2)) {
+      setRanMode('OR'); // one field (or none) has nothing to combine: its own groups, no re-check
+      onPickFields!(next);
+    } else if (how === 'AND') {
+      runWith(chosen, true, 'AND', next);
+    } else {
+      setLogic(allAnd(next.length)); // Custom: renumbered, runs once the condition is applied
+    }
+  };
   const pickMode = (m: MatchMode, rerun = false) => {
     setMode(m);
-    if (m === 'CUSTOM' && !logic.trim()) setLogic(allAnd(chosen.length));
-    if (rerun && m !== 'CUSTOM') runWith(chosen, true, m); // Custom runs once the condition is applied
+    if (m === 'CUSTOM' && (!logic.trim() || dupTicks)) setLogic(allAnd(ruleOn.length));
+    if (!rerun || m === 'CUSTOM') return; // Custom runs once the condition is applied
+    if (dupTicks) applyTicks(ticked, m);
+    else runWith(chosen, true, m);
   };
-  const parsed = mode === 'CUSTOM' && andOr ? parseLogic(logic, chosen.length) : null;
+  const applyCustom = () => runWith(chosen, true, 'CUSTOM', dupTicks ? ticked : undefined);
+  const parsed = mode === 'CUSTOM' && andOr ? parseLogic(logic, ruleOn.length) : null;
   const logicError = parsed && 'error' in parsed ? parsed.error : null;
 
   const result = run.data;
   const picked = result && pick ? (pick.field === ALL ? null : result.fields.find((f) => f.name === pick.field)) : null;
   // Empty values and invalid data are shown in the page's records table (one table), not in a second one here.
   // Duplicates too: the ticked fields' groups replace the records table's (one table on the page).
-  // AND / Custom: only the common duplicates (the rule's row); OR: each field's own duplicates.
-  const commonOnly = shows('duplicates') && ranMode !== 'OR' && !!result?.combined;
+  // The rule's row (AND / Custom); OR shows the ticked fields' own duplicates instead.
+  const showRule = !!result?.combined && ranMode !== 'OR';
   const inRecords = (field: string, kind: FinderKind) =>
     !!onPickFields &&
     (kind === 'empty' ||
       (kind === 'spelling' && recordFields.includes(field)) ||
-      (kind === 'duplicates' && (field === ALL ? !!run.data?.combined : !commonOnly && !!run.data?.fields.find((f) => f.name === field)?.duplicates)));
-  const tickable = [...(run.data?.fields ?? []).map((f) => f.name), ALL].filter((f) => inRecords(f, focus ?? 'empty'));
+      (kind === 'duplicates' && (field === ALL ? showRule : !!run.data?.fields.find((f) => f.name === field)?.duplicates)));
+  const tickable = dupTicks
+    ? (run.data?.fields ?? []).filter((f) => f.duplicates).map((f) => f.name)
+    : [...(run.data?.fields ?? []).map((f) => f.name), ALL].filter((f) => inRecords(f, focus ?? 'empty'));
   const isOn = (field: string, kind: FinderKind) =>
-    inRecords(field, kind) ? shownFields == null || shownFields.includes(field) : pick?.field === field && pick.kind === kind;
+    dupTicks && kind === 'duplicates'
+      ? field === ALL || ticked.includes(field)
+      : inRecords(field, kind) ? shownFields == null || shownFields.includes(field) : pick?.field === field && pick.kind === kind;
   const choose = (field: string, kind: FinderKind) => {
+    if (dupTicks && kind === 'duplicates') {
+      // tick or untick a field: the mode applies to the ticked fields (in the order they were chosen)
+      if (field !== ALL) applyTicks(chosen.filter((f) => (f === field ? !ticked.includes(f) : ticked.includes(f))));
+      document.getElementById('records-table')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
     if (!inRecords(field, kind)) return setPick({ field, kind });
     const now = shownFields ?? tickable;
     onPickFields!(now.includes(field) ? now.filter((f) => f !== field) : [...now, field]);
@@ -546,14 +579,14 @@ export function FieldCheck({
             <div className="flex flex-wrap items-start gap-2">
             <p className="min-w-0 flex-1 text-sm">
               <span className="font-semibold tabular-nums">{fmtNumber(result.scanned)}</span> {what} checked
-              {result.truncated && <span className="text-ink-muted"> (the first 20,000)</span>}. {onPickFields ? 'Tick a field to show its records in the table below.' : 'Click a number to see its records.'}
+              {result.truncated && <span className="text-ink-muted"> (the first 20,000)</span>}. {dupTicks ? 'Tick the fields to compare, then choose AND, OR or Custom: it applies to the ticked fields only.' : onPickFields ? 'Tick a field to show its records in the table below.' : 'Click a number to see its records.'}
               {tickable.length > 1 && (
                 <span className="ml-2 whitespace-nowrap text-xs">
-                  <button type="button" className="font-semibold text-brand hover:underline disabled:text-ink-subtle disabled:no-underline" disabled={shownFields == null || tickable.every((f) => shownFields.includes(f))} onClick={() => onPickFields!(null)}>
+                  <button type="button" className="font-semibold text-brand hover:underline disabled:text-ink-subtle disabled:no-underline" disabled={dupTicks ? tickable.every((f) => ticked.includes(f)) : shownFields == null || tickable.every((f) => shownFields.includes(f))} onClick={() => (dupTicks ? applyTicks(tickable) : onPickFields!(null))}>
                     Select all
                   </button>
                   <span className="mx-1.5 text-ink-subtle">·</span>
-                  <button type="button" className="font-semibold text-brand hover:underline disabled:text-ink-subtle disabled:no-underline" disabled={shownFields?.length === 0} onClick={() => onPickFields!([])}>
+                  <button type="button" className="font-semibold text-brand hover:underline disabled:text-ink-subtle disabled:no-underline" disabled={dupTicks ? ticked.length === 0 : shownFields?.length === 0} onClick={() => (dupTicks ? applyTicks([]) : onPickFields!([]))}>
                     Deselect all
                   </button>
                 </span>
@@ -584,7 +617,10 @@ export function FieldCheck({
                     </span>
                     <span className="text-ink-subtle">{MODES.find((m) => m.value === mode)!.help}</span>
                   </div>
-                  {mode === 'AND' && chosen.length > MAX_GROUP_FIELDS && (
+                  {dupTicks && ticked.length < 2 && mode !== 'OR' && (
+                    <p className="text-warn">Tick at least two fields to combine them; with one, its own duplicates are shown.</p>
+                  )}
+                  {mode === 'AND' && ruleOn.length > MAX_GROUP_FIELDS && (
                     <p className="text-warn">Only the first {MAX_GROUP_FIELDS} fields are compared together.</p>
                   )}
                   {mode === 'CUSTOM' && (
@@ -597,14 +633,14 @@ export function FieldCheck({
                           onChange={(e) => setLogic(e.target.value)}
                           placeholder="e.g. 1 AND (2 OR 3)"
                           aria-label="Custom condition"
-                          onKeyDown={(e) => e.key === 'Enter' && !logicError && runWith(chosen, true, 'CUSTOM')}
+                          onKeyDown={(e) => e.key === 'Enter' && !logicError && applyCustom()}
                         />
-                        <Button size="sm" variant="primary" disabled={!!logicError || run.isPending} onClick={() => runWith(chosen, true, 'CUSTOM')}>
+                        <Button size="sm" variant="primary" disabled={!!logicError || run.isPending} onClick={applyCustom}>
                           Apply
                         </Button>
                       </label>
                       <p className="flex flex-wrap gap-x-3 gap-y-1 text-ink-muted">
-                      {chosen.map((f, i) => (
+                      {ruleOn.map((f, i) => (
                         <span key={f} className="inline-flex items-center gap-1">
                           <span className="grid h-4 min-w-4 place-items-center rounded-full bg-brand px-1 text-[10px] font-bold text-white">{i + 1}</span>
                           {label(f)}
@@ -616,7 +652,7 @@ export function FieldCheck({
                       ) : (
                         parsed && 'groups' in parsed && (
                           <p className="text-ink-subtle">
-                            Duplicates when: {ruleText(parsed.groups.map((g) => g.map((k) => label(chosen[k - 1]))))}
+                            Duplicates when: {ruleText(parsed.groups.map((g) => g.map((k) => label(ruleOn[k - 1]))))}
                           </p>
                         )
                       )}
@@ -636,7 +672,7 @@ export function FieldCheck({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line">
-                  {result.fields.filter(() => !(commonOnly && focus === 'duplicates')).map((f) => (
+                  {result.fields.map((f) => (
                     <tr key={f.name}>
                       <td className="px-3 py-2">
                         <span className="block font-medium">{f.label}</span>
@@ -672,7 +708,7 @@ export function FieldCheck({
                       )}
                     </tr>
                   ))}
-                  {result.combined && shows('duplicates') && (
+                  {result.combined && showRule && shows('duplicates') && (
                     <tr className="bg-brand-soft/30">
                       <td className="px-3 py-2">
                         <span className="block font-medium">{ranMode === 'CUSTOM' ? 'Custom condition' : result.combined.rules.length > 1 ? 'Match rule (AND / OR)' : 'All fields together (AND)'}</span>
@@ -683,7 +719,7 @@ export function FieldCheck({
                       <Cell
                         on={isOn(ALL, 'duplicates')}
                         onClick={() => choose(ALL, 'duplicates')}
-                        tick={inRecords(ALL, 'duplicates')}
+                        tick={!dupTicks && inRecords(ALL, 'duplicates')}
                         value={result.combined.extraCopies + result.combined.totalGroups}
                         hint={`duplicate records · ${fmtNumber(result.combined.totalGroups)} groups`}
                         tone="text-warn"
