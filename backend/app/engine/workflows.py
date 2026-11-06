@@ -1438,45 +1438,6 @@ def activity_by_owner(ctx: Ctx, days: int) -> dict[str, int]:
     return ctx.memo[key]
 
 
-def missing_sales_activities(ctx: Ctx) -> None:
-    """Active people who own open deals or leads but logged no tasks or events in 14 days."""
-    reps = sales_reps(ctx)
-    active = set(activity_by_owner(ctx, 14))
-    quiet = sorted(name for uid, name in reps.items() if uid not in active)
-    quiet_ids = [uid for uid in reps if uid not in active]
-    ctx.totals["User"] = len(reps)
-    score = rate_score(len(quiet) / len(reps), 0.5) if reps else 100
-    ctx.metric(
-        "Missing sales activities", len(quiet), "count", "lower-better", score,
-        how="Active people who own open Opportunities or Leads (bots and integration users left out) who logged no tasks or events in the last 14 days.",
-        rule="100 when everyone logged activity, falling evenly to 0 when 50% of these people logged none.",
-        columns=["Name", "Username", "LastLoginDate"],
-        order="Name",
-        criteria=[
-            ("People checked", f"{len(reps)} active users who own at least one open Opportunity or open Lead"),
-            ("Left out", "Queues, non-standard users, names with integration/automated/Einstein/Agentforce/bot, and integration, API-only, automated or Chatter profiles"),
-            ("Activity checked", "Tasks and Events they own, created in the last 14 days"),
-            ("What's counted", f"{len(quiet)} of {len(reps)} people logged none"),
-            ("Records listed", "Each of those people, by name (up to 200)"),
-        ],
-        records=("User", ctx.ids_in(quiet_ids)),
-        recent=False,
-    )
-    ctx.finding(
-        name="Reps with no logged activity",
-        records=("User", ctx.ids_in(quiet_ids)),
-        recent=False,
-        score=score,
-        affected=len(quiet),
-        description=f"{len(quiet)} of {len(reps)} people who own open deals or leads logged no tasks or events in the last 14 days: "
-        + ", ".join(quiet[:8]) + (" …" if len(quiet) > 8 else "") + ".",
-        why="If calls, emails, and meetings aren’t in Salesforce, managers can’t see what’s happening on deals.",
-        impact="Blind spots in coaching and forecasting, and lost history when people leave.",
-        action="Turn on Einstein Activity Capture (or the Outlook/Gmail integration) so emails and meetings log automatically, and check activity in weekly 1:1s.",
-        obj="User",
-    )
-
-
 def web_to_lead(ctx: Ctx) -> None:
     src = ctx.fields("Lead").get("LeadSource")
     values = [v.get("value") for v in (src or {}).get("picklistValues") or [] if v.get("active") and "web" in str(v.get("value")).lower()]
@@ -1611,6 +1572,7 @@ def quiet_reps(ctx: Ctx) -> None:
     data = rep_activity.rep_activity(ctx.sf, days)
     people, quiet = data["reps"], data["quiet"]
     total, n = len(people), quiet["all"]
+    ctx.totals["User"] = total  # the reps looked at
     names = [r["name"] for r in people if not any(r["counts"].values())]
     ctx.metric(
         QUIET_LABEL, n, "count", "lower-better", rate_score(n / total, 0.5) if total else 100,
@@ -1860,7 +1822,7 @@ AREAS = {
                contact_roles, orphaned_contacts, multiple_accounts, multi_deal_contacts],
     "area-5": [stuck_opportunities, missing_next_steps, opp_no_activity, opp_closed_lost_without_reason, overdue_close_dates,
                stage_guidance],
-    "area-6": [missing_sales_activities, web_to_lead, email_templates, activity_capture, eac_health, quiet_reps],
+    "area-6": [web_to_lead, email_templates, activity_capture, eac_health, quiet_reps],
     "area-7": [validation_rules, required_field_gaps, junk_data, layout_usability],
 }
 
@@ -1884,7 +1846,6 @@ STEP_LABELS = {
     opp_no_activity: "Finding deals with no activity in 6 months",
     opp_closed_lost_without_reason: "Finding lost deals with no reason",
     stage_guidance: "Checking sales stage guidance",
-    missing_sales_activities: "Checking rep activity",
     web_to_lead: "Checking website leads",
     email_templates: "Checking email templates",
     activity_capture: "Checking activity on open deals",

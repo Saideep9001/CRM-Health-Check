@@ -125,7 +125,6 @@ export const DIAGNOSTIC_AREAS: DiagnosticArea[] = [
     description:
       'Assess activity logging, Web-to-Lead processes, and the availability of reusable sales email templates.',
     indicators: [
-      'Missing sales activities',
       'Web-to-Lead issues',
       'Email template availability',
       'Activity capture gaps',

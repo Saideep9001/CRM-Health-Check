@@ -298,7 +298,8 @@ def test_all_workflow_areas(client, sf):
     assert ind["Stuck Opportunities"] == 10 and ind["Missing Next Steps"] == 18
     assert "Missing Closed Lost reasons" not in ind  # removed: Closed Lost Without a Reason covers it
     assert ind["Sales stage guidance gaps"] == 2  # no Path: both open stages unguided
-    assert ind["Missing sales activities"] == 1  # Bob owns work but logged nothing
+    assert "Missing sales activities" not in ind  # removed: Reps with No Activities Logged Recently covers it
+    assert ind["Reps with No Activities Logged Recently"] == 1  # Bob owns work but logged nothing
     assert ind["Web-to-Lead issues"] == 1 and ind["Email template availability"] == 2 and ind["Activity capture gaps"] == 22
     assert ind["Missing validation rules"] == 3 and ind["Potential junk data"] == 6  # 2 opps + 3 leads + 1 account
     assert res["salesProcessScore"] == res["categories"][0]["score"] and res["categories"][0]["categoryId"] == "workflows"
@@ -307,7 +308,7 @@ def test_all_workflow_areas(client, sf):
     names = {f["name"]: f for f in findings}
     assert "Placeholder or junk values" in names
     assert "Website leads have stopped arriving" in names and names["Website leads have stopped arriving"]["severity"] == "critical"
-    assert "Bob Ray" in names["Reps with no logged activity"]["description"]
+    assert "Reps with no logged activity" not in names
     assert names["Leads with no assignment path"]["description"] == ("1 open Leads match no entry of the active Lead Assignment Rule “Standard” and "
                                                                      "haven’t been assigned by hand; 1 more were assigned by hand. Most are with: Bob Ray (1).")
     stuck = names["Leads stuck in a queue"]
@@ -934,3 +935,34 @@ def test_web_to_lead_period_and_history(client, sf, monkeypatch):
     assert client.get(f"{base}/web-lead-history", params={"year": 1990}).status_code == 422
     day_q = next(q for q in reversed(sf.soql) if q.startswith("SELECT DAY_ONLY"))
     assert "LeadSource IN (" in day_q and "LAST_N_DAYS:90" not in day_q
+
+
+TEMPLATES = [
+    {"Id": "00X000000000001AAA", "Name": "Welcome", "TemplateType": "custom", "UiType": "SFX", "IsActive": True,
+     "RelatedEntityType": "Lead", "TimesUsed": 30, "LastUsedDate": "2026-10-01T10:00:00.000+0000", "FolderName": "Sales"},
+    {"Id": "00X000000000002AAA", "Name": "Follow Up", "TemplateType": "text", "UiType": "Aloha", "IsActive": True,
+     "RelatedEntityType": None, "TimesUsed": 10, "LastUsedDate": None, "FolderName": "Unfiled"},
+    {"Id": "00X000000000003AAA", "Name": "Old Promo", "TemplateType": "html", "UiType": "Aloha", "IsActive": False,
+     "RelatedEntityType": None, "TimesUsed": 0, "LastUsedDate": None, "FolderName": "Unfiled"},
+]
+
+
+def test_email_templates_by_status_with_area_and_usage(client, sf, monkeypatch):
+    records = FakeSalesOrg.records
+    monkeypatch.setitem(DESCRIBE, "EmailTemplate", [_f(n) for n in ("Id", "Name", "TemplateType", "UiType", "FolderName", "RelatedEntityType", "LastUsedDate")]
+                        + [_f("IsActive", type="boolean"), _f("TimesUsed", type="int")])
+    monkeypatch.setattr(FakeSalesOrg, "records", staticmethod(
+        lambda q: TEMPLATES if q.startswith("SELECT Id, Name, TemplateType, UiType, IsActive, RelatedEntityType, TimesUsed") else records(q)))
+    connect(client)
+    a, _, _ = run(client)
+    body = client.get(f"{API}/assessments/{a['id']}/email-templates")
+    assert body.status_code == 200, body.text
+    d = body.json()
+    assert d["counts"] == {"all": 3, "active": 2, "inactive": 1} and d["totalUsed"] == 40
+    welcome = d["templates"][0]  # most used first
+    assert (welcome["name"], welcome["type"], welcome["active"], welcome["area"], welcome["usagePct"]) == ("Welcome", "Lightning · Custom HTML", True, "Lead", 75.0)
+    assert d["templates"][1]["area"] == "Not tied to an object" and d["templates"][1]["type"] == "Classic · Text"
+    assert d["areas"] == [{"area": "Lead", "timesUsed": 30, "pct": 75.0}, {"area": "Not tied to an object", "timesUsed": 10, "pct": 25.0}]
+    inactive = client.get(f"{API}/assessments/{a['id']}/email-templates", params={"status": "inactive"}).json()
+    assert [t["name"] for t in inactive["templates"]] == ["Old Promo"] and inactive["counts"]["all"] == 3
+    assert client.get(f"{API}/assessments/{a['id']}/email-templates", params={"status": "draft"}).status_code == 422

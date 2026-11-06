@@ -23,6 +23,7 @@ import { dataApi, findingApi, indicatorApi } from '@/api/endpoints';
 import { useQuery } from '@tanstack/react-query';
 import { useFindingRecords, useIndicatorRecords, useRole, useUpdateFinding } from '@/api/queries';
 import { EacHealth } from './EacHealth';
+import { EmailTemplates } from './EmailTemplates';
 import { CreatedPeriod, WebLeadHealth } from './WebLeadHealth';
 import { RepActivity } from './RepActivity';
 import { SalesPaths } from './SalesPaths';
@@ -378,6 +379,10 @@ function Records({
   if (isSalesPaths(indicator, finding) && pathsCheck) {
     // a setup card: the Sales Paths and each stage's guidance, read live from Salesforce, instead of records
     return <SalesPaths assessmentId={pathsCheck} />;
+  }
+  if (indicator?.label === 'Email template availability' && pathsCheck) {
+    // every template with its type, status, area and usage share, read live from Salesforce
+    return <EmailTemplates assessmentId={pathsCheck} />;
   }
   if (indicator?.label === 'Reps with No Activities Logged Recently' && pathsCheck) {
     // the reps and what they logged, by Profile and activity type, read live from Salesforce

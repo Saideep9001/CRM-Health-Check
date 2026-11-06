@@ -282,8 +282,31 @@ export type WebLeadHistory = {
   years: number[];
 };
 
+/** Email template availability: the templates with type, status, area and usage share (live from Salesforce). */
+export type EmailTemplatesData = {
+  status: 'all' | 'active' | 'inactive';
+  counts: { all: number; active: number; inactive: number };
+  templates: {
+    id: string;
+    name: string;
+    type: string;
+    active: boolean;
+    area: string;
+    folder: string | null;
+    timesUsed: number | null;
+    usagePct: number | null;
+    lastUsed: string | null;
+  }[];
+  areas: { area: string; timesUsed: number; pct: number }[];
+  totalUsed: number | null;
+  truncated: boolean;
+};
+
 /** The records one measure ("What we measure") counted, live from Salesforce. */
 export const indicatorApi = {
+  /** Email template availability: all, active or inactive templates. */
+  emailTemplates: (assessmentId: string, status: string, signal?: AbortSignal) =>
+    http.get<EmailTemplatesData>(`/assessments/${encodeURIComponent(assessmentId)}/email-templates`, { status }, signal),
   /** Web-to-Lead issues: the website Lead history and health. */
   webLeadHistory: (assessmentId: string, areaId: string, signal?: AbortSignal, year?: number) =>
     http.get<WebLeadHistory>(

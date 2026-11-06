@@ -20,7 +20,7 @@ from ..engine import jobs
 from ..engine.core import in_list, soql_str
 from ..engine.runner import EXECUTABLE_AREA_IDS
 from ..models import AssessmentRow, FindingRow
-from ..salesforce import activity, assignment, eac, explorer, finder, paths, queues, rep_activity, service, web_leads
+from ..salesforce import activity, assignment, eac, email_templates, explorer, finder, paths, queues, rep_activity, service, web_leads
 from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
 from ..schemas import (
     FieldValues,
@@ -752,6 +752,18 @@ def web_lead_history(
     if year is not None and not 2000 <= year <= datetime.now(timezone.utc).year + 1:
         raise HTTPException(422, "Pick a year from 2000 to this year.")
     return _salesforce(db, http, settings, lambda sf: web_leads.history(sf, rec.get("where"), year=year), org_id)
+
+
+@router.get("/assessments/{assessment_id}/email-templates")
+def email_templates_view(assessment_id: str, status: str = Query("all", description="all, active or inactive"),
+                         db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep),
+                         settings: Settings = Depends(settings_dep)) -> dict:
+    """Email template availability: every email template with its type, status, the area it's used for and its share of all
+    template use, read live from Salesforce."""
+    row = _get(db, assessment_id)
+    if status not in email_templates.STATUSES:
+        raise HTTPException(422, "Pick all, active or inactive.")
+    return _salesforce(db, http, settings, lambda sf: email_templates.email_templates(sf, status), row.org_id)
 
 
 @router.get("/assessments/{assessment_id}/rep-activity")
