@@ -140,10 +140,7 @@ export function WebLeadHealth({ assessmentId, areaId }: { assessmentId: string; 
           ))}
         </div>
       </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Bars title="Website Leads per week (last 12 weeks)" items={h.weeks} bar={t.bar} />
-        <Bars title="Website Leads per month (last 12 months)" items={h.months} bar={t.bar} />
-      </div>
+      <Bars title="Website Leads per month (last 12 months)" items={h.months} bar={t.bar} />
     </div>
   );
 }
