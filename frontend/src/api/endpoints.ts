@@ -296,10 +296,18 @@ export type EmailTemplatesData = {
     timesUsed: number | null;
     usagePct: number | null;
     lastUsed: string | null;
+    /** where it was really sent: emails sent with it, by the object of the record (or person) each went from or to */
+    sentFrom: { object: string; count: number }[];
+    mostUsedOn: string | null;
+    sent: number;
   }[];
   areas: { area: string; timesUsed: number; pct: number }[];
   totalUsed: number | null;
   truncated: boolean;
+  sentAvailable: boolean;
+  sentObjects: { area: string; timesUsed: number; pct: number }[];
+  sentTotal: number;
+  sentCapped: boolean;
 };
 
 /** The records one measure ("What we measure") counted, live from Salesforce. */

@@ -104,6 +104,8 @@ LEADS = [  # open Leads read to compare with the rules
 ]
 
 # COUNT() answers: first rule whose substrings all appear in the query wins.
+KEY_PREFIXES = {"Account": "001", "Contact": "003", "Opportunity": "006", "Lead": "00Q"}  # the objects' record id prefixes
+
 COUNTS = [
     (("FROM ActivityMetric", "LAST_N_DAYS:7"), 12),  # EAC Health: Activity Metrics updated
     (("FROM ActivityMetric",), 40),
@@ -159,7 +161,8 @@ class FakeSalesOrg(FakeSalesforce):
                    else self.rules_xml)
             return httpx.Response(200, text=xml, headers={"Content-Type": "text/xml"})
         if url.path.endswith("/sobjects"):
-            return httpx.Response(200, json={"sobjects": [{"name": n, "label": n, "labelPlural": n + "s", "queryable": True, "retrieveable": True} for n in DESCRIBE]})
+            return httpx.Response(200, json={"sobjects": [{"name": n, "label": n, "labelPlural": n + "s", "queryable": True, "retrieveable": True,
+                                                           "keyPrefix": KEY_PREFIXES.get(n)} for n in DESCRIBE]})
         if m := re.search(r"/sobjects/(\w+)/describe$", url.path):
             return httpx.Response(200, json={"name": m[1], "fields": DESCRIBE[m[1]]})
         if url.path.endswith("/query"):
@@ -951,8 +954,24 @@ def test_email_templates_by_status_with_area_and_usage(client, sf, monkeypatch):
     records = FakeSalesOrg.records
     monkeypatch.setitem(DESCRIBE, "EmailTemplate", [_f(n) for n in ("Id", "Name", "TemplateType", "UiType", "FolderName", "RelatedEntityType", "LastUsedDate")]
                         + [_f("IsActive", type="boolean"), _f("TimesUsed", type="int")])
-    monkeypatch.setattr(FakeSalesOrg, "records", staticmethod(
-        lambda q: TEMPLATES if q.startswith("SELECT Id, Name, TemplateType, UiType, IsActive, RelatedEntityType, TimesUsed") else records(q)))
+    sent = [  # Welcome: twice from Opportunities, once to a Lead (no Related To); Follow Up: once from an Account
+        {"Id": "02s000000000001AAA", "EmailTemplateId": "00X000000000001AAA", "RelatedToId": "006000000000001AAA"},
+        {"Id": "02s000000000002AAA", "EmailTemplateId": "00X000000000001AAA", "RelatedToId": "006000000000002AAA"},
+        {"Id": "02s000000000003AAA", "EmailTemplateId": "00X000000000001AAA", "RelatedToId": None},
+        {"Id": "02s000000000004AAA", "EmailTemplateId": "00X000000000002AAA", "RelatedToId": "001000000000001AAA"},
+    ]
+
+    def tpl_records(q):
+        if q.startswith("SELECT Id, Name, TemplateType, UiType, IsActive, RelatedEntityType, TimesUsed"):
+            return TEMPLATES
+        if q.startswith("SELECT Id, EmailTemplateId, RelatedToId FROM EmailMessage WHERE EmailTemplateId != null"):
+            return sent
+        if q.startswith("SELECT EmailMessageId, RelationId FROM EmailMessageRelation WHERE RelationType = 'ToAddress'"):
+            return [{"EmailMessageId": "02s000000000003AAA", "RelationId": "00Q000000000001AAA"}]
+        return records(q)
+
+    monkeypatch.setattr(FakeSalesOrg, "records", staticmethod(tpl_records))
+
     connect(client)
     a, _, _ = run(client)
     body = client.get(f"{API}/assessments/{a['id']}/email-templates")
@@ -963,6 +982,10 @@ def test_email_templates_by_status_with_area_and_usage(client, sf, monkeypatch):
     assert (welcome["name"], welcome["type"], welcome["active"], welcome["area"], welcome["usagePct"]) == ("Welcome", "Lightning · Custom HTML", True, "Lead", 75.0)
     assert d["templates"][1]["area"] == "Not tied to an object" and d["templates"][1]["type"] == "Classic · Text"
     assert d["areas"] == [{"area": "Lead", "timesUsed": 30, "pct": 75.0}, {"area": "Not tied to an object", "timesUsed": 10, "pct": 25.0}]
+    assert (welcome["mostUsedOn"], welcome["sent"]) == ("Opportunity", 3)
+    assert welcome["sentFrom"] == [{"object": "Opportunity", "count": 2}, {"object": "Lead", "count": 1}]  # the Lead: who it went to
+    assert d["templates"][1]["mostUsedOn"] == "Account" and d["templates"][2]["mostUsedOn"] is None
+    assert d["sentAvailable"] and d["sentTotal"] == 4 and d["sentObjects"][0] == {"area": "Opportunity", "timesUsed": 2, "pct": 50.0}
     inactive = client.get(f"{API}/assessments/{a['id']}/email-templates", params={"status": "inactive"}).json()
     assert [t["name"] for t in inactive["templates"]] == ["Old Promo"] and inactive["counts"]["all"] == 3
     assert client.get(f"{API}/assessments/{a['id']}/email-templates", params={"status": "draft"}).status_code == 422
