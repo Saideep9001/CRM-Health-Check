@@ -8,6 +8,9 @@ import { FilterChips } from './EacHealth';
  *  all template use, read live from Salesforce. The Status chips pick all, active or inactive templates. */
 export function EmailTemplates({ assessmentId }: { assessmentId: string }) {
   const [status, setStatus] = useState<string | undefined>();
+  // column filters: part of the template name, and one Type
+  const [nameFilter, setNameFilter] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
   const data = useQuery({
     queryKey: ['email-templates', assessmentId, status ?? 'all'],
     queryFn: ({ signal }) => indicatorApi.emailTemplates(assessmentId, status ?? 'all', signal),
@@ -17,6 +20,10 @@ export function EmailTemplates({ assessmentId }: { assessmentId: string }) {
   if (data.isLoading) return <p className="text-sm text-ink-subtle">Reading the email templates from Salesforce…</p>;
   if (data.error) return <p className="rounded-lg bg-bad-soft/50 px-4 py-3 text-sm text-bad">Couldn’t read the email templates: {(data.error as Error).message}</p>;
   const d = data.data!;
+  const types = [...new Set(d.templates.map((t) => t.type))].sort((a, b) => a.localeCompare(b));
+  const needle = nameFilter.trim().toLowerCase();
+  const shown = d.templates.filter((t) => (!needle || t.name.toLowerCase().includes(needle)) && (!typeFilter || t.type === typeFilter));
+  const filtering = !!needle || !!typeFilter;
 
   return (
     <div className="space-y-3">
@@ -36,7 +43,13 @@ export function EmailTemplates({ assessmentId }: { assessmentId: string }) {
         <div className="flex items-center justify-between gap-2 bg-muted/40 px-3 py-2 text-xs">
           <span className="font-semibold text-ink">Email templates</span>
           <span className="text-ink-muted">
+            {filtering ? `${fmtNumber(shown.length)} of ` : ''}
             {fmtNumber(d.templates.length)} {d.status === 'all' ? '' : d.status} template{d.templates.length === 1 ? '' : 's'}, most used first
+            {filtering && (
+              <button type="button" onClick={() => { setNameFilter(''); setTypeFilter(''); }} className="ml-2 text-brand hover:underline">
+                Clear filters
+              </button>
+            )}
           </span>
         </div>
         <div className="max-h-[32rem] overflow-auto">
@@ -50,14 +63,41 @@ export function EmailTemplates({ assessmentId }: { assessmentId: string }) {
                 <th className="px-3 py-2 text-right font-medium">Times used</th>
                 <th className="px-3 py-2 text-right font-medium">Usage %</th>
               </tr>
+              {/* column filters */}
+              <tr className="border-b border-line">
+                <th className="px-3 pb-2 font-normal">
+                  <input
+                    type="search"
+                    value={nameFilter}
+                    onChange={(e) => setNameFilter(e.target.value)}
+                    placeholder="Filter by name…"
+                    aria-label="Filter by email template name"
+                    className="input h-7 w-full min-w-[10rem] py-0 text-xs"
+                  />
+                </th>
+                <th />
+                <th className="px-3 pb-2 font-normal">
+                  <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} aria-label="Filter by type" className="input h-7 w-auto py-0 text-xs">
+                    <option value="">All types</option>
+                    {types.map((t) => (
+                      <option key={t} value={t}>
+                        {t} ({fmtNumber(d.templates.filter((x) => x.type === t).length)})
+                      </option>
+                    ))}
+                  </select>
+                </th>
+                <th colSpan={3} />
+              </tr>
             </thead>
             <tbody className="divide-y divide-line">
-              {!d.templates.length && (
+              {!shown.length && (
                 <tr>
-                  <td colSpan={6} className="px-3 py-6 text-center text-xs text-ink-subtle">No templates with this status.</td>
+                  <td colSpan={6} className="px-3 py-6 text-center text-xs text-ink-subtle">
+                    {filtering ? 'No templates match these filters.' : 'No templates with this status.'}
+                  </td>
                 </tr>
               )}
-              {d.templates.map((t) => (
+              {shown.map((t) => (
                 <tr key={t.id} className="align-top">
                   <td className="max-w-[16rem] px-3 py-2 font-medium">
                     <span className="block truncate" title={t.folder ? `${t.name} (folder: ${t.folder})` : t.name}>{t.name}</span>
