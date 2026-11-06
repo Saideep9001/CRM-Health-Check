@@ -941,37 +941,21 @@ def test_web_to_lead_period_and_history(client, sf, monkeypatch):
 
 
 TEMPLATES = [
-    {"Id": "00X000000000001AAA", "Name": "Welcome", "TemplateType": "custom", "UiType": "SFX", "IsActive": True,
-     "RelatedEntityType": "Lead", "TimesUsed": 30, "LastUsedDate": "2026-10-01T10:00:00.000+0000", "FolderName": "Sales"},
-    {"Id": "00X000000000002AAA", "Name": "Follow Up", "TemplateType": "text", "UiType": "Aloha", "IsActive": True,
-     "RelatedEntityType": None, "TimesUsed": 10, "LastUsedDate": None, "FolderName": "Unfiled"},
-    {"Id": "00X000000000003AAA", "Name": "Old Promo", "TemplateType": "html", "UiType": "Aloha", "IsActive": False,
-     "RelatedEntityType": None, "TimesUsed": 0, "LastUsedDate": None, "FolderName": "Unfiled"},
+    {"Id": "00X000000000001AAA", "Name": "Welcome", "Description": "  First email to a new lead  ", "TemplateType": "custom", "UiType": "SFX",
+     "IsActive": True, "TimesUsed": 30, "FolderName": "Sales"},
+    {"Id": "00X000000000002AAA", "Name": "Follow Up", "Description": None, "TemplateType": "text", "UiType": "Aloha", "IsActive": True,
+     "TimesUsed": 10, "FolderName": "Unfiled"},
+    {"Id": "00X000000000003AAA", "Name": "Old Promo", "Description": "Spring promo", "TemplateType": "html", "UiType": "Aloha", "IsActive": False,
+     "TimesUsed": 0, "FolderName": "Unfiled"},
 ]
 
 
-def test_email_templates_by_status_with_area_and_usage(client, sf, monkeypatch):
+def test_email_templates_by_status_with_description_and_usage(client, sf, monkeypatch):
     records = FakeSalesOrg.records
-    monkeypatch.setitem(DESCRIBE, "EmailTemplate", [_f(n) for n in ("Id", "Name", "TemplateType", "UiType", "FolderName", "RelatedEntityType", "LastUsedDate")]
+    monkeypatch.setitem(DESCRIBE, "EmailTemplate", [_f(n) for n in ("Id", "Name", "Description", "TemplateType", "UiType", "FolderName")]
                         + [_f("IsActive", type="boolean"), _f("TimesUsed", type="int")])
-    sent = [  # Welcome: twice from Opportunities, once to a Lead (no Related To); Follow Up: once from an Account
-        {"Id": "02s000000000001AAA", "EmailTemplateId": "00X000000000001AAA", "RelatedToId": "006000000000001AAA"},
-        {"Id": "02s000000000002AAA", "EmailTemplateId": "00X000000000001AAA", "RelatedToId": "006000000000002AAA"},
-        {"Id": "02s000000000003AAA", "EmailTemplateId": "00X000000000001AAA", "RelatedToId": None},
-        {"Id": "02s000000000004AAA", "EmailTemplateId": "00X000000000002AAA", "RelatedToId": "001000000000001AAA"},
-    ]
-
-    def tpl_records(q):
-        if q.startswith("SELECT Id, Name, TemplateType, UiType, IsActive, RelatedEntityType, TimesUsed"):
-            return TEMPLATES
-        if q.startswith("SELECT Id, EmailTemplateId, RelatedToId FROM EmailMessage WHERE EmailTemplateId != null"):
-            return sent
-        if q.startswith("SELECT EmailMessageId, RelationId FROM EmailMessageRelation WHERE RelationType = 'ToAddress'"):
-            return [{"EmailMessageId": "02s000000000003AAA", "RelationId": "00Q000000000001AAA"}]
-        return records(q)
-
-    monkeypatch.setattr(FakeSalesOrg, "records", staticmethod(tpl_records))
-
+    monkeypatch.setattr(FakeSalesOrg, "records", staticmethod(
+        lambda q: TEMPLATES if q.startswith("SELECT Id, Name, Description, TemplateType, UiType, IsActive, TimesUsed") else records(q)))
     connect(client)
     a, _, _ = run(client)
     body = client.get(f"{API}/assessments/{a['id']}/email-templates")
@@ -979,13 +963,9 @@ def test_email_templates_by_status_with_area_and_usage(client, sf, monkeypatch):
     d = body.json()
     assert d["counts"] == {"all": 3, "active": 2, "inactive": 1} and d["totalUsed"] == 40
     welcome = d["templates"][0]  # most used first
-    assert (welcome["name"], welcome["type"], welcome["active"], welcome["area"], welcome["usagePct"]) == ("Welcome", "Lightning · Custom HTML", True, "Lead", 75.0)
-    assert d["templates"][1]["area"] == "Not tied to an object" and d["templates"][1]["type"] == "Classic · Text"
-    assert d["areas"] == [{"area": "Lead", "timesUsed": 30, "pct": 75.0}, {"area": "Not tied to an object", "timesUsed": 10, "pct": 25.0}]
-    assert (welcome["mostUsedOn"], welcome["sent"]) == ("Opportunity", 3)
-    assert welcome["sentFrom"] == [{"object": "Opportunity", "count": 2}, {"object": "Lead", "count": 1}]  # the Lead: who it went to
-    assert d["templates"][1]["mostUsedOn"] == "Account" and d["templates"][2]["mostUsedOn"] is None
-    assert d["sentAvailable"] and d["sentTotal"] == 4 and d["sentObjects"][0] == {"area": "Opportunity", "timesUsed": 2, "pct": 50.0}
+    assert (welcome["name"], welcome["description"], welcome["type"], welcome["active"], welcome["usagePct"]) == (
+        "Welcome", "First email to a new lead", "Lightning · Custom HTML", True, 75.0)
+    assert d["templates"][1]["description"] is None and d["templates"][1]["type"] == "Classic · Text"
     inactive = client.get(f"{API}/assessments/{a['id']}/email-templates", params={"status": "inactive"}).json()
     assert [t["name"] for t in inactive["templates"]] == ["Old Promo"] and inactive["counts"]["all"] == 3
     assert client.get(f"{API}/assessments/{a['id']}/email-templates", params={"status": "draft"}).status_code == 422

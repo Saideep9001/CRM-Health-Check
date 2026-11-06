@@ -282,32 +282,23 @@ export type WebLeadHistory = {
   years: number[];
 };
 
-/** Email template availability: the templates with type, status, area and usage share (live from Salesforce). */
+/** Email template availability: the templates with description, type, status and usage share (live from Salesforce). */
 export type EmailTemplatesData = {
   status: 'all' | 'active' | 'inactive';
   counts: { all: number; active: number; inactive: number };
   templates: {
     id: string;
     name: string;
+    /** the template's own Description field: what it's for */
+    description: string | null;
     type: string;
     active: boolean;
-    area: string;
     folder: string | null;
     timesUsed: number | null;
     usagePct: number | null;
-    lastUsed: string | null;
-    /** where it was really sent: emails sent with it, by the object of the record (or person) each went from or to */
-    sentFrom: { object: string; count: number }[];
-    mostUsedOn: string | null;
-    sent: number;
   }[];
-  areas: { area: string; timesUsed: number; pct: number }[];
   totalUsed: number | null;
   truncated: boolean;
-  sentAvailable: boolean;
-  sentObjects: { area: string; timesUsed: number; pct: number }[];
-  sentTotal: number;
-  sentCapped: boolean;
 };
 
 /** The records one measure ("What we measure") counted, live from Salesforce. */
