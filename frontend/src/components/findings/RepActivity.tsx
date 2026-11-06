@@ -11,7 +11,6 @@ const TYPES = [
   { key: 'event', label: 'Events' },
   { key: 'task', label: 'Tasks' },
 ] as const;
-type TypeKey = (typeof TYPES)[number]['key'];
 const NO_PROFILE = '(no profile)';
 
 /** YYYY-MM-DD in the viewer's own time zone (what a date input shows). */
