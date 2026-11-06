@@ -17,6 +17,48 @@ export const ALL = '__all__'; // the "all chosen fields together" row
 
 type Pick = { field: string; kind: FinderKind };
 
+/** How each chosen field joins the one before it for duplicates (AND by default). */
+type Joins = Record<string, 'AND' | 'OR'>;
+/** The chosen fields as OR'd groups of AND'd fields: Name AND Email OR Phone = [[Name, Email], [Phone]] (AND before OR). */
+const groupsOf = (names: string[], joins: Joins) =>
+  names.reduce<string[][]>((gs, f, i) => (i && joins[f] !== 'OR' ? (gs[gs.length - 1].push(f), gs) : [...gs, [f]]), []);
+/** "Name AND Email OR Phone" */
+export const ruleText = (rules: string[][]) => rules.map((g) => g.join(' AND ')).join(' OR ');
+
+type Field = { name: string; label: string; type: string };
+/** Ready-made duplicate checks for an object; a rule whose fields the org doesn't have is shown greyed out. */
+const RULE_PRESETS: Record<string, { label: string; help: string; fields: (fs: Field[]) => (string | undefined)[] }[]> = {
+  Account: [
+    { label: 'Account Name', help: 'Accounts with the same name (fuzzy: Inc, Ltd, abbreviations and typos ignored).', fields: () => ['Name'] },
+    { label: 'Account Name + Email', help: 'The same name AND the same email (the Account’s first email field).', fields: (fs) => ['Name', fs.find((f) => f.type === 'email')?.name] },
+    {
+      label: 'Account Name + Billing Address',
+      help: 'The same name AND the same billing street, city, state, postal code and country.',
+      fields: () => ['Name', 'BillingStreet', 'BillingCity', 'BillingState', 'BillingPostalCode', 'BillingCountry'],
+    },
+  ],
+  Contact: [
+    { label: 'Name', help: 'The same first AND last name.', fields: () => ['FirstName', 'LastName'] },
+    { label: 'Name + Email', help: 'The same first name, last name AND email.', fields: () => ['FirstName', 'LastName', 'Email'] },
+    { label: 'Name + Account Name', help: 'The same first name, last name AND Account.', fields: () => ['FirstName', 'LastName', 'Account.Name'] },
+    {
+      label: 'Name + Mailing Address',
+      help: 'The same first name, last name AND mailing street, city, postal code and country.',
+      fields: () => ['FirstName', 'LastName', 'MailingStreet', 'MailingCity', 'MailingPostalCode', 'MailingCountry'],
+    },
+  ],
+  Lead: [
+    { label: 'Name', help: 'The same first AND last name.', fields: () => ['FirstName', 'LastName'] },
+    { label: 'Name + Email', help: 'The same first name, last name AND email.', fields: () => ['FirstName', 'LastName', 'Email'] },
+    { label: 'Name + Company', help: 'The same first name, last name AND company.', fields: () => ['FirstName', 'LastName', 'Company'] },
+    {
+      label: 'Name + Address',
+      help: 'The same first name, last name AND street, city, postal code and country.',
+      fields: () => ['FirstName', 'LastName', 'Street', 'City', 'PostalCode', 'Country'],
+    },
+  ],
+};
+
 /** Invalid values of one field (the health check's Data Standardization rules), with why each one is flagged. */
 function SpellingResults({ field, object }: { field: FieldCheckField; object: string }) {
   const openRecord = useOpenRecord();
@@ -199,6 +241,7 @@ export function FieldCheck({
   const [object, setObject] = useState(initialObject ?? choices[0]);
   const options = useEmptyOptions(object);
   const [chosen, setChosen] = useState<string[]>([]);
+  const [joins, setJoins] = useState<Joins>({});
   const [fieldQuery, setFieldQuery] = useState('');
   const [listOpen, setListOpen] = useState(true);
   const [pick, setPick] = useState<Pick | null>(null);
@@ -212,6 +255,7 @@ export function FieldCheck({
   useEffect(() => {
     const named = fieldsNamed(fieldsText, object, fields, MAX_FIELDS);
     setChosen(named);
+    setJoins({});
     setListOpen(named.length === 0); // fields already picked: keep the list folded
     setFieldQuery('');
     setPick(null);
@@ -220,7 +264,7 @@ export function FieldCheck({
     onLiveResult?.(null);
     // The page's own fields are checked straight away, so the numbers show without a click (the page keeps the health check's own
     // chart until someone runs it themselves).
-    if (named.length && options.data) runWith(named, false);
+    if (named.length && options.data) runWith(named, false, {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [object, fieldsText, options.data]);
 
@@ -231,10 +275,10 @@ export function FieldCheck({
   const label = (name: string) => fields.find((f) => f.name === name)?.label ?? name;
   const what = objectLabel(object).toLowerCase();
 
-  function runWith(fieldNames: string[], tellPage: boolean) {
+  function runWith(fieldNames: string[], tellPage: boolean, how: Joins = joins) {
     setListOpen(false);
     run.mutate(
-      { object, fields: fieldNames },
+      { object, fields: fieldNames, rules: groupsOf(fieldNames, how) },
       {
         onSuccess: (r: FieldCheckResult) => {
           if (tellPage) onResult?.(r);
@@ -249,6 +293,18 @@ export function FieldCheck({
     );
   }
   const start = () => runWith(chosen, true);
+  const presets = (RULE_PRESETS[object] ?? []).map((p) => {
+    const names = p.fields(fields);
+    const missing = names.some((n) => !n || !fields.some((f) => f.name === n));
+    return { ...p, names: names as string[], missing };
+  });
+  const applyPreset = (names: string[]) => {
+    setChosen(names);
+    setJoins({});
+    runWith(names, true, {});
+  };
+  const flipJoin = (f: string) => setJoins((j) => ({ ...j, [f]: j[f] === 'OR' ? 'AND' : 'OR' }));
+  const andOr = shows('duplicates') && chosen.length > 1;
 
   const result = run.data;
   const picked = result && pick ? (pick.field === ALL ? null : result.fields.find((f) => f.name === pick.field)) : null;
@@ -332,10 +388,37 @@ export function FieldCheck({
                 )}
               </div>
               {chosen.length > 0 ? (
-                <p className={cx('text-xs text-ink-muted', listOpen ? 'mb-2' : 'mt-2 pl-8')}>
-                  Checking: <span className="font-medium text-ink">{chosen.map(label).join(', ')}</span>
-                  <button type="button" className="ml-2 text-brand hover:underline" onClick={() => (setChosen([]), setListOpen(true))}>Clear</button>
-                </p>
+                <div className={cx('flex flex-wrap items-center gap-1 text-xs text-ink-muted', listOpen ? 'mb-2' : 'mt-2 pl-8')}>
+                  <span className="mr-1">{andOr ? 'Duplicate when:' : 'Checking:'}</span>
+                  {andOr ? (
+                    chosen.map((f, i) => (
+                      <span key={f} className="inline-flex items-center gap-1">
+                        {i > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => flipJoin(f)}
+                            title="Click to switch between AND (both must match) and OR (either one is enough)"
+                            className={cx(
+                              'rounded-md border px-1.5 py-0.5 text-[10px] font-bold tracking-wide transition',
+                              joins[f] === 'OR' ? 'border-warn/40 bg-warn-soft text-warn' : 'border-brand/30 bg-brand-soft text-brand-ink',
+                            )}
+                          >
+                            {joins[f] === 'OR' ? 'OR' : 'AND'}
+                          </button>
+                        )}
+                        <span className="rounded-full border border-line bg-surface px-2 py-0.5 font-medium text-ink">{label(f)}</span>
+                      </span>
+                    ))
+                  ) : (
+                    <span className="font-medium text-ink">{chosen.map(label).join(', ')}</span>
+                  )}
+                  <button type="button" className="ml-2 text-brand hover:underline" onClick={() => (setChosen([]), setJoins({}), setListOpen(true))}>Clear</button>
+                  {andOr && (
+                    <span className="basis-full pt-0.5 text-[11px] text-ink-subtle">
+                      Click AND / OR to change how the fields combine (AND is grouped first): {ruleText(groupsOf(chosen, joins).map((g) => g.map(label)))}.
+                    </span>
+                  )}
+                </div>
               ) : (
                 !listOpen && <p className="mt-2 pl-8 text-xs text-ink-subtle">No fields picked yet. Open the list to choose some.</p>
               )}
@@ -371,6 +454,29 @@ export function FieldCheck({
               )}
             </div>
 
+            {shows('duplicates') && presets.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                <span className="mr-1 font-medium text-ink-muted">Duplicate checks:</span>
+                {presets.map((p) => {
+                  const on = !p.missing && p.names.length === chosen.length && p.names.every((n) => chosen.includes(n)) && chosen.slice(1).every((f) => joins[f] !== 'OR');
+                  return (
+                    <button
+                      key={p.label}
+                      type="button"
+                      disabled={p.missing || run.isPending}
+                      onClick={() => applyPreset(p.names)}
+                      title={p.missing ? `${p.help} This org’s ${objectLabel(object)} don’t have all of these fields.` : `${p.help} Click to check.`}
+                      className={cx(
+                        'rounded-full border px-3 py-1 font-medium transition disabled:cursor-not-allowed disabled:opacity-50',
+                        on ? 'border-brand bg-brand text-white' : 'border-line bg-surface hover:border-brand/40 hover:text-brand',
+                      )}
+                    >
+                      {p.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
             <div className="flex flex-wrap items-center gap-3">
               <Button variant="primary" icon={<ListChecks className="h-4 w-4" />} disabled={!chosen.length || run.isPending} onClick={start}>
                 {run.isPending ? 'Checking…' : `Check ${chosen.length || ''} field${chosen.length === 1 ? '' : 's'}`.replace('  ', ' ')}
@@ -452,8 +558,8 @@ export function FieldCheck({
                   {result.combined && shows('duplicates') && (
                     <tr className="bg-brand-soft/30">
                       <td className="px-3 py-2">
-                        <span className="block font-medium">All fields together</span>
-                        <span className="block text-[11px] text-ink-subtle">{result.combined.rules[0]?.join(' + ')}</span>
+                        <span className="block font-medium">{result.combined.rules.length > 1 ? 'Match rule (AND / OR)' : 'All fields together'}</span>
+                        <span className="block text-[11px] text-ink-subtle">{ruleText(result.combined.rules)}</span>
                       </td>
                       <td className="px-3 py-2 text-ink-subtle">—</td>
                       {shows('empty') && <td className="px-3 py-2 text-ink-subtle">—</td>}
@@ -477,7 +583,7 @@ export function FieldCheck({
               <div className="rounded-xl border border-line p-4">
                 <h4 className="mb-3 text-sm font-semibold">
                   {pick.field === ALL
-                    ? `Duplicates on ${result.combined?.rules[0]?.join(' + ')}`
+                    ? `Duplicates on ${ruleText(result.combined?.rules ?? [])}`
                     : pick.kind === 'empty'
                       ? `${objectLabel(object)} with no ${picked?.label}`
                       : pick.kind === 'duplicates'

@@ -52,6 +52,20 @@ def test_each_field_gets_empty_duplicates_and_spellings():
     assert both["combined"]["total_groups"] == 1 and both["combined"]["rules"] == [["Account Name", "Account Phone"]]
 
 
+def test_and_or_match_rules():
+    rows = ROWS + [{"Id": "001F", "Name": "Initech LLC", "Phone": "999-555-0000", "BillingState": "CA", "Industry": None}]
+    # Name AND Phone: only the two Acmes
+    both = field_check.check_fields(StubSF(rows), "Account", ["Name", "Phone"], [["Name", "Phone"]])
+    assert both["combined"]["total_groups"] == 1 and both["combined"]["rules"] == [["Account Name", "Account Phone"]]
+    # Name AND Phone OR Name AND Billing State: the Initechs (same name and state, different phones) match too
+    either = field_check.check_fields(StubSF(rows), "Account", ["Name", "Phone", "BillingState"], [["Name", "Phone"], ["Name", "BillingState"]])
+    assert either["combined"]["total_groups"] == 2
+    assert either["combined"]["rules"] == [["Account Name", "Account Phone"], ["Account Name", "Billing State"]]
+    assert {g["matched_on"] for g in either["combined"]["groups"]} == {"Account Name + Account Phone", "Account Name + Billing State"}
+    # a single field on its own has its own row, so there's no rule result
+    assert field_check.check_fields(StubSF(rows), "Account", ["Name"], [["Name"]])["combined"] is None
+
+
 def test_unknown_fields_are_refused():
     with pytest.raises(ValueError):
         field_check.check_fields(StubSF(ROWS), "Account", ["Nope) FROM User --"])

@@ -813,6 +813,8 @@ class EmptyRequest(ApiModel):
 class FieldCheckRequest(ApiModel):
     object: str = Field(max_length=80)
     fields: list[str] = Field(default_factory=list, max_length=10)
+    # how the fields combine for duplicates: OR'd groups of AND'd fields ([["Name", "Email"], ["Phone"]] = Name AND Email OR Phone)
+    rules: list[list[str]] | None = Field(default=None, max_length=5)
 
 
 class SpellingCount(ApiModel):

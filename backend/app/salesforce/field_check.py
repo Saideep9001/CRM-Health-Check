@@ -80,7 +80,9 @@ def duplicate_records(sf: SalesforceClient, obj: str, f: str, ftype: str, rows: 
     return None
 
 
-def check_fields(sf: SalesforceClient, obj: str, fields: list[str]) -> dict:
+def check_fields(sf: SalesforceClient, obj: str, fields: list[str], rules: list[list[str]] | None = None) -> dict:
+    """`rules`: how the chosen fields combine for duplicates, as OR'd groups of AND'd fields ([["Name", "Email"], ["Phone"]]
+    = Name AND Email OR Phone). Without it, records must match on all the chosen fields together."""
     options = {f["name"]: f for f in empty_fields.empty_options(sf, obj)}
     chosen = [f for f in dict.fromkeys(fields) if f in options]
     if not chosen:
@@ -196,7 +198,11 @@ def check_fields(sf: SalesforceClient, obj: str, fields: list[str]) -> dict:
 
     combined = None
     together = [f for f in chosen if f in matchable][: 6]
-    if len(chosen) > 1 and len(together) > 1:
+    groups = [g for g in ([f for f in dict.fromkeys(g) if f in chosen and f in matchable] for g in (rules or [])) if g]
+    if groups and (len(groups) > 1 or len(groups[0]) > 1):
+        # the chosen match rule (AND / OR), e.g. Account Name AND Email OR Account Name AND Billing Street…
+        combined = trim(duplicates.find_duplicates(sf, obj, prefetched=prefetched, rules=groups))
+    elif not rules and len(chosen) > 1 and len(together) > 1:
         combined = trim(duplicates.find_duplicates(sf, obj, together, prefetched=prefetched))
 
     any_empty = sum(1 for r in rows if any(duplicates._value(r, f) in (None, "") for f in chosen))

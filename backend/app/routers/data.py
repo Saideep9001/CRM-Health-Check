@@ -174,7 +174,7 @@ def find_duplicates(body: DuplicateRequest, db: Session = Depends(get_db), http:
 @router.post("/fields/check", response_model=FieldCheckResult)
 def check_fields(body: FieldCheckRequest, db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep), settings: Settings = Depends(settings_dep)):
     """For each chosen field: empty values, duplicates and inconsistent spellings; plus duplicates on all of them (read-only)."""
-    return _run(db, http, settings, lambda sf: field_check.check_fields(sf, body.object, body.fields))
+    return _run(db, http, settings, lambda sf: field_check.check_fields(sf, body.object, body.fields, body.rules))
 
 
 # ---------------------------------------------------------------- no activity, with a chosen period

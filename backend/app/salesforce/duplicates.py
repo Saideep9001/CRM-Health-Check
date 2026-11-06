@@ -430,10 +430,15 @@ class _Groups:
         self.parent[self.find(a)] = self.find(b)
 
 
+MAX_RULES = 5  # OR'd groups in a chosen match rule
+
+
 def find_duplicates(sf: SalesforceClient, obj: str, fields: list[str] | None = None, standard: bool = False,
-                    prefetched: tuple[list[dict], bool] | None = None) -> dict:
-    """Groups of duplicate records. `standard` uses Salesforce's standard rule for Account/Contact/Lead; otherwise
-    records match when every field in `fields` matches. `prefetched` reuses records already read (with these fields)."""
+                    prefetched: tuple[list[dict], bool] | None = None, rules: list[list[str]] | None = None) -> dict:
+    """Groups of duplicate records. `standard` uses Salesforce's standard rule for Account/Contact/Lead; `rules` is a
+    chosen rule like Salesforce's: records are duplicates when every field of ANY one group matches ("Name AND Email OR
+    Name AND Phone"); otherwise records match when every field in `fields` matches. `prefetched` reuses records already
+    read (with these fields)."""
     available = {f["name"]: f for f in matchable_fields(sf, obj)}
     if standard:
         if obj not in STANDARD:
@@ -442,6 +447,18 @@ def find_duplicates(sf: SalesforceClient, obj: str, fields: list[str] | None = N
         groups = [g for g, orig in zip(groups, STANDARD[obj]["groups"]) if len(g) == len(orig)]  # skip groups using missing fields
         if not groups:
             raise ValueError("This org doesn't have the fields the standard rule needs.")
+    elif rules:
+        groups = []
+        for g in rules:
+            g = [f for f in dict.fromkeys(g) if f in available]
+            if len(g) > 6:
+                raise ValueError("Each AND group can have up to 6 fields.")
+            if g and g not in groups:
+                groups.append(g)
+        if not groups:
+            raise ValueError("Choose at least one field to compare.")
+        if len(groups) > MAX_RULES:
+            raise ValueError(f"Use up to {MAX_RULES} OR groups.")
     else:
         chosen = [f for f in dict.fromkeys(fields or []) if f in available]
         if not chosen:
