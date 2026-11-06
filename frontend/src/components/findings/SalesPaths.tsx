@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { Route } from 'lucide-react';
 import { indicatorApi, type SalesPathData } from '@/api/endpoints';
+import { LocalTable } from '@/components/data/LocalTable';
 import { InfoTip } from '@/components/ui/HelpTip';
 import { cx } from '@/lib/format';
 
@@ -118,39 +119,59 @@ export function SalesPaths({ assessmentId }: { assessmentId: string }) {
             {path.recordType && <span>Record Types: <span className="font-medium text-ink">{path.recordType}</span></span>}
             <span>{path.guided} of {path.openStages} open stages have guidance</span>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-muted/30 text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">
-                <tr>
-                  <th className="w-52 px-4 py-2">Opportunity Stage</th>
-                  <th className="w-36 px-4 py-2">Guidance</th>
-                  <th className="px-4 py-2">Details</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-line">
-                {path.stages.map((s) => (
-                  <tr key={s.apiName} className="align-top">
-                    <td className="px-4 py-3 font-medium">
+          <div className="p-3">
+            <LocalTable
+              title="Stages"
+              rows={path.stages}
+              rowKey={(s) => s.apiName}
+              maxHeight="max-h-[36rem]"
+              columns={[
+                {
+                  key: 'stage',
+                  label: 'Opportunity Stage',
+                  value: (s) => s.stage,
+                  className: 'w-52 font-medium',
+                  render: (s) => (
+                    <>
                       {s.stage}
                       {s.closed && <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[10px] font-normal text-ink-subtle">Closed</span>}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={cx('rounded-full px-2 py-0.5 text-xs font-medium', s.available ? 'bg-good-soft text-good' : 'bg-bad-soft text-bad')}>
-                        {s.available ? 'Available' : 'Not available'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-ink-muted">
-                      {s.details.length ? <Guidance lines={s.details} /> : <span className="text-ink-subtle">{path.pathName ? 'No guidance for this stage on the Path.' : 'No Sales Path for this Sales Process.'}</span>}
+                    </>
+                  ),
+                },
+                {
+                  key: 'guidance',
+                  label: 'Guidance',
+                  value: (s) => (s.available ? 'Available' : 'Not available'),
+                  className: 'w-36',
+                  render: (s) => (
+                    <span className={cx('rounded-full px-2 py-0.5 text-xs font-medium', s.available ? 'bg-good-soft text-good' : 'bg-bad-soft text-bad')}>
+                      {s.available ? 'Available' : 'Not available'}
+                    </span>
+                  ),
+                },
+                {
+                  key: 'details',
+                  label: 'Details',
+                  filter: false,
+                  value: (s) => s.details.join(' '),
+                  className: 'text-ink-muted',
+                  render: (s) => (
+                    <>
+                      {s.details.length ? (
+                        <Guidance lines={s.details} />
+                      ) : (
+                        <span className="text-ink-subtle">{path.pathName ? 'No guidance for this stage on the Path.' : 'No Sales Path for this Sales Process.'}</span>
+                      )}
                       {s.keyFields.length > 0 && (
                         <p className="mt-1.5 text-[11px] text-ink-subtle">
                           <span className="font-semibold">Key fields:</span> {s.keyFields.join(', ')}
                         </p>
                       )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                    </>
+                  ),
+                },
+              ]}
+            />
           </div>
         </div>
       )}

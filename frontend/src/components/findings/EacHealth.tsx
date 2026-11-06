@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Activity, AlertTriangle, Calendar, Check, Contact, Hourglass, Mail, Power, Server, UserCheck, Users, X } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { indicatorApi, type EacUser } from '@/api/endpoints';
+import { LocalTable, type LocalColumn } from '@/components/data/LocalTable';
 import { RecordLink } from '@/components/data/RecordLink';
 import { cx, fmtNumber } from '@/lib/format';
 
@@ -61,6 +62,53 @@ export function FilterChips({ title, options, value, onChange }: {
 }
 
 const NO_PROFILE = '(no profile)';
+
+/** The EAC users table: who they are, and their status with their Salesforce login and what EAC does for them under it. */
+const USER_COLUMNS: LocalColumn<EacUser>[] = [
+  { key: 'name', label: 'User Name', value: (u) => u.name, render: (u) => <RecordLink object="User" id={u.id}>{u.name}</RecordLink> },
+  { key: 'profile', label: 'Profile', value: (u) => u.profile, className: 'text-ink-muted' },
+  {
+    key: 'email',
+    label: 'Email',
+    value: (u) => u.email,
+    className: 'text-ink-muted',
+    render: (u) => (u.email ? <a href={`mailto:${u.email}`} className="hover:text-brand hover:underline">{u.email}</a> : '—'),
+  },
+  { key: 'title', label: 'Title', value: (u) => u.title, className: 'text-ink-muted' },
+  { key: 'phone', label: 'Phone', value: (u) => u.phone, className: 'whitespace-nowrap text-ink-muted' },
+  {
+    key: 'status',
+    label: 'Status',
+    value: (u) => u.status,
+    render: (u) => (
+      <>
+        <span
+          className={cx(
+            'rounded-full px-2 py-0.5 text-xs font-medium',
+            u.tone === 'bad' ? 'bg-bad-soft text-bad' : u.tone === 'warn' ? 'bg-warn-soft text-warn' : 'bg-good-soft text-good',
+          )}
+        >
+          {u.status}
+        </span>
+        {/* whether, and when, they last logged in to Salesforce */}
+        {u.login && <span className="mt-1 block text-[11px] text-ink-subtle">{u.login}</span>}
+        {/* what EAC does for them: Master status, then Email, Calendar and Contact sync */}
+        {u.sync && u.sync.length > 0 && (
+          <ul className="mt-1.5 space-y-0.5 text-[11px]">
+            {u.sync.map((s) => (
+              <li key={s.key} className="flex items-center justify-between gap-3" title={s.source}>
+                <span className="text-ink-muted">{s.label}</span>
+                <span className={cx('rounded-full px-1.5 font-medium', s.on == null ? 'bg-muted text-ink-subtle' : s.on ? 'bg-good-soft text-good' : 'bg-bad-soft text-bad')}>
+                  {s.on == null ? 'Not available' : s.on ? 'Enabled' : 'Disabled'}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </>
+    ),
+  },
+];
 
 /** Einstein Activity Capture (EAC) Health: system status, assigned users and the ones needing attention, and the activity
  *  flowing in, read live from Salesforce. Only what Salesforce's APIs expose is shown. */
@@ -147,33 +195,9 @@ export function EacHealth({ assessmentId }: { assessmentId: string }) {
           <p className="mt-1.5 text-[11px] text-ink-subtle">No permission set or licence named “Activity Capture” found, so no users are listed.</p>
         )}
         {(d.users.issues.length > 0 || (d.users.all?.length ?? 0) > 0) && (
-          <div className={cx('mt-3 overflow-hidden rounded-xl border', showAll ? 'border-line' : 'border-bad/40')}>
-            <div className={cx('flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-xs font-medium', showAll ? 'bg-muted/50 text-ink' : 'bg-bad-soft text-bad')}>
-              <span className="flex items-center gap-1.5">
-                {showAll ? <Users className="h-3.5 w-3.5" /> : <AlertTriangle className="h-3.5 w-3.5" />}
-                {showAll ? 'All assigned users' : 'Action required'}
-              </span>
-              {d.users.all && (
-                <span className="inline-flex overflow-hidden rounded-full border border-line bg-surface text-ink-muted" role="group" aria-label="Users shown">
-                  {[
-                    [false, `Action required (${d.users.issues.length})`],
-                    [true, `All users (${d.users.all.length})`],
-                  ].map(([all, text]) => (
-                    <button
-                      key={String(all)}
-                      type="button"
-                      aria-pressed={showAll === all}
-                      onClick={() => setShowAll(all as boolean)}
-                      className={cx('px-2.5 py-0.5 transition', showAll === all ? 'bg-brand-soft font-semibold text-brand-ink' : 'hover:text-brand')}
-                    >
-                      {text as string}
-                    </button>
-                  ))}
-                </span>
-              )}
-            </div>
+          <div className="mt-3 space-y-2">
             {base.length > 0 && (
-              <div className="space-y-1.5 border-b border-line px-3 py-2">
+              <div className="space-y-1.5 rounded-xl border border-line px-3 py-2">
                 <FilterChips title="User Profile" value={profile} onChange={setProfile}
                   options={profiles.map((p) => ({ key: p, label: p, count: byStatus.filter((u) => profileOf(u) === p).length }))} />
                 <FilterChips title="User Status" value={userStatus} onChange={setUserStatus}
@@ -183,68 +207,39 @@ export function EacHealth({ assessmentId }: { assessmentId: string }) {
                   ]} />
               </div>
             )}
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead className="text-xs text-ink-muted">
-                  <tr className="border-b border-line">
-                    <th className="px-3 py-2 font-medium">User Name</th>
-                    <th className="px-3 py-2 font-medium">Profile</th>
-                    <th className="px-3 py-2 font-medium">Email</th>
-                    <th className="px-3 py-2 font-medium">Title</th>
-                    <th className="px-3 py-2 font-medium">Phone</th>
-                    <th className="px-3 py-2 font-medium">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-line">
-                  {!shown.length && (
-                    <tr>
-                      <td colSpan={6} className="px-3 py-4 text-center text-xs text-ink-subtle">No users match these filters.</td>
-                    </tr>
-                  )}
-                  {shown.map((u) => (
-                    <tr key={u.id}>
-                      <td className="px-3 py-2"><RecordLink object="User" id={u.id}>{u.name}</RecordLink></td>
-                      <td className="px-3 py-2 text-ink-muted">{u.profile ?? '—'}</td>
-                      <td className="px-3 py-2 text-ink-muted">
-                        {u.email ? <a href={`mailto:${u.email}`} className="hover:text-brand hover:underline">{u.email}</a> : '—'}
-                      </td>
-                      <td className="px-3 py-2 text-ink-muted">{u.title || '—'}</td>
-                      <td className="whitespace-nowrap px-3 py-2 text-ink-muted">{u.phone || '—'}</td>
-                      <td className="px-3 py-2">
-                        <span
-                          className={cx(
-                            'rounded-full px-2 py-0.5 text-xs font-medium',
-                            u.tone === 'bad' ? 'bg-bad-soft text-bad' : u.tone === 'warn' ? 'bg-warn-soft text-warn' : 'bg-good-soft text-good',
-                          )}
-                        >
-                          {u.status}
-                        </span>
-                        {/* whether, and when, they last logged in to Salesforce */}
-                        {u.login && <span className="mt-1 block text-[11px] text-ink-subtle">{u.login}</span>}
-                        {/* what EAC does for them: Master status, then Email, Calendar and Contact sync */}
-                        {u.sync && u.sync.length > 0 && (
-                          <ul className="mt-1.5 space-y-0.5 text-[11px]">
-                            {u.sync.map((s) => (
-                              <li key={s.key} className="flex items-center justify-between gap-3" title={s.source}>
-                                <span className="text-ink-muted">{s.label}</span>
-                                <span
-                                  className={cx(
-                                    'rounded-full px-1.5 font-medium',
-                                    s.on == null ? 'bg-muted text-ink-subtle' : s.on ? 'bg-good-soft text-good' : 'bg-bad-soft text-bad',
-                                  )}
-                                >
-                                  {s.on == null ? 'Not available' : s.on ? 'Enabled' : 'Disabled'}
-                                </span>
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <LocalTable
+              title={
+                <span className="flex items-center gap-1.5">
+                  {showAll ? <Users className="h-3.5 w-3.5" /> : <AlertTriangle className="h-3.5 w-3.5" />}
+                  {showAll ? 'All assigned users' : 'Action required'}
+                </span>
+              }
+              tone={showAll ? undefined : 'bad'}
+              actions={
+                d.users.all && (
+                  <span className="inline-flex overflow-hidden rounded-full border border-line bg-surface text-ink-muted" role="group" aria-label="Users shown">
+                    {[
+                      [false, `Action required (${d.users.issues.length})`],
+                      [true, `All users (${d.users.all.length})`],
+                    ].map(([all, text]) => (
+                      <button
+                        key={String(all)}
+                        type="button"
+                        aria-pressed={showAll === all}
+                        onClick={() => setShowAll(all as boolean)}
+                        className={cx('px-2.5 py-0.5 transition', showAll === all ? 'bg-brand-soft font-semibold text-brand-ink' : 'hover:text-brand')}
+                      >
+                        {text as string}
+                      </button>
+                    ))}
+                  </span>
+                )
+              }
+              rows={shown}
+              columns={USER_COLUMNS}
+              rowKey={(u) => u.id}
+              empty="No users match these filters."
+            />
           </div>
         )}
         <p className="mt-2 text-[11px] text-ink-subtle">

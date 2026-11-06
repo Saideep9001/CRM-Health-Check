@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { indicatorApi, type RepActivityRep } from '@/api/endpoints';
+import { LocalTable, type LocalColumn } from '@/components/data/LocalTable';
 import { RecordLink } from '@/components/data/RecordLink';
 import { cx, fmtNumber } from '@/lib/format';
 import { FilterChips } from './EacHealth';
@@ -51,6 +52,37 @@ export function RepActivity({ assessmentId }: { assessmentId: string }) {
   const quiet = (r: RepActivityRep) => !r.counts.email && !r.counts.event && !r.counts.task;
   const shown = reps.filter((r) => !profile || profileOf(r) === profile);
   const profiles = [...new Set([...reps.map(profileOf), ...(profile ? [profile] : [])])].sort((a, b) => a.localeCompare(b));
+  const columns: LocalColumn<RepActivityRep>[] = [
+    { key: 'name', label: 'User Name', value: (r) => r.name, render: (r) => <RecordLink object="User" id={r.id}>{r.name}</RecordLink> },
+    { key: 'profile', label: 'Profile', value: (r) => r.profile, className: 'text-ink-muted' },
+    {
+      key: 'email',
+      label: 'Email',
+      value: (r) => r.email,
+      className: 'text-ink-muted',
+      render: (r) => (r.email ? <a href={`mailto:${r.email}`} className="hover:text-brand hover:underline">{r.email}</a> : '—'),
+    },
+    { key: 'title', label: 'Title', value: (r) => r.title, className: 'text-ink-muted' },
+    ...TYPES.map((t): LocalColumn<RepActivityRep> => ({
+      key: t.key,
+      label: t.label,
+      align: 'right',
+      value: (r) => (d.available[t.key] ? r.counts[t.key] : null),
+      render: (r) =>
+        !d.available[t.key] ? (
+          <span className="text-ink-subtle">—</span>
+        ) : (
+          <span className={cx('rounded-full px-1.5', r.counts[t.key] ? 'text-ink' : 'bg-bad-soft text-bad')}>{fmtNumber(r.counts[t.key])}</span>
+        ),
+    })),
+    {
+      key: 'lastActivity',
+      label: 'Last activity',
+      value: (r) => r.lastActivity,
+      className: 'whitespace-nowrap text-ink-muted',
+      render: (r) => r.lastActivity ?? 'None in the period',
+    },
+  ];
   const span = typeof period === 'number' ? `in the last ${period} days` : `from ${period.from} to ${period.to}`;
 
   return (
@@ -113,51 +145,13 @@ export function RepActivity({ assessmentId }: { assessmentId: string }) {
           )}
         </div>
       </div>
-      <div className="overflow-x-auto rounded-xl border border-line">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-muted/30 text-xs text-ink-muted">
-            <tr className="border-b border-line">
-              <th className="px-3 py-2 font-medium">User Name</th>
-              <th className="px-3 py-2 font-medium">Profile</th>
-              <th className="px-3 py-2 font-medium">Email</th>
-              <th className="px-3 py-2 font-medium">Title</th>
-              {TYPES.map((t) => (
-                <th key={t.key} className="px-3 py-2 text-right font-medium">{t.label}</th>
-              ))}
-              <th className="px-3 py-2 font-medium">Last activity</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-line">
-            {!shown.length && (
-              <tr>
-                <td colSpan={8} className="px-3 py-6 text-center text-xs text-ink-subtle">
-                  {reps.length ? 'No reps with this profile.' : 'No reps found: nobody active owns open deals or leads.'}
-                </td>
-              </tr>
-            )}
-            {shown.map((r) => (
-              <tr key={r.id}>
-                <td className="px-3 py-2"><RecordLink object="User" id={r.id}>{r.name}</RecordLink></td>
-                <td className="px-3 py-2 text-ink-muted">{r.profile ?? '—'}</td>
-                <td className="px-3 py-2 text-ink-muted">
-                  {r.email ? <a href={`mailto:${r.email}`} className="hover:text-brand hover:underline">{r.email}</a> : '—'}
-                </td>
-                <td className="px-3 py-2 text-ink-muted">{r.title || '—'}</td>
-                {TYPES.map((t) => (
-                  <td key={t.key} className="px-3 py-2 text-right tabular-nums">
-                    {!d.available[t.key] ? (
-                      <span className="text-ink-subtle">—</span>
-                    ) : (
-                      <span className={cx('rounded-full px-1.5', r.counts[t.key] ? 'text-ink' : 'bg-bad-soft text-bad')}>{fmtNumber(r.counts[t.key])}</span>
-                    )}
-                  </td>
-                ))}
-                <td className="whitespace-nowrap px-3 py-2 text-ink-muted">{r.lastActivity ?? 'None in the period'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <LocalTable
+        title="Reps and what they logged"
+        rows={shown}
+        columns={columns}
+        rowKey={(r) => r.id}
+        empty="No reps found: nobody active owns open deals or leads."
+      />
       <p className="text-[11px] text-ink-subtle">
         Read live from Salesforce. Emails are logged emails (Tasks with Task Subtype Email); Tasks are the other Tasks; Events are calendar
         events. Reps are active users who own an open Opportunity or Lead.
