@@ -240,6 +240,8 @@ export type EacUser = {
   email?: string | null;
   title?: string | null;
   phone?: string | null;
+  /** Master status (EAC assigned and an active user), then Email, Calendar and Contact sync (the org's EAC settings); null = not available */
+  sync?: { key: string; label: string; on: boolean | null; source: string }[];
 };
 
 /** Einstein Activity Capture (EAC) Health, live from Salesforce (only what its APIs expose; null = not available). */
@@ -252,8 +254,27 @@ export type EacHealthData = {
   pipeline: { key: string; label: string; value: number | null }[];
 };
 
+/** One rep and what they logged in the period (Reps with No Activities Logged Recently). */
+export type RepActivityRep = {
+  id: string;
+  name: string;
+  profile: string | null;
+  email: string | null;
+  title: string | null;
+  lastLogin: string | null;
+  counts: { email: number; event: number; task: number };
+  lastActivity: string | null;
+};
+
 /** The records one measure ("What we measure") counted, live from Salesforce. */
 export const indicatorApi = {
+  /** Reps with No Activities Logged Recently: each rep's Emails, Events and Tasks in the last `days` days. */
+  repActivity: (assessmentId: string, days: number, signal?: AbortSignal) =>
+    http.get<{ days: number; available: { email: boolean; event: boolean; task: boolean }; reps: RepActivityRep[]; quiet: Record<string, number> }>(
+      `/assessments/${encodeURIComponent(assessmentId)}/rep-activity`,
+      { days },
+      signal,
+    ),
   /** Einstein Activity Capture (EAC) Health: settings, assigned users and the activity flowing in. */
   eacHealth: (assessmentId: string, signal?: AbortSignal) =>
     http.get<EacHealthData>(`/assessments/${encodeURIComponent(assessmentId)}/eac-health`, {}, signal),

@@ -20,7 +20,7 @@ from ..engine import jobs
 from ..engine.core import in_list, soql_str
 from ..engine.runner import EXECUTABLE_AREA_IDS
 from ..models import AssessmentRow, FindingRow
-from ..salesforce import activity, assignment, eac, explorer, finder, paths, queues, service
+from ..salesforce import activity, assignment, eac, explorer, finder, paths, queues, rep_activity, service
 from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
 from ..schemas import (
     FieldValues,
@@ -724,6 +724,17 @@ def indicator_record_types(
         return sorted(out, key=lambda t: (-t["count"], t["name"].lower()))
 
     return _salesforce(db, http, settings, load, org_id)
+
+
+@router.get("/assessments/{assessment_id}/rep-activity")
+def rep_activity_view(assessment_id: str, days: int = Query(rep_activity.DEFAULT_DAYS, description="7, 14, 30 or 90"),
+                      db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep), settings: Settings = Depends(settings_dep)) -> dict:
+    """Reps with No Activities Logged Recently: each rep with their Profile and how many Emails, Events and Tasks they logged
+    in the last `days` days, read live from Salesforce."""
+    row = _get(db, assessment_id)
+    if days not in rep_activity.DAYS:
+        raise HTTPException(422, "Pick 7, 14, 30 or 90 days.")
+    return _salesforce(db, http, settings, lambda sf: rep_activity.rep_activity(sf, days), row.org_id)
 
 
 @router.get("/assessments/{assessment_id}/eac-health")

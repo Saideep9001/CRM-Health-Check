@@ -10,7 +10,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from urllib.parse import quote, unquote
 
-from ..salesforce import assignment, eac, queues
+from ..salesforce import assignment, eac, queues, rep_activity
 from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
 from .core import Ctx, FindingDraft, Unavailable, pct, rate_score
 from .core import in_list as soql_in
@@ -1601,6 +1601,32 @@ def activity_capture(ctx: Ctx) -> None:
         )
 
 
+QUIET_LABEL = "Reps with No Activities Logged Recently"
+
+
+def quiet_reps(ctx: Ctx) -> None:
+    """Reps with No Activities Logged Recently: reps (people who own open deals or leads) who logged no emails, events or
+    tasks in the last 30 days. The card's own view reads it live, by Profile and activity type, for 7 to 90 days."""
+    days = rep_activity.DEFAULT_DAYS
+    data = rep_activity.rep_activity(ctx.sf, days)
+    people, quiet = data["reps"], data["quiet"]
+    total, n = len(people), quiet["all"]
+    names = [r["name"] for r in people if not any(r["counts"].values())]
+    ctx.metric(
+        QUIET_LABEL, n, "count", "lower-better", rate_score(n / total, 0.5) if total else 100,
+        how=f"Reps (active people who own open Opportunities or Leads) who logged no emails, events or tasks in the last {days} days.",
+        rule="100 when every rep logged activity, falling evenly to 0 when 50% of reps logged none.",
+        criteria=[
+            ("People checked", f"{total:,} active users who own at least one open Opportunity or open Lead (bots and integration users left out)"),
+            ("Activity checked", f"Emails (Tasks with Task Subtype Email), Events and other Tasks they own, created in the last {days} days"
+             + ("" if data["available"]["email"] else "; this org has no Task Subtype, so emails count as Tasks")),
+            ("What's counted", f"{n:,} of {total:,} reps logged nothing"),
+            ("By type", f"No emails: {quiet['email']:,} · no events: {quiet['event']:,} · no tasks: {quiet['task']:,}"),
+            ("Quiet reps", ", ".join(names[:8]) + (" …" if len(names) > 8 else "") if names else "None"),
+        ],
+    )
+
+
 EAC_LABEL = "Einstein Activity Capture (EAC) Health"
 
 
@@ -1834,7 +1860,7 @@ AREAS = {
                contact_roles, orphaned_contacts, multiple_accounts, multi_deal_contacts],
     "area-5": [stuck_opportunities, missing_next_steps, opp_no_activity, opp_closed_lost_without_reason, overdue_close_dates,
                stage_guidance],
-    "area-6": [missing_sales_activities, web_to_lead, email_templates, activity_capture, eac_health],
+    "area-6": [missing_sales_activities, web_to_lead, email_templates, activity_capture, eac_health, quiet_reps],
     "area-7": [validation_rules, required_field_gaps, junk_data, layout_usability],
 }
 
@@ -1863,6 +1889,7 @@ STEP_LABELS = {
     email_templates: "Checking email templates",
     activity_capture: "Checking activity on open deals",
     eac_health: "Checking Einstein Activity Capture",
+    quiet_reps: "Finding reps with no recent activity",
     validation_rules: "Reading validation rules",
     required_field_gaps: "Checking required fields",
     junk_data: "Looking for junk values",

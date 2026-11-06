@@ -157,12 +157,30 @@ def pipeline(sf: SalesforceClient, ids: set[str]) -> list[dict]:
     return out
 
 
+def user_sync(user: dict, org: list[dict]) -> list[dict]:
+    """What EAC does for one user: Master status = they're assigned EAC and an active Salesforce user (EAC doesn't run for a
+    deactivated user); Email, Calendar and Contact sync = the org's EAC settings, which apply to every user with EAC (off for a
+    deactivated user). None = Salesforce has no such setting. Salesforce's APIs don't show per-user sync choices."""
+    out = []
+    for t in org:
+        if t["key"] == "master":
+            on, source = bool(user.get("isActive")), "EAC assigned and an active Salesforce user"
+        else:
+            on = False if not user.get("isActive") and t["on"] is not None else t["on"]
+            source = "Org setting: " + t["setting"] if t["setting"] else "No EAC setting for this in Salesforce"
+        out.append({"key": t["key"], "label": t["label"], "on": on, "source": source})
+    return out
+
+
 def eac_health(sf: SalesforceClient) -> dict:
     """Everything the EAC Health card shows, live."""
     conf = settings(sf)
     sources, ids = assigned_users(sf)
     people = users(sf, ids)
-    master = next((t["on"] for t in tiles(conf["flags"]) if t["key"] == "master"), None)
+    org = tiles(conf["flags"])
+    for u in people["all"]:  # (the issues are the same rows)
+        u["sync"] = user_sync(u, org)
+    master = next((t["on"] for t in org if t["key"] == "master"), None)
     if not people["total"] and master is not True:
         status = "Not set up"
     elif people["attention"] or any(t["on"] is False for t in tiles(conf["flags"])):

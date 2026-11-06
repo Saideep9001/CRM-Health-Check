@@ -34,7 +34,7 @@ function Stat({ icon, label, value }: { icon: ReactNode; label: string; value: R
 }
 
 /** A row of filter chips: "All", then each value with how many users have it. Clicking a picked chip again clears it. */
-function FilterChips({ title, options, value, onChange }: {
+export function FilterChips({ title, options, value, onChange }: {
   title: string;
   options: { key: string; label: string; count: number; tone?: 'good' | 'bad' }[];
   value: string | undefined;
@@ -221,6 +221,24 @@ export function EacHealth({ assessmentId }: { assessmentId: string }) {
                         </span>
                         {/* whether, and when, they last logged in to Salesforce */}
                         {u.login && <span className="mt-1 block text-[11px] text-ink-subtle">{u.login}</span>}
+                        {/* what EAC does for them: Master status, then Email, Calendar and Contact sync */}
+                        {u.sync && u.sync.length > 0 && (
+                          <ul className="mt-1.5 space-y-0.5 text-[11px]">
+                            {u.sync.map((s) => (
+                              <li key={s.key} className="flex items-center justify-between gap-3" title={s.source}>
+                                <span className="text-ink-muted">{s.label}</span>
+                                <span
+                                  className={cx(
+                                    'rounded-full px-1.5 font-medium',
+                                    s.on == null ? 'bg-muted text-ink-subtle' : s.on ? 'bg-good-soft text-good' : 'bg-bad-soft text-bad',
+                                  )}
+                                >
+                                  {s.on == null ? 'Not available' : s.on ? 'Enabled' : 'Disabled'}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
                       </td>
                     </tr>
                   ))}

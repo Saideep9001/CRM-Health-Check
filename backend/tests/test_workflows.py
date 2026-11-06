@@ -850,4 +850,28 @@ def test_eac_health_card_in_area_6(client, sf, monkeypatch):
     priya = next(u for u in d["users"]["all"] if u["name"] == "Priya Nair")
     assert (priya["email"], priya["title"], priya["phone"]) == ("priya@acme.test", "Account Manager", "(415) 555-0101")
     assert next(u for u in d["users"]["all"] if u["name"] == "Aisha Khan")["email"] is None  # not set in Salesforce
+    sync = {u["name"]: {s["key"]: s["on"] for s in u["sync"]} for u in d["users"]["all"]}  # under each user's Status
+    assert sync["Priya Nair"] == {"master": True, "email": True, "calendar": False, "contact": True}  # the org's settings
+    assert sync["Daniel Ortiz"] == {"master": False, "email": False, "calendar": False, "contact": False}  # deactivated: EAC is off
+    assert d["users"]["issues"][0]["sync"]  # the Action required rows have it too
     assert {p["key"]: p["value"] for p in d["pipeline"]} == {"metrics7": 12, "metrics30": 40, "task": 9, "event": 3}
+
+
+def test_reps_with_no_activities_logged_recently(client, sf):
+    connect(client)
+    a, res, _ = run(client)
+    card = next(i for x in res["areas"] if x["areaId"] == "area-6" for i in x["indicators"] if i["label"] == "Reps with No Activities Logged Recently")
+    assert card["value"] == 1  # Bob logged nothing; Ann logged tasks (the Agentforce user isn't a rep)
+    crit = dict(card["criteria"])
+    assert crit["By type"] == "No emails: 1 · no events: 2 · no tasks: 1" and crit["Quiet reps"] == "Bob Ray"
+    body = client.get(f"{API}/assessments/{a['id']}/rep-activity", params={"days": 7})
+    assert body.status_code == 200, body.text
+    d = body.json()
+    assert d["days"] == 7 and d["available"] == {"email": True, "event": True, "task": True}
+    reps = {r["name"]: r for r in d["reps"]}
+    assert set(reps) == {"Ann Lee", "Bob Ray"} and reps["Ann Lee"]["profile"] == "Sales"
+    assert reps["Ann Lee"]["counts"] == {"email": 3, "event": 0, "task": 3} and reps["Bob Ray"]["counts"] == {"email": 0, "event": 0, "task": 0}
+    emails = next(q for q in reversed(sf.soql) if "FROM Task" in q and "TaskSubtype = 'Email'" in q)
+    assert "LAST_N_DAYS:7" in emails and "GROUP BY OwnerId" in emails
+    assert any("FROM Task" in q and "TaskSubtype != 'Email'" in q for q in sf.soql)  # Tasks: the other ones
+    assert client.get(f"{API}/assessments/{a['id']}/rep-activity", params={"days": 45}).status_code == 422

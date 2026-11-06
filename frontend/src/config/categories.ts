@@ -130,6 +130,7 @@ export const DIAGNOSTIC_AREAS: DiagnosticArea[] = [
       'Email template availability',
       'Activity capture gaps',
       'Einstein Activity Capture (EAC) Health',
+      'Reps with No Activities Logged Recently',
     ],
   },
   {
