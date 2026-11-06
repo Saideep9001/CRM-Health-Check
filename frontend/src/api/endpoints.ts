@@ -269,10 +269,11 @@ export type RepActivityRep = {
 /** The records one measure ("What we measure") counted, live from Salesforce. */
 export const indicatorApi = {
   /** Reps with No Activities Logged Recently: each rep's Emails, Events and Tasks in the last `days` days. */
-  repActivity: (assessmentId: string, days: number, signal?: AbortSignal) =>
-    http.get<{ days: number; available: { email: boolean; event: boolean; task: boolean }; reps: RepActivityRep[]; quiet: Record<string, number> }>(
+  /** `period`: a number of days (7, 14, 30, 90) or custom dates { from, to } (YYYY-MM-DD, both included). */
+  repActivity: (assessmentId: string, period: number | { from: string; to: string }, signal?: AbortSignal) =>
+    http.get<{ days: number | null; available: { email: boolean; event: boolean; task: boolean }; reps: RepActivityRep[]; quiet: Record<string, number> }>(
       `/assessments/${encodeURIComponent(assessmentId)}/rep-activity`,
-      { days },
+      typeof period === 'number' ? { days: period } : { from: period.from, to: period.to },
       signal,
     ),
   /** Einstein Activity Capture (EAC) Health: settings, assigned users and the activity flowing in. */

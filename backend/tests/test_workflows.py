@@ -875,3 +875,11 @@ def test_reps_with_no_activities_logged_recently(client, sf):
     assert "LAST_N_DAYS:7" in emails and "GROUP BY OwnerId" in emails
     assert any("FROM Task" in q and "TaskSubtype != 'Email'" in q for q in sf.soql)  # Tasks: the other ones
     assert client.get(f"{API}/assessments/{a['id']}/rep-activity", params={"days": 45}).status_code == 422
+    assert d["reps"][0]["name"] == "Bob Ray"  # nothing logged first
+    # custom dates: both days included
+    ranged = client.get(f"{API}/assessments/{a['id']}/rep-activity", params={"from": "2026-01-01", "to": "2026-01-31"})
+    assert ranged.status_code == 200 and (ranged.json()["from"], ranged.json()["to"]) == ("2026-01-01", "2026-01-31")
+    q = next(q for q in reversed(sf.soql) if "FROM Event" in q and "GROUP BY OwnerId" in q)
+    assert "CreatedDate >= 2026-01-01T00:00:00Z AND CreatedDate < 2026-02-01T00:00:00Z" in q
+    for bad in ({"from": "2026-02-01", "to": "2026-01-01"}, {"from": "2026-01-01"}, {"from": "2999-01-01", "to": "2999-01-02"}):
+        assert client.get(f"{API}/assessments/{a['id']}/rep-activity", params=bad).status_code == 422

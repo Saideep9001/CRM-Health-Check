@@ -1,6 +1,6 @@
 """Health checks (assessments) and their findings. See docs/API_CONTRACT.md → Assessments."""
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import csv
 import io
@@ -728,13 +728,17 @@ def indicator_record_types(
 
 @router.get("/assessments/{assessment_id}/rep-activity")
 def rep_activity_view(assessment_id: str, days: int = Query(rep_activity.DEFAULT_DAYS, description="7, 14, 30 or 90"),
+                      start: date | None = Query(None, alias="from", description="Custom dates: the first day (YYYY-MM-DD)"),
+                      end: date | None = Query(None, alias="to", description="Custom dates: the last day, included"),
                       db: Session = Depends(get_db), http: httpx.Client = Depends(http_dep), settings: Settings = Depends(settings_dep)) -> dict:
     """Reps with No Activities Logged Recently: each rep with their Profile and how many Emails, Events and Tasks they logged
     in the last `days` days, read live from Salesforce."""
     row = _get(db, assessment_id)
-    if days not in rep_activity.DAYS:
-        raise HTTPException(422, "Pick 7, 14, 30 or 90 days.")
-    return _salesforce(db, http, settings, lambda sf: rep_activity.rep_activity(sf, days), row.org_id)
+    try:
+        rep_activity.window(days, start, end)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+    return _salesforce(db, http, settings, lambda sf: rep_activity.rep_activity(sf, days, start, end), row.org_id)
 
 
 @router.get("/assessments/{assessment_id}/eac-health")

@@ -6,6 +6,7 @@ N days, by type: Emails (Tasks whose Task Subtype is Email: logged emails), Task
 how many and the latest one. A rep counts as quiet for a type when they logged none of it.
 """
 import re
+from datetime import date, timedelta
 
 from .client import SalesforceClient
 from .errors import SalesforceAuthExpired, SalesforceError
@@ -47,20 +48,31 @@ def reps(sf: SalesforceClient) -> list[dict]:
     return sorted(out, key=lambda r: r["name"].lower())
 
 
-def _by_owner(sf: SalesforceClient, obj: str, days: int, extra: str = "") -> dict[str, tuple[int, str | None]] | None:
-    rows = _query(sf, f"SELECT OwnerId o, COUNT(Id) c, MAX(CreatedDate) m FROM {obj} WHERE CreatedDate = LAST_N_DAYS:{days}{extra} "
+def window(days: int = DEFAULT_DAYS, start: date | None = None, end: date | None = None) -> str:
+    """The CreatedDate condition: the last `days` days, or between two dates (both included)."""
+    if start or end:
+        if not (start and end) or start > end or start > date.today():
+            raise ValueError("Pick a From date on or before the To date, and not in the future.")
+        return f"CreatedDate >= {start.isoformat()}T00:00:00Z AND CreatedDate < {(end + timedelta(days=1)).isoformat()}T00:00:00Z"
+    if days not in DAYS:
+        raise ValueError("Pick 7, 14, 30 or 90 days.")
+    return f"CreatedDate = LAST_N_DAYS:{days}"
+
+
+def _by_owner(sf: SalesforceClient, obj: str, when: str, extra: str = "") -> dict[str, tuple[int, str | None]] | None:
+    rows = _query(sf, f"SELECT OwnerId o, COUNT(Id) c, MAX(CreatedDate) m FROM {obj} WHERE {when}{extra} "
                       "GROUP BY OwnerId LIMIT 2000")
     return None if rows is None else {str(r.get("o")): (int(r.get("c") or 0), (r.get("m") or "")[:10] or None) for r in rows}
 
 
-def rep_activity(sf: SalesforceClient, days: int = DEFAULT_DAYS) -> dict:
-    """Each rep with how many Emails, Events and Tasks they logged in the last `days` days (and the latest date)."""
-    if days not in DAYS:
-        raise ValueError("Pick 7, 14, 30 or 90 days.")
+def rep_activity(sf: SalesforceClient, days: int = DEFAULT_DAYS, start: date | None = None, end: date | None = None) -> dict:
+    """Each rep with how many Emails, Events and Tasks they logged in the last `days` days, or between two dates (and the
+    latest date), quietest first."""
+    when = window(days, start, end)
     people = reps(sf)
-    emails = _by_owner(sf, "Task", days, " AND TaskSubtype = 'Email'")  # None: this org has no Task Subtype
-    tasks = _by_owner(sf, "Task", days, " AND TaskSubtype != 'Email'" if emails is not None else "") or {}
-    events = _by_owner(sf, "Event", days) or {}
+    emails = _by_owner(sf, "Task", when, " AND TaskSubtype = 'Email'")  # None: this org has no Task Subtype
+    tasks = _by_owner(sf, "Task", when, " AND TaskSubtype != 'Email'" if emails is not None else "") or {}
+    events = _by_owner(sf, "Event", when) or {}
     available = {"email": emails is not None, "event": True, "task": True}
     emails = emails or {}
     for r in people:
@@ -68,6 +80,8 @@ def rep_activity(sf: SalesforceClient, days: int = DEFAULT_DAYS) -> dict:
         r["counts"] = {t: (found[t] or (0, None))[0] for t in TYPES}
         dates = [d for t in TYPES if found[t] and (d := found[t][1])]
         r["lastActivity"] = max(dates) if dates else None
-    return {"days": days, "available": available, "reps": people,
+    people.sort(key=lambda r: (sum(r["counts"].values()), r["name"].lower()))  # nothing logged first
+    return {"days": None if start else days, "from": start.isoformat() if start else None, "to": end.isoformat() if end else None,
+            "available": available, "reps": people,
             "quiet": {t: sum(1 for r in people if not r["counts"][t]) for t in TYPES}
             | {"all": sum(1 for r in people if not any(r["counts"].values()))}}
