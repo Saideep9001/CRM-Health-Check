@@ -15,7 +15,7 @@ from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
 from .core import Ctx, FindingDraft, Unavailable, pct, rate_score
 from .core import in_list as soql_in
 from .core import soql_str
-from .data_quality import accounts_without_contacts, closed_lost_without_reason, no_recent_activity, stale_leads
+from .data_quality import accounts_without_contacts, closed_lost_without_reason, leads_without_campaign, no_recent_activity, stale_leads
 
 OPEN_LEADS = "IsConverted = false"
 OPEN_OPPS = "IsClosed = false"
@@ -482,6 +482,11 @@ def criteria_mismatches(ctx: Ctx) -> None:
 def lead_no_activity(ctx: Ctx) -> None:
     """No Activity in 6 Months (Leads): open Leads with no task, event, call or email logged in 6 months (moved here from Area 1)."""
     no_recent_activity(ctx, "Lead")
+
+
+def lead_campaign_gaps(ctx: Ctx) -> None:
+    """Campaign Association Gaps (Leads): open Leads in no Campaign (moved here from Area 1)."""
+    leads_without_campaign(ctx)
 
 
 OVERDUE = "CloseDate < TODAY"
@@ -1780,7 +1785,7 @@ def layout_usability(ctx: Ctx) -> None:
 
 
 AREAS = {
-    "area-3": [stuck_queue_leads, inactive_rules, criteria_mismatches, lead_no_activity, stale_leads],
+    "area-3": [stuck_queue_leads, inactive_rules, criteria_mismatches, lead_no_activity, stale_leads, lead_campaign_gaps],
     "area-4": [accounts_without_contacts, hierarchy_chains, inactive_parents, missing_parents,  # Accounts first, then Contacts
                contact_roles, orphaned_contacts, multiple_accounts, multi_deal_contacts],
     "area-5": [stuck_opportunities, missing_next_steps, opp_no_activity, opp_closed_lost_without_reason, overdue_close_dates,
@@ -1795,6 +1800,7 @@ STEP_LABELS = {
     criteria_mismatches: "Checking Leads against the active assignment rule",
     lead_no_activity: "Finding Leads with no activity in 6 months",
     stale_leads: "Finding stale Leads",
+    lead_campaign_gaps: "Finding Leads in no Campaign",
     overdue_close_dates: "Finding deals past their Close Date",
     contact_roles: "Checking contact roles on deals",
     orphaned_contacts: "Finding Contacts without an Account",

@@ -27,7 +27,7 @@ DESCRIBE = {
     "Contact": [_f("Id", type="id"), _f("Email", type="email"), _f("Phone"), _f("MobilePhone"), _f("Title"), _f("AccountId", type="reference"),
                 _f("MailingCountry"), _f("LastModifiedDate", type="datetime")],
     "Lead": [_f("Id", type="id"), _f("Email", type="email"), _f("Phone"), _f("Company"), _f("Title"), _f("LeadSource"), _f("Industry"), _f("Country"),
-             _f("State"), _f("IsConverted", type="boolean")],
+             _f("State"), _f("IsConverted", type="boolean"), _f("LastModifiedDate", type="datetime")],
     "Opportunity": [_f("Id", type="id"), _f("Amount", type="currency"), _f("NextStep"), _f("LeadSource"), _f("Type")],
     # A custom object, checked with generic rules when chosen.
     "Invoice__c": [_f("Id", type="id"), _f("Name", nameField=True), _f("Status__c", custom=True, createable=True, nillable=True),
@@ -137,11 +137,13 @@ def test_full_data_quality_run(client, sf):
     areas = {x["areaId"]: x for x in res["areas"]}
     ind = {i["label"]: i for i in areas["area-1"]["indicators"]}
     labels = [i["label"] for i in areas["area-1"]["indicators"]]
-    # Each object's cards together: Accounts get the four core cards plus one of their own (Accounts Without Contacts is in Area 4).
-    assert labels[:5] == ["Duplicate Accounts", "Missing Key Fields (Accounts)", "Data Standardization Issues (Accounts)",
-                          "No Activity in 6 Months (Accounts)", "Accounts Without Open Opportunities"]
+    # Each object's cards together: Accounts get the three core cards plus one of their own (Accounts Without Contacts is in Area 4;
+    # No Activity in 6 Months isn't in Area 1).
+    assert labels[:4] == ["Duplicate Accounts", "Missing Key Fields (Accounts)", "Data Standardization Issues (Accounts)",
+                          "Accounts Without Open Opportunities"]
+    assert not any(label.startswith(("No Activity in 6 Months", "Campaign Association Gaps")) for label in labels)
     assert "Accounts Without Contacts" not in ind
-    assert {"Duplicate Contacts", "Missing Key Fields (Contacts)", "Data Standardization Issues (Contacts)", "No Activity in 6 Months (Contacts)",
+    assert {"Duplicate Contacts", "Missing Key Fields (Contacts)", "Data Standardization Issues (Contacts)",
             "Duplicate Leads", "Missing Key Fields (Leads)", "Missing Key Fields (Opportunities)"} <= set(ind)
     assert ind["Duplicate Accounts"]["value"] == 2 and ind["Duplicate Contacts"]["value"] == 0
     mk = ind["Missing Key Fields (Contacts)"]  # Email or Phone empty on 40 of 200 (the first condition counted by the fake)
@@ -155,7 +157,6 @@ def test_full_data_quality_run(client, sf):
     assert (empty["Website"]["count"], empty["Website"]["of"]) == (10, 100)
     odd = {f["field"]: f for f in ind["Data Standardization Issues (Accounts)"]["fieldScores"]}
     assert (odd["BillingState"]["count"], odd["BillingState"]["of"]) == (1, 5)  # "California" vs "CA"
-    assert ind["No Activity in 6 Months (Accounts)"]["fieldScores"] is None
     ind2 = {i["label"]: i for i in areas["area-2"]["indicators"]}
     labels2 = [i["label"] for i in areas["area-2"]["indicators"]]
     # each object's field cards together, then one scorecard

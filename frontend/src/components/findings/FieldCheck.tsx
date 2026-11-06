@@ -17,11 +17,71 @@ export const ALL = '__all__'; // the "all chosen fields together" row
 
 type Pick = { field: string; kind: FinderKind };
 
-/** How each chosen field joins the one before it for duplicates (AND by default). */
-type Joins = Record<string, 'AND' | 'OR'>;
-/** The chosen fields as OR'd groups of AND'd fields: Name AND Email OR Phone = [[Name, Email], [Phone]] (AND before OR). */
-const groupsOf = (names: string[], joins: Joins) =>
-  names.reduce<string[][]>((gs, f, i) => (i && joins[f] !== 'OR' ? (gs[gs.length - 1].push(f), gs) : [...gs, [f]]), []);
+/** How the chosen fields count as duplicates: AND = records matching on all of them (common duplicates only), OR = each
+ *  field's own duplicates, CUSTOM = a condition over the numbered fields, e.g. 1 AND (2 OR 3). */
+export type MatchMode = 'AND' | 'OR' | 'CUSTOM';
+const MODES: { value: MatchMode; label: string; help: string }[] = [
+  { value: 'AND', label: 'AND', help: 'Only records that are duplicates on every chosen field together (common duplicates).' },
+  { value: 'OR', label: 'OR', help: 'Each field’s own duplicates, field by field.' },
+  { value: 'CUSTOM', label: 'Custom', help: 'Your own condition over the numbered fields, e.g. 1 AND (2 OR 3).' },
+];
+const MAX_GROUPS = 5; // OR'd groups the check takes
+const MAX_GROUP_FIELDS = 6; // fields in one AND group
+
+/** A condition like "1 AND (2 OR 3)" over the numbered fields, as OR'd groups of AND'd fields
+ *  ([[1, 2], [1, 3]]), or an error in plain words. */
+export function parseLogic(text: string, n: number): { groups: number[][] } | { error: string } {
+  const tokens = text.toUpperCase().match(/\d+|AND|OR|\(|\)|\S+/g) ?? [];
+  let i = 0;
+  const fail = (error: string) => ({ error });
+  type R = number[][] | { error: string };
+  const isErr = (r: R): r is { error: string } => !Array.isArray(r);
+  const expr = (): R => {
+    let left = term();
+    while (!isErr(left) && tokens[i] === 'OR') {
+      i++;
+      const right = term();
+      if (isErr(right)) return right;
+      left = [...left, ...right];
+    }
+    return left;
+  };
+  const term = (): R => {
+    let left = factor();
+    while (!isErr(left) && tokens[i] === 'AND') {
+      i++;
+      const right = factor();
+      if (isErr(right)) return right;
+      const l = left;
+      left = l.flatMap((a) => right.map((b) => [...new Set([...a, ...b])]));
+    }
+    return left;
+  };
+  const factor = (): R => {
+    const t = tokens[i++];
+    if (t === undefined) return fail('The condition ends too soon.');
+    if (t === '(') {
+      const inner = expr();
+      if (isErr(inner)) return inner;
+      if (tokens[i++] !== ')') return fail('A bracket isn’t closed.');
+      return inner;
+    }
+    if (/^\d+$/.test(t)) {
+      const k = Number(t);
+      return k >= 1 && k <= n ? [[k]] : fail(`There’s no field ${k}: use 1 to ${n}.`);
+    }
+    return fail(`“${t}” isn’t understood: use field numbers, AND, OR and brackets.`);
+  };
+  if (!tokens.length) return fail('Write a condition, e.g. 1 AND (2 OR 3).');
+  const out = expr();
+  if (isErr(out)) return out;
+  if (i < tokens.length) return fail(`“${tokens[i]}” is out of place.`);
+  const groups = out.map((g) => [...g].sort((a, b) => a - b)).filter((g, k, all) => all.findIndex((x) => x.join() === g.join()) === k);
+  if (groups.length > MAX_GROUPS) return fail(`That makes ${groups.length} OR groups; use up to ${MAX_GROUPS}.`);
+  if (groups.some((g) => g.length > MAX_GROUP_FIELDS)) return fail(`An AND group can have up to ${MAX_GROUP_FIELDS} fields.`);
+  return { groups };
+}
+const allAnd = (n: number) => Array.from({ length: n }, (_, k) => k + 1).join(' AND ');
 /** "Name AND Email OR Phone" */
 export const ruleText = (rules: string[][]) => rules.map((g) => g.join(' AND ')).join(' OR ');
 
@@ -241,7 +301,9 @@ export function FieldCheck({
   const [object, setObject] = useState(initialObject ?? choices[0]);
   const options = useEmptyOptions(object);
   const [chosen, setChosen] = useState<string[]>([]);
-  const [joins, setJoins] = useState<Joins>({});
+  const [mode, setMode] = useState<MatchMode>('AND');
+  const [logic, setLogic] = useState('');
+  const [ranMode, setRanMode] = useState<MatchMode>('AND'); // the mode of the result shown
   const [fieldQuery, setFieldQuery] = useState('');
   const [listOpen, setListOpen] = useState(true);
   const [pick, setPick] = useState<Pick | null>(null);
@@ -255,7 +317,8 @@ export function FieldCheck({
   useEffect(() => {
     const named = fieldsNamed(fieldsText, object, fields, MAX_FIELDS);
     setChosen(named);
-    setJoins({});
+    setMode('AND');
+    setLogic('');
     setListOpen(named.length === 0); // fields already picked: keep the list folded
     setFieldQuery('');
     setPick(null);
@@ -264,7 +327,7 @@ export function FieldCheck({
     onLiveResult?.(null);
     // The page's own fields are checked straight away, so the numbers show without a click (the page keeps the health check's own
     // chart until someone runs it themselves).
-    if (named.length && options.data) runWith(named, false, {});
+    if (named.length && options.data) runWith(named, false, 'AND');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [object, fieldsText, options.data]);
 
@@ -275,14 +338,29 @@ export function FieldCheck({
   const label = (name: string) => fields.find((f) => f.name === name)?.label ?? name;
   const what = objectLabel(object).toLowerCase();
 
-  function runWith(fieldNames: string[], tellPage: boolean, how: Joins = joins) {
+  /** The rule sent with the check: AND = all fields as one group, OR = no rule (each field on its own), CUSTOM = the condition. */
+  const rulesFor = (names: string[], how: MatchMode): string[][] | undefined => {
+    if (how === 'OR') return [];
+    if (how === 'CUSTOM') {
+      const parsed = parseLogic(logic, names.length);
+      return 'groups' in parsed ? parsed.groups.map((g) => g.map((k) => names[k - 1])) : undefined;
+    }
+    return [names.slice(0, MAX_GROUP_FIELDS)];
+  };
+  function runWith(fieldNames: string[], tellPage: boolean, how: MatchMode = mode) {
     setListOpen(false);
     run.mutate(
-      { object, fields: fieldNames, rules: groupsOf(fieldNames, how) },
+      { object, fields: fieldNames, rules: rulesFor(fieldNames, how) },
       {
         onSuccess: (r: FieldCheckResult) => {
+          setRanMode(how);
           if (tellPage) onResult?.(r);
           onLiveResult?.(r);
+          // the page's records table shows what was asked: the common duplicates (AND / Custom) or each field's own (OR)
+          if (tellPage && focus === 'duplicates' && onPickFields) {
+            if (how !== 'OR' && r.combined) onPickFields([ALL]);
+            else if (how === 'OR') onPickFields(r.fields.filter((f) => f.duplicates).map((f) => f.name));
+          }
           const kind = focus ?? 'empty';
           // open the field with the most to look at for this page (e.g. Account Phone's odd values)
           const count = (f: FieldCheckField) => (kind === 'empty' ? f.empty : kind === 'duplicates' ? (f.duplicates?.extraCopies ?? 0) : (f.standardization?.oddRecords ?? 0));
@@ -300,21 +378,28 @@ export function FieldCheck({
   });
   const applyPreset = (names: string[]) => {
     setChosen(names);
-    setJoins({});
-    runWith(names, true, {});
+    setMode('AND');
+    runWith(names, true, 'AND');
   };
-  const flipJoin = (f: string) => setJoins((j) => ({ ...j, [f]: j[f] === 'OR' ? 'AND' : 'OR' }));
   const andOr = shows('duplicates') && chosen.length > 1;
+  const pickMode = (m: MatchMode) => {
+    setMode(m);
+    if (m === 'CUSTOM' && !logic.trim()) setLogic(allAnd(chosen.length));
+  };
+  const parsed = mode === 'CUSTOM' && andOr ? parseLogic(logic, chosen.length) : null;
+  const logicError = parsed && 'error' in parsed ? parsed.error : null;
 
   const result = run.data;
   const picked = result && pick ? (pick.field === ALL ? null : result.fields.find((f) => f.name === pick.field)) : null;
   // Empty values and invalid data are shown in the page's records table (one table), not in a second one here.
   // Duplicates too: the ticked fields' groups replace the records table's (one table on the page).
+  // AND / Custom: only the common duplicates (the rule's row); OR: each field's own duplicates.
+  const commonOnly = shows('duplicates') && ranMode !== 'OR' && !!result?.combined;
   const inRecords = (field: string, kind: FinderKind) =>
     !!onPickFields &&
     (kind === 'empty' ||
       (kind === 'spelling' && recordFields.includes(field)) ||
-      (kind === 'duplicates' && (field === ALL ? !!run.data?.combined : !!run.data?.fields.find((f) => f.name === field)?.duplicates)));
+      (kind === 'duplicates' && (field === ALL ? !!run.data?.combined : !commonOnly && !!run.data?.fields.find((f) => f.name === field)?.duplicates)));
   const tickable = [...(run.data?.fields ?? []).map((f) => f.name), ALL].filter((f) => inRecords(f, focus ?? 'empty'));
   const isOn = (field: string, kind: FinderKind) =>
     inRecords(field, kind) ? shownFields == null || shownFields.includes(field) : pick?.field === field && pick.kind === kind;
@@ -389,35 +474,21 @@ export function FieldCheck({
               </div>
               {chosen.length > 0 ? (
                 <div className={cx('flex flex-wrap items-center gap-1 text-xs text-ink-muted', listOpen ? 'mb-2' : 'mt-2 pl-8')}>
-                  <span className="mr-1">{andOr ? 'Duplicate when:' : 'Checking:'}</span>
-                  {andOr ? (
-                    chosen.map((f, i) => (
-                      <span key={f} className="inline-flex items-center gap-1">
-                        {i > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => flipJoin(f)}
-                            title="Click to switch between AND (both must match) and OR (either one is enough)"
-                            className={cx(
-                              'rounded-md border px-1.5 py-0.5 text-[10px] font-bold tracking-wide transition',
-                              joins[f] === 'OR' ? 'border-warn/40 bg-warn-soft text-warn' : 'border-brand/30 bg-brand-soft text-brand-ink',
-                            )}
-                          >
-                            {joins[f] === 'OR' ? 'OR' : 'AND'}
-                          </button>
+                  <span className="mr-1">Checking:</span>
+                  {chosen.map((f, i) => (
+                    <span key={f} className="inline-flex items-center gap-1">
+                      {i > 0 && andOr && mode !== 'CUSTOM' && (
+                        <span className={cx('px-0.5 text-[10px] font-bold', mode === 'OR' ? 'text-warn' : 'text-brand')}>{mode}</span>
+                      )}
+                      <span className="inline-flex items-center gap-1 rounded-full border border-line bg-surface px-2 py-0.5 font-medium text-ink">
+                        {andOr && mode === 'CUSTOM' && (
+                          <span className="grid h-4 min-w-4 place-items-center rounded-full bg-brand px-1 text-[10px] font-bold text-white">{i + 1}</span>
                         )}
-                        <span className="rounded-full border border-line bg-surface px-2 py-0.5 font-medium text-ink">{label(f)}</span>
+                        {label(f)}
                       </span>
-                    ))
-                  ) : (
-                    <span className="font-medium text-ink">{chosen.map(label).join(', ')}</span>
-                  )}
-                  <button type="button" className="ml-2 text-brand hover:underline" onClick={() => (setChosen([]), setJoins({}), setListOpen(true))}>Clear</button>
-                  {andOr && (
-                    <span className="basis-full pt-0.5 text-[11px] text-ink-subtle">
-                      Click AND / OR to change how the fields combine (AND is grouped first): {ruleText(groupsOf(chosen, joins).map((g) => g.map(label)))}.
                     </span>
-                  )}
+                  ))}
+                  <button type="button" className="ml-2 text-brand hover:underline" onClick={() => (setChosen([]), setLogic(''), setListOpen(true))}>Clear</button>
                 </div>
               ) : (
                 !listOpen && <p className="mt-2 pl-8 text-xs text-ink-subtle">No fields picked yet. Open the list to choose some.</p>
@@ -454,11 +525,63 @@ export function FieldCheck({
               )}
             </div>
 
+            {andOr && (
+              <div className="space-y-2 rounded-lg border border-line px-4 py-3 text-xs">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium text-ink-muted">Duplicates when the fields match:</span>
+                  <span className="inline-flex overflow-hidden rounded-lg border border-line" role="radiogroup" aria-label="How the fields combine">
+                    {MODES.map((m) => (
+                      <button
+                        key={m.value}
+                        type="button"
+                        role="radio"
+                        aria-checked={mode === m.value}
+                        title={m.help}
+                        onClick={() => pickMode(m.value)}
+                        className={cx(
+                          'border-l border-line px-3 py-1 font-semibold transition first:border-l-0',
+                          mode === m.value ? 'bg-brand text-white' : 'bg-surface text-ink-muted hover:text-brand',
+                        )}
+                      >
+                        {m.label}
+                      </button>
+                    ))}
+                  </span>
+                  <span className="text-ink-subtle">{MODES.find((m) => m.value === mode)!.help}</span>
+                </div>
+                {mode === 'AND' && chosen.length > MAX_GROUP_FIELDS && (
+                  <p className="text-warn">Only the first {MAX_GROUP_FIELDS} fields are compared together.</p>
+                )}
+                {mode === 'CUSTOM' && (
+                  <div className="space-y-1">
+                    <label className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium text-ink-muted">Condition</span>
+                      <input
+                        className={cx('input h-8 w-72 font-mono text-xs', logicError && 'border-bad')}
+                        value={logic}
+                        onChange={(e) => setLogic(e.target.value)}
+                        placeholder="e.g. 1 AND (2 OR 3)"
+                        aria-label="Custom condition"
+                      />
+                    </label>
+                    {logicError ? (
+                      <p className="text-bad">{logicError}</p>
+                    ) : (
+                      parsed && 'groups' in parsed && (
+                        <p className="text-ink-subtle">
+                          Duplicates when: {ruleText(parsed.groups.map((g) => g.map((k) => label(chosen[k - 1]))))}
+                        </p>
+                      )
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
             {shows('duplicates') && presets.length > 0 && (
               <div className="flex flex-wrap items-center gap-1.5 text-xs">
                 <span className="mr-1 font-medium text-ink-muted">Duplicate checks:</span>
                 {presets.map((p) => {
-                  const on = !p.missing && p.names.length === chosen.length && p.names.every((n) => chosen.includes(n)) && chosen.slice(1).every((f) => joins[f] !== 'OR');
+                  const on = !p.missing && p.names.length === chosen.length && p.names.every((n) => chosen.includes(n)) && mode === 'AND';
                   return (
                     <button
                       key={p.label}
@@ -478,7 +601,7 @@ export function FieldCheck({
               </div>
             )}
             <div className="flex flex-wrap items-center gap-3">
-              <Button variant="primary" icon={<ListChecks className="h-4 w-4" />} disabled={!chosen.length || run.isPending} onClick={start}>
+              <Button variant="primary" icon={<ListChecks className="h-4 w-4" />} disabled={!chosen.length || run.isPending || !!logicError} onClick={start}>
                 {run.isPending ? 'Checking…' : `Check ${chosen.length || ''} field${chosen.length === 1 ? '' : 's'}`.replace('  ', ' ')}
               </Button>
               {run.isPending && <span className="text-xs text-ink-muted">Reading up to 20,000 {what} and checking each field…</span>}
@@ -519,7 +642,7 @@ export function FieldCheck({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line">
-                  {result.fields.map((f) => (
+                  {result.fields.filter(() => !(commonOnly && focus === 'duplicates')).map((f) => (
                     <tr key={f.name}>
                       <td className="px-3 py-2">
                         <span className="block font-medium">{f.label}</span>
@@ -558,7 +681,7 @@ export function FieldCheck({
                   {result.combined && shows('duplicates') && (
                     <tr className="bg-brand-soft/30">
                       <td className="px-3 py-2">
-                        <span className="block font-medium">{result.combined.rules.length > 1 ? 'Match rule (AND / OR)' : 'All fields together'}</span>
+                        <span className="block font-medium">{ranMode === 'CUSTOM' ? 'Custom condition' : result.combined.rules.length > 1 ? 'Match rule (AND / OR)' : 'All fields together (AND)'}</span>
                         <span className="block text-[11px] text-ink-subtle">{ruleText(result.combined.rules)}</span>
                       </td>
                       <td className="px-3 py-2 text-ink-subtle">—</td>

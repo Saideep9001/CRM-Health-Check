@@ -82,9 +82,9 @@ def _norm(value: object, table: dict[str, str]) -> str:
 
 # ---------------------------------------------------------------- per-object cards
 #
-# Every chosen object gets four cards: Duplicates, Missing Key Fields, Data Standardization Issues and No Activity in
-# 6 Months. Accounts also get Accounts Without Open Opportunities; Opportunities get Closed Lost Without a Reason and
-# Opportunities Without Line Items (Accounts Without Contacts and Contact Roles are in Area 4). Lead, Account,
+# Every chosen object gets three cards: Duplicates, Missing Key Fields and Data Standardization Issues (No Activity in
+# 6 Months is in Area 3 for Leads and Area 5 for Opportunities). Accounts also get Accounts Without Open Opportunities;
+# Opportunities get Opportunities Without Line Items (Accounts Without Contacts and Contact Roles are in Area 4). Lead, Account,
 # Contact and Opportunity use the fields below; any other object uses every field people fill in.
 
 DUP_FIELDS: dict[str, tuple[str, ...]] = {
@@ -840,7 +840,7 @@ def _cards(ctx: Ctx, obj: str, *checks) -> None:
         ))
 
 
-CORE_CARDS = (duplicates_on_fields, missing_key_fields, data_standardization, no_recent_activity)
+CORE_CARDS = (duplicates_on_fields, missing_key_fields, data_standardization)  # No Activity in 6 Months isn't in Area 1
 
 
 def account_cards(ctx: Ctx) -> None:
@@ -855,8 +855,8 @@ def contact_cards(ctx: Ctx) -> None:
 
 def lead_cards(ctx: Ctx) -> None:
     ctx.selected("Lead")
-    # No Activity in 6 Months and Stale Leads are in Area 3 (Lead queues & assignment)
-    _cards(ctx, "Lead", duplicates_on_fields, missing_key_fields, data_standardization, leads_without_campaign)
+    # No Activity in 6 Months, Stale Leads and Campaign Association Gaps are in Area 3 (Lead queues & assignment)
+    _cards(ctx, "Lead", duplicates_on_fields, missing_key_fields, data_standardization)
 
 
 def opportunity_cards(ctx: Ctx) -> None:
@@ -1312,7 +1312,7 @@ def scorecard(ctx: Ctx) -> None:
         criteria=[
             *[(f"{ctx.label(o, plural=False)} score", f"{sc:.0f}% — Area 1: {half(a1)}, Area 2: {half(a2)}") for o, _, sc, a1, a2 in rows],
             ("Overall Data Quality score", f"{value:.0f}% — the average of the {len(rows)} objects" if rows else "Nothing scored yet"),
-            ("Area 1 cards", "Duplicates, Missing Key Fields, Data Standardization, No Activity in 6 Months and the object’s own cards "
+            ("Area 1 cards", "Duplicates, Missing Key Fields, Data Standardization and the object’s own cards "
              "(e.g. Accounts Without Open Opportunities), when Area 1 is checked in the same run."),
             ("Area 2 cards", "Unused & Low-Completion, Outdated, Look-alike and Empty Fields Others Depend On (All Fields isn’t scored)."),
         ],

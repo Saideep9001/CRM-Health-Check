@@ -110,12 +110,12 @@ def test_no_activity_records_take_another_period(client, sf):
     from datetime import date, timedelta
 
     connect(client)
-    aid = start(client, areas=("area-1",), objects=["Account"]).json()["id"]
-    base = f"{API}/assessments/{aid}/areas/area-1"
-    params = {"label": "No Activity in 6 Months (Accounts)", "object": "Account"}
+    aid = start(client, areas=("area-3",), objects=["Lead"]).json()["id"]  # No Activity in 6 Months is no longer in Area 1
+    base = f"{API}/assessments/{aid}/areas/area-3"
+    params = {"label": "No Activity in 6 Months (Leads)", "object": "Lead"}
     assert client.get(f"{base}/indicator-records", params={**params, "period": "90"}).status_code == 200
     q = sf.soql[-1]
-    assert "LastModifiedDate < LAST_N_DAYS:90" in q and "LAST_N_DAYS:180" not in q  # this fake Account has no activity date
+    assert "LastModifiedDate < LAST_N_DAYS:90" in q and "LAST_N_DAYS:180" not in q  # this fake Lead has no activity date
     assert client.get(f"{base}/indicator-records", params={**params, "period": "30"}).status_code == 200  # 1 month
     assert "LastModifiedDate < LAST_N_DAYS:30" in sf.soql[-1]
 
@@ -127,5 +127,5 @@ def test_no_activity_records_take_another_period(client, sf):
     later = (date.today() + timedelta(days=3)).isoformat()
     for bad in ("100", "range:2024-13-01:2024-12-01", "range:2024-03-01:2024-01-01", f"range:{later}:{later}", "range:2024-01-01:2024-02-01 OR Id != null"):
         assert client.get(f"{base}/indicator-records", params={**params, "period": bad}).status_code == 422, bad
-    other = {"label": "Missing Key Fields (Accounts)", "object": "Account", "period": "90"}
+    other = {"label": "Stuck Queue-Owned Leads", "object": "Lead", "period": "90"}  # a card without a period
     assert client.get(f"{base}/indicator-records", params=other).status_code == 422

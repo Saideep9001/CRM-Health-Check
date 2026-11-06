@@ -64,6 +64,9 @@ def test_and_or_match_rules():
     assert {g["matched_on"] for g in either["combined"]["groups"]} == {"Account Name + Account Phone", "Account Name + Billing State"}
     # a single field on its own has its own row, so there's no rule result
     assert field_check.check_fields(StubSF(rows), "Account", ["Name"], [["Name"]])["combined"] is None
+    # OR (an empty rule): each field's own duplicates only, nothing combined
+    each = field_check.check_fields(StubSF(rows), "Account", ["Name", "Phone"], [])
+    assert each["combined"] is None and all(f["duplicates"] for f in each["fields"])
 
 
 def test_unknown_fields_are_refused():
