@@ -303,7 +303,8 @@ def test_all_workflow_areas(client, sf):
     assert ind["Sales stage guidance gaps"] == 2  # no Path: both open stages unguided
     assert "Missing sales activities" not in ind  # removed: Reps with No Activities Logged Recently covers it
     assert ind["Reps with No Activities Logged Recently"] == 1  # Bob owns work but logged nothing
-    assert ind["Web-to-Lead issues"] == 1 and ind["Email template availability"] == 2 and ind["Activity capture gaps"] == 22
+    assert ind["Web-to-Lead issues"] == 1 and ind["Email template availability"] == 2
+    assert "Activity capture gaps" not in ind  # removed from Area 6
     assert ind["Missing validation rules"] == 3 and ind["Potential junk data"] == 6  # 2 opps + 3 leads + 1 account
     assert res["salesProcessScore"] == res["categories"][0]["score"] and res["categories"][0]["categoryId"] == "workflows"
 

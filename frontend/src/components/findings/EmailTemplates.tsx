@@ -57,8 +57,8 @@ export function EmailTemplates({ assessmentId }: { assessmentId: string }) {
             <thead className="sticky top-0 bg-surface text-xs text-ink-muted">
               <tr className="border-b border-line">
                 {/* the column filters sit beside their headings: a name search, and a Type pick */}
-                <th className="px-3 py-2 font-medium">
-                  <span className="flex flex-wrap items-center gap-2">
+                <th className="min-w-[22rem] px-3 py-2 font-medium">
+                  <span className="flex flex-nowrap items-center gap-2">
                     <span className="whitespace-nowrap">Email Template Name</span>
                     <input
                       type="search"
@@ -66,19 +66,19 @@ export function EmailTemplates({ assessmentId }: { assessmentId: string }) {
                       onChange={(e) => setNameFilter(e.target.value)}
                       placeholder="Search…"
                       aria-label="Search email template names"
-                      className={cx('input h-7 w-36 py-0 text-xs font-normal', nameFilter && 'border-brand')}
+                      className={cx('input h-7 w-40 shrink-0 py-0 text-xs font-normal', nameFilter && 'border-brand')}
                     />
                   </span>
                 </th>
                 <th className="px-3 py-2 font-medium">Description (what it’s for)</th>
-                <th className="px-3 py-2 font-medium">
-                  <span className="flex flex-wrap items-center gap-2">
-                    <span>Type</span>
+                <th className="min-w-[17rem] px-3 py-2 font-medium">
+                  <span className="flex flex-nowrap items-center gap-2">
+                    <span className="whitespace-nowrap">Type</span>
                     <select
                       value={typeFilter}
                       onChange={(e) => setTypeFilter(e.target.value)}
                       aria-label="Filter by type"
-                      className={cx('input h-7 w-auto max-w-[12rem] py-0 text-xs font-normal', typeFilter && 'border-brand')}
+                      className={cx('input h-7 w-48 shrink-0 py-0 text-xs font-normal', typeFilter && 'border-brand')}
                     >
                       <option value="">All</option>
                       {types.map((t) => (

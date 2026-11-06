@@ -1525,43 +1525,6 @@ def email_templates(ctx: Ctx) -> None:
         )
 
 
-def activity_capture(ctx: Ctx) -> None:
-    total = ctx.count("Opportunity", OPEN_OPPS)
-    cond = "(LastActivityDate = null OR LastActivityDate < LAST_N_DAYS:30)"
-    n = ctx.count("Opportunity", OPEN_OPPS, cond) if total else 0
-    score = rate_score(n / total, 0.6) if total else 100
-    ctx.metric(
-        "Activity capture gaps", n, "count", "lower-better", score,
-        how="Open Opportunities with no logged activity (tasks, calls, meetings) in the last 30 days.",
-        rule="100 when every open deal has recent activity, falling evenly to 0 when 60% of open deals have none.",
-        columns=["Name", "LastActivityDate", "StageName", "CloseDate", "Amount", "OwnerId"],
-        order="LastActivityDate",
-        criteria=[
-            ("Records checked", f"{total:,} open Opportunities"),
-            ("Field checked", "Last Activity Date (the latest task or event logged on the deal)"),
-            ("Gap", "No activity ever, or none in the last 30 days"),
-            ("What's counted", f"{n:,} of {total:,} open Opportunities ({pct(n, total):.0f}%) have no recent activity"),
-            ("Records listed", "Every such open Opportunity, oldest activity first (deals with no activity ever come last)"),
-        ],
-        records=("Opportunity", OPEN_OPPS, cond),
-    )
-    if n:
-        value = ctx.amount("Opportunity", OPEN_OPPS, cond)
-        ctx.finding(
-            name="Open deals with no recent activity",
-            records=("Opportunity", OPEN_OPPS, cond),
-            value=value,
-            score=score,
-            affected=n,
-            description=f"{n:,} of {total:,} open Opportunities ({pct(n, total):.0f}%) have no logged activity in the last 30 days{_worth(value)}.",
-            why="Either the deals are going cold, or emails and meetings aren’t being captured. Both hide risk.",
-            impact="Deals slip without warning and the forecast looks safer than it is.",
-            action="Turn on automatic activity capture, and review deals with no recent activity in pipeline meetings.",
-            obj="Opportunity",
-            url=ctx.list_url("Opportunity"),
-        )
-
-
 QUIET_LABEL = "Reps with No Activities Logged Recently"
 
 
@@ -1822,7 +1785,7 @@ AREAS = {
                contact_roles, orphaned_contacts, multiple_accounts, multi_deal_contacts],
     "area-5": [stuck_opportunities, missing_next_steps, opp_no_activity, opp_closed_lost_without_reason, overdue_close_dates,
                stage_guidance],
-    "area-6": [web_to_lead, email_templates, activity_capture, eac_health, quiet_reps],
+    "area-6": [web_to_lead, email_templates, eac_health, quiet_reps],
     "area-7": [validation_rules, required_field_gaps, junk_data, layout_usability],
 }
 
@@ -1848,7 +1811,6 @@ STEP_LABELS = {
     stage_guidance: "Checking sales stage guidance",
     web_to_lead: "Checking website leads",
     email_templates: "Checking email templates",
-    activity_capture: "Checking activity on open deals",
     eac_health: "Checking Einstein Activity Capture",
     quiet_reps: "Finding reps with no recent activity",
     validation_rules: "Reading validation rules",

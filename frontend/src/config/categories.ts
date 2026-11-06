@@ -127,7 +127,6 @@ export const DIAGNOSTIC_AREAS: DiagnosticArea[] = [
     indicators: [
       'Web-to-Lead issues',
       'Email template availability',
-      'Activity capture gaps',
       'Einstein Activity Capture (EAC) Health',
       'Reps with No Activities Logged Recently',
     ],
