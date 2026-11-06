@@ -883,3 +883,46 @@ def test_reps_with_no_activities_logged_recently(client, sf):
     assert "CreatedDate >= 2026-01-01T00:00:00Z AND CreatedDate < 2026-02-01T00:00:00Z" in q
     for bad in ({"from": "2026-02-01", "to": "2026-01-01"}, {"from": "2026-01-01"}, {"from": "2999-01-01", "to": "2999-01-02"}):
         assert client.get(f"{API}/assessments/{a['id']}/rep-activity", params=bad).status_code == 422
+
+
+def test_web_to_lead_period_and_history(client, sf, monkeypatch):
+    from datetime import date, timedelta
+    today = date.today()
+    records = FakeSalesOrg.records
+
+    def web_records(q):
+        if q.startswith("SELECT DAY_ONLY(CreatedDate) d, COUNT(Id) c FROM Lead"):  # 3 a week for 12 weeks, none lately
+            return [{"d": (today - timedelta(days=n)).isoformat(), "c": 1} for n in range(14, 14 + 84, 2)][:36]
+        if q.startswith("SELECT CALENDAR_YEAR(CreatedDate) y, CALENDAR_MONTH(CreatedDate) m, COUNT(Id) c FROM Lead"):
+            return [{"y": today.year, "m": today.month, "c": 4}]
+        if q.startswith("SELECT CreatedDate FROM Lead"):
+            return [{"CreatedDate": (today - timedelta(days=15)).isoformat() + "T09:00:00.000+0000"}]
+        return records(q)
+
+    monkeypatch.setattr(FakeSalesOrg, "records", staticmethod(web_records))
+    monkeypatch.setitem(DESCRIBE, "Lead", [*DESCRIBE["Lead"], _f("CreatedDate", type="datetime", sortable=True)])
+    connect(client)
+    a, res, _ = run(client)
+    base = f"{API}/assessments/{a['id']}/areas/area-6"
+    params = {"label": "Web-to-Lead issues", "object": "Lead"}
+    lead_q = lambda: next(q for q in reversed(sf.soql) if q.startswith("SELECT") and " FROM Lead WHERE" in q and "LeadSource IN" in q and "COUNT" not in q and "DAY_ONLY" not in q)  # noqa: E731
+    # any time (the default): every website lead, newest first, without the check's own 90 days
+    assert client.get(f"{base}/indicator-records", params=params).status_code == 200
+    q = lead_q()
+    assert "LeadSource IN (" in q and "LAST_N_DAYS:90" not in q and "ORDER BY CreatedDate DESC" in q
+    for period, cond in (("7", "CreatedDate = LAST_N_DAYS:7"), ("30", "CreatedDate = LAST_N_DAYS:30"),
+                         ("range:2026-01-01:2026-01-31", "CreatedDate >= 2026-01-01T00:00:00Z AND CreatedDate < 2026-02-01T00:00:00Z")):
+        assert client.get(f"{base}/indicator-records", params={**params, "period": period}).status_code == 200
+        assert cond in lead_q() and "LeadSource IN (" in lead_q()
+    assert client.get(f"{base}/indicator-records", params={**params, "period": "45"}).status_code == 422
+    # the history: none in the last 14 days, but some in the 12 weeks before: Stopped
+    h = client.get(f"{base}/web-lead-history")
+    assert h.status_code == 200, h.text
+    h = h.json()
+    assert (h["verdict"], h["tone"], h["last14"], h["last7"]) == ("Stopped", "bad", 0, 0)
+    assert h["expected14"] > 0 and "may be broken" in h["why"]
+    assert len(h["weeks"]) == 12 and h["weeks"][-1]["end"] == today.isoformat() and h["weeks"][-1]["count"] == 0
+    assert len(h["months"]) == 12 and h["months"][-1]["count"] == 4
+    assert h["lastCreated"] == (today - timedelta(days=15)).isoformat()
+    day_q = next(q for q in reversed(sf.soql) if q.startswith("SELECT DAY_ONLY"))
+    assert "LeadSource IN (" in day_q and "LAST_N_DAYS:90" not in day_q

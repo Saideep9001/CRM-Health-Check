@@ -23,6 +23,7 @@ import { dataApi, findingApi, indicatorApi } from '@/api/endpoints';
 import { useQuery } from '@tanstack/react-query';
 import { useFindingRecords, useIndicatorRecords, useRole, useUpdateFinding } from '@/api/queries';
 import { EacHealth } from './EacHealth';
+import { CreatedPeriod, WebLeadHealth } from './WebLeadHealth';
 import { RepActivity } from './RepActivity';
 import { SalesPaths } from './SalesPaths';
 import { SEVERITY_COLORS } from '@/components/charts/Charts';
@@ -343,6 +344,8 @@ function Records({
   const byStage =
     object === 'Opportunity' && (['Stuck Opportunities', 'Missing Next Steps', 'Opportunities with an Overdue Close Date'].includes(indicator?.label ?? '') || noActivity);
   const byQueue = stuckQueue || byRule || stale || byStage;
+  // Web-to-Lead: the website Leads' health from their history above the table, and a created-date period on it
+  const web = indicator?.label === 'Web-to-Lead issues';
   const [queueDays, setQueueDays] = useState(3);
   const [queue, setQueue] = useState<PickedQueue | undefined>();
   // Stale Leads: only one record type's Leads (undefined = all)
@@ -434,7 +437,8 @@ function Records({
           </p>
         )}
         {/* Area 3: the fields shown, and (Stuck Queue-Owned Leads) the days-in-queue threshold and the org's Lead queues, above the records */}
-        <div className={cx((byQueue || pickFields) && 'space-y-3')}>
+        <div className={cx((byQueue || pickFields || web) && 'space-y-3')}>
+        {web && <WebLeadHealth assessmentId={measureAssessmentId!} areaId={area.id} />}
         {pickFields && (
           <FieldPicker
             key={`${object}-${indicator!.label}`}
@@ -477,6 +481,7 @@ function Records({
           toolbar={
             noActivity ? <ActivityPeriod key={`${object}-${indicator!.label}`} onChange={setPeriod} />
               : stale ? <ActivityPeriod key={`${object}-${indicator!.label}`} onChange={setPeriod} own="30" what="No status change" />
+              : web ? <CreatedPeriod key={`${object}-${indicator!.label}`} onChange={setPeriod} />
                 : undefined
           }
           filters={filters}

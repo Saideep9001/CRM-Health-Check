@@ -1519,16 +1519,16 @@ def web_to_lead(ctx: Ctx) -> None:
         how=f"Leads with a website lead source ({', '.join(values[:3])}) created in the last 14 days, compared with the 11 weeks before. The number is 1 when website leads have stopped or never arrived.",
         rule="100 when website leads are still arriving, 25 when they stopped in the last 14 days after arriving before, and 70 when none arrived in the last 90 days. A problem is raised whenever website leads have stopped arriving.",
         columns=["Name", "Company", "LeadSource", "CreatedDate", "Status", "OwnerId"],
-        order="CreatedDate",
+        order="-CreatedDate",
         criteria=[
             ("Records checked", "All Leads (open or converted) created in the last 90 days"),
             ("Website sources", f"Lead Source is one of: {', '.join(map(str, values[:10]))}"),
             ("Last 14 days", f"{recent:,} website leads"),
             ("11 weeks before", f"{before:,} website leads"),
             ("Flagged when", "None in the last 14 days but some before (the web form may be broken), or none at all in 90 days"),
-            ("Records listed", "Website leads created in the last 90 days, newest last"),
+            ("Records listed", "Every website lead, newest first (pick a created-date period on the table)"),
         ],
-        records=("Lead", f"LeadSource IN ({in_list})", "CreatedDate = LAST_N_DAYS:90"),
+        records=("Lead", f"LeadSource IN ({in_list})"),
         recent=False,
     )
 

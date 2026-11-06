@@ -20,7 +20,7 @@ from ..engine import jobs
 from ..engine.core import in_list, soql_str
 from ..engine.runner import EXECUTABLE_AREA_IDS
 from ..models import AssessmentRow, FindingRow
-from ..salesforce import activity, assignment, eac, explorer, finder, paths, queues, rep_activity, service
+from ..salesforce import activity, assignment, eac, explorer, finder, paths, queues, rep_activity, service, web_leads
 from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
 from ..schemas import (
     FieldValues,
@@ -349,6 +349,8 @@ def finding_records_csv(
     return _records_csv(db, http, settings, org_id, row.records_object, row.records_where, row.name, filters=_filters(filters))
 
 
+WEB_LABEL = "Web-to-Lead issues"
+
 # Area 5 Opportunity cards whose records can be narrowed to one sales stage (the Stage chips above the table)
 STAGE_CARDS = {"Stuck Opportunities", "Missing Next Steps", "Opportunities with an Overdue Close Date"}
 
@@ -518,6 +520,12 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
         raise HTTPException(404, "This measure isn’t about specific records.")
     if _by_stage(label, rec):  # works on checks saved before the Stage chips too
         rec = {**rec, "by_stage": True}
+    if label == WEB_LABEL:  # Web-to-Lead: the website Leads created in the period picked (any time by default)
+        try:
+            rec = {**rec, "where": web_leads.created_in(rec.get("where"), period), "order": "-CreatedDate"}  # newest first
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
+        period = None
     if period:
         stale = rec.get("stale_days") is not None  # Stale Leads: its own days and basis, saved by the check
         if not (label.startswith("No Activity") or stale) or not rec.get("where"):
@@ -724,6 +732,23 @@ def indicator_record_types(
         return sorted(out, key=lambda t: (-t["count"], t["name"].lower()))
 
     return _salesforce(db, http, settings, load, org_id)
+
+
+@router.get("/assessments/{assessment_id}/areas/{area_id}/web-lead-history")
+def web_lead_history(
+    assessment_id: str,
+    area_id: str,
+    label: str = Query(WEB_LABEL, max_length=200),
+    db: Session = Depends(get_db),
+    http: httpx.Client = Depends(http_dep),
+    settings: Settings = Depends(settings_dep),
+) -> dict:
+    """Web-to-Lead: website Leads per week and per month, the latest one, and whether they're still arriving as usual
+    (Healthy, Slowing, Stopped or No web leads), read live from Salesforce."""
+    if label != WEB_LABEL:
+        raise HTTPException(422, "Only the Web-to-Lead measure has a lead history.")
+    rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, "Lead")
+    return _salesforce(db, http, settings, lambda sf: web_leads.history(sf, rec.get("where")), org_id)
 
 
 @router.get("/assessments/{assessment_id}/rep-activity")

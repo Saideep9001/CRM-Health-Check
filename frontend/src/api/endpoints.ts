@@ -266,8 +266,28 @@ export type RepActivityRep = {
   lastActivity: string | null;
 };
 
+/** Web-to-Lead: whether website Leads still arrive as usual, and their last 12 weeks and months (live from Salesforce). */
+export type WebLeadHistory = {
+  verdict: 'Healthy' | 'Slowing' | 'Stopped' | 'No web leads';
+  tone: 'good' | 'warn' | 'bad' | 'muted';
+  why: string;
+  last7: number;
+  last14: number;
+  expected14: number;
+  lastCreated: string | null;
+  weeks: { label: string; start: string; end: string; count: number }[];
+  months: { label: string; count: number }[];
+};
+
 /** The records one measure ("What we measure") counted, live from Salesforce. */
 export const indicatorApi = {
+  /** Web-to-Lead issues: the website Lead history and health. */
+  webLeadHistory: (assessmentId: string, areaId: string, signal?: AbortSignal) =>
+    http.get<WebLeadHistory>(
+      `/assessments/${encodeURIComponent(assessmentId)}/areas/${encodeURIComponent(areaId)}/web-lead-history`,
+      { label: 'Web-to-Lead issues' },
+      signal,
+    ),
   /** Reps with No Activities Logged Recently: each rep's Emails, Events and Tasks in the last `days` days. */
   /** `period`: a number of days (7, 14, 30, 90) or custom dates { from, to } (YYYY-MM-DD, both included). */
   repActivity: (assessmentId: string, period: number | { from: string; to: string }, signal?: AbortSignal) =>
