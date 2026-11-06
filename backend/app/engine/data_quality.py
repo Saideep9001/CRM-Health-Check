@@ -83,8 +83,8 @@ def _norm(value: object, table: dict[str, str]) -> str:
 # ---------------------------------------------------------------- per-object cards
 #
 # Every chosen object gets three cards: Duplicates, Missing Key Fields and Data Standardization Issues (No Activity in
-# 6 Months is in Area 3 for Leads and Area 5 for Opportunities). Accounts also get Accounts Without Open Opportunities;
-# Opportunities get Opportunities Without Line Items (Accounts Without Contacts and Contact Roles are in Area 4). Lead, Account,
+# 6 Months is in Area 3 for Leads and Area 5 for Opportunities). Accounts Without Contacts / Without Open Opportunities
+# and Contact Roles are in Area 4; Opportunities Without Line Items is in Area 5. Lead, Account,
 # Contact and Opportunity use the fields below; any other object uses every field people fill in.
 
 DUP_FIELDS: dict[str, tuple[str, ...]] = {
@@ -845,7 +845,7 @@ CORE_CARDS = (duplicates_on_fields, missing_key_fields, data_standardization)  #
 
 def account_cards(ctx: Ctx) -> None:
     ctx.selected("Account")
-    _cards(ctx, "Account", *CORE_CARDS, accounts_without_open_deals)  # Accounts Without Contacts is in Area 4
+    _cards(ctx, "Account", *CORE_CARDS)  # Accounts Without Contacts and Without Open Opportunities are in Area 4
 
 
 def contact_cards(ctx: Ctx) -> None:
@@ -862,7 +862,7 @@ def lead_cards(ctx: Ctx) -> None:
 def opportunity_cards(ctx: Ctx) -> None:
     ctx.selected("Opportunity")
     # No Activity in 6 Months and Closed Lost Without a Reason are in Area 5 (sales path & feedback loops)
-    _cards(ctx, "Opportunity", opportunity_duplicates, missing_key_fields, data_standardization, opportunities_without_line_items)
+    _cards(ctx, "Opportunity", opportunity_duplicates, missing_key_fields, data_standardization)  # Without Line Items is in Area 5
 
 
 def other_object_cards(ctx: Ctx) -> None:
@@ -1313,7 +1313,7 @@ def scorecard(ctx: Ctx) -> None:
             *[(f"{ctx.label(o, plural=False)} score", f"{sc:.0f}% — Area 1: {half(a1)}, Area 2: {half(a2)}") for o, _, sc, a1, a2 in rows],
             ("Overall Data Quality score", f"{value:.0f}% — the average of the {len(rows)} objects" if rows else "Nothing scored yet"),
             ("Area 1 cards", "Duplicates, Missing Key Fields, Data Standardization and the object’s own cards "
-             "(e.g. Accounts Without Open Opportunities), when Area 1 is checked in the same run."),
+             "(e.g. Opportunity duplicates on the same Account), when Area 1 is checked in the same run."),
             ("Area 2 cards", "Unused & Low-Completion, Outdated, Look-alike and Empty Fields Others Depend On (All Fields isn’t scored)."),
         ],
     )

@@ -290,7 +290,7 @@ def test_all_workflow_areas(client, sf):
     assert ind["Inactive Lead Assignment Rules"] == 1 and ind["Lead Assignment Criteria Mismatches"] == 2  # 1 Lead in an inactive queue
     rule_reads = [x for x in sf.soap if "<met:type>AssignmentRules</met:type>" in x]
     assert len(rule_reads) == 1 and "<fullNames>Lead</fullNames>" in rule_reads[0]  # read once for both cards
-    assert [i["label"] for i in areas["area-4"]["indicators"]] == ["Accounts Without Contacts", "Account Hierarchy Chains",  # Accounts first
+    assert [i["label"] for i in areas["area-4"]["indicators"]] == ["Accounts Without Contacts", "Accounts Without Open Opportunities", "Account Hierarchy Chains",  # Accounts first
                                                                    "Child Accounts Under Inactive Parents", "Possible Missing Parent Accounts",
                                                                    "Opportunities Without Contact Roles", "Orphaned Contacts",
                                                                    "Contacts to Multiple Accounts", "Multi-Deal Contacts"]

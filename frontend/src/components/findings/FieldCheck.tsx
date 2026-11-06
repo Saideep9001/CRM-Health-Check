@@ -357,9 +357,9 @@ export function FieldCheck({
           if (tellPage) onResult?.(r);
           onLiveResult?.(r);
           // the page's records table shows what was asked: the common duplicates (AND / Custom) or each field's own (OR)
-          if (tellPage && focus === 'duplicates' && onPickFields) {
+          if (focus === 'duplicates' && onPickFields) {
             if (how !== 'OR' && r.combined) onPickFields([ALL]);
-            else if (how === 'OR') onPickFields(r.fields.filter((f) => f.duplicates).map((f) => f.name));
+            else onPickFields(r.fields.filter((f) => f.duplicates).map((f) => f.name));
           }
           const kind = focus ?? 'empty';
           // open the field with the most to look at for this page (e.g. Account Phone's odd values)
@@ -382,9 +382,10 @@ export function FieldCheck({
     runWith(names, true, 'AND');
   };
   const andOr = shows('duplicates') && chosen.length > 1;
-  const pickMode = (m: MatchMode) => {
+  const pickMode = (m: MatchMode, rerun = false) => {
     setMode(m);
     if (m === 'CUSTOM' && !logic.trim()) setLogic(allAnd(chosen.length));
+    if (rerun && m !== 'CUSTOM') runWith(chosen, true, m); // Custom runs once the condition is applied
   };
   const parsed = mode === 'CUSTOM' && andOr ? parseLogic(logic, chosen.length) : null;
   const logicError = parsed && 'error' in parsed ? parsed.error : null;
@@ -525,58 +526,6 @@ export function FieldCheck({
               )}
             </div>
 
-            {andOr && (
-              <div className="space-y-2 rounded-lg border border-line px-4 py-3 text-xs">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-medium text-ink-muted">Duplicates when the fields match:</span>
-                  <span className="inline-flex overflow-hidden rounded-lg border border-line" role="radiogroup" aria-label="How the fields combine">
-                    {MODES.map((m) => (
-                      <button
-                        key={m.value}
-                        type="button"
-                        role="radio"
-                        aria-checked={mode === m.value}
-                        title={m.help}
-                        onClick={() => pickMode(m.value)}
-                        className={cx(
-                          'border-l border-line px-3 py-1 font-semibold transition first:border-l-0',
-                          mode === m.value ? 'bg-brand text-white' : 'bg-surface text-ink-muted hover:text-brand',
-                        )}
-                      >
-                        {m.label}
-                      </button>
-                    ))}
-                  </span>
-                  <span className="text-ink-subtle">{MODES.find((m) => m.value === mode)!.help}</span>
-                </div>
-                {mode === 'AND' && chosen.length > MAX_GROUP_FIELDS && (
-                  <p className="text-warn">Only the first {MAX_GROUP_FIELDS} fields are compared together.</p>
-                )}
-                {mode === 'CUSTOM' && (
-                  <div className="space-y-1">
-                    <label className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium text-ink-muted">Condition</span>
-                      <input
-                        className={cx('input h-8 w-72 font-mono text-xs', logicError && 'border-bad')}
-                        value={logic}
-                        onChange={(e) => setLogic(e.target.value)}
-                        placeholder="e.g. 1 AND (2 OR 3)"
-                        aria-label="Custom condition"
-                      />
-                    </label>
-                    {logicError ? (
-                      <p className="text-bad">{logicError}</p>
-                    ) : (
-                      parsed && 'groups' in parsed && (
-                        <p className="text-ink-subtle">
-                          Duplicates when: {ruleText(parsed.groups.map((g) => g.map((k) => label(chosen[k - 1]))))}
-                        </p>
-                      )
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
             {shows('duplicates') && presets.length > 0 && (
               <div className="flex flex-wrap items-center gap-1.5 text-xs">
                 <span className="mr-1 font-medium text-ink-muted">Duplicate checks:</span>
@@ -601,7 +550,7 @@ export function FieldCheck({
               </div>
             )}
             <div className="flex flex-wrap items-center gap-3">
-              <Button variant="primary" icon={<ListChecks className="h-4 w-4" />} disabled={!chosen.length || run.isPending || !!logicError} onClick={start}>
+              <Button variant="primary" icon={<ListChecks className="h-4 w-4" />} disabled={!chosen.length || run.isPending || (mode === 'CUSTOM' && !!logicError)} onClick={start}>
                 {run.isPending ? 'Checking…' : `Check ${chosen.length || ''} field${chosen.length === 1 ? '' : 's'}`.replace('  ', ' ')}
               </Button>
               {run.isPending && <span className="text-xs text-ink-muted">Reading up to 20,000 {what} and checking each field…</span>}
@@ -630,6 +579,62 @@ export function FieldCheck({
               )}
             </p>
             </div>
+              {andOr && result && (
+                <div className="space-y-2 rounded-lg border border-line px-4 py-3 text-xs">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium text-ink-muted">Duplicates when the fields match:</span>
+                    <span className="inline-flex overflow-hidden rounded-lg border border-line" role="radiogroup" aria-label="How the fields combine">
+                      {MODES.map((m) => (
+                        <button
+                          key={m.value}
+                          type="button"
+                          role="radio"
+                          aria-checked={mode === m.value}
+                          title={m.help}
+                          onClick={() => pickMode(m.value, true)}
+                          className={cx(
+                            'border-l border-line px-3 py-1 font-semibold transition first:border-l-0',
+                            mode === m.value ? 'bg-brand text-white' : 'bg-surface text-ink-muted hover:text-brand',
+                          )}
+                        >
+                          {m.label}
+                        </button>
+                      ))}
+                    </span>
+                    <span className="text-ink-subtle">{MODES.find((m) => m.value === mode)!.help}</span>
+                  </div>
+                  {mode === 'AND' && chosen.length > MAX_GROUP_FIELDS && (
+                    <p className="text-warn">Only the first {MAX_GROUP_FIELDS} fields are compared together.</p>
+                  )}
+                  {mode === 'CUSTOM' && (
+                    <div className="space-y-1">
+                      <label className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium text-ink-muted">Condition</span>
+                        <input
+                          className={cx('input h-8 w-72 font-mono text-xs', logicError && 'border-bad')}
+                          value={logic}
+                          onChange={(e) => setLogic(e.target.value)}
+                          placeholder="e.g. 1 AND (2 OR 3)"
+                          aria-label="Custom condition"
+                          onKeyDown={(e) => e.key === 'Enter' && !logicError && runWith(chosen, true, 'CUSTOM')}
+                        />
+                        <Button size="sm" variant="primary" disabled={!!logicError || run.isPending} onClick={() => runWith(chosen, true, 'CUSTOM')}>
+                          Apply
+                        </Button>
+                      </label>
+                      {logicError ? (
+                        <p className="text-bad">{logicError}</p>
+                      ) : (
+                        parsed && 'groups' in parsed && (
+                          <p className="text-ink-subtle">
+                            Duplicates when: {ruleText(parsed.groups.map((g) => g.map((k) => label(chosen[k - 1]))))}
+                          </p>
+                        )
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             <div className="scrollbar-thin overflow-auto rounded-xl border border-line">
               <table className={cx('w-full text-left text-sm', !focus && 'min-w-[640px]')}>
                 <thead className="bg-muted/50 text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">

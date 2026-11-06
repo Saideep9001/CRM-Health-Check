@@ -15,7 +15,8 @@ from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
 from .core import Ctx, FindingDraft, Unavailable, pct, rate_score
 from .core import in_list as soql_in
 from .core import soql_str
-from .data_quality import accounts_without_contacts, closed_lost_without_reason, leads_without_campaign, no_recent_activity, stale_leads
+from .data_quality import (accounts_without_contacts, accounts_without_open_deals, closed_lost_without_reason, leads_without_campaign,
+                           no_recent_activity, opportunities_without_line_items, stale_leads)
 
 OPEN_LEADS = "IsConverted = false"
 OPEN_OPPS = "IsClosed = false"
@@ -1786,10 +1787,10 @@ def layout_usability(ctx: Ctx) -> None:
 
 AREAS = {
     "area-3": [stuck_queue_leads, inactive_rules, criteria_mismatches, lead_no_activity, stale_leads, lead_campaign_gaps],
-    "area-4": [accounts_without_contacts, hierarchy_chains, inactive_parents, missing_parents,  # Accounts first, then Contacts
+    "area-4": [accounts_without_contacts, accounts_without_open_deals, hierarchy_chains, inactive_parents, missing_parents,  # Accounts first, then Contacts
                contact_roles, orphaned_contacts, multiple_accounts, multi_deal_contacts],
     "area-5": [stuck_opportunities, missing_next_steps, opp_no_activity, opp_closed_lost_without_reason, overdue_close_dates,
-               stage_guidance],
+               stage_guidance, opportunities_without_line_items],
     "area-6": [web_to_lead, email_templates, eac_health, quiet_reps],
     "area-7": [validation_rules, required_field_gaps, junk_data, layout_usability],
 }
@@ -1807,6 +1808,8 @@ STEP_LABELS = {
     multiple_accounts: "Checking Contacts to Multiple Accounts",
     multi_deal_contacts: "Finding Contacts on several deals",
     accounts_without_contacts: "Finding Accounts without Contacts",
+    accounts_without_open_deals: "Finding Accounts without open Opportunities",
+    opportunities_without_line_items: "Finding open deals without line items",
     hierarchy_chains: "Following Account hierarchies",
     inactive_parents: "Finding Accounts under inactive parents",
     missing_parents: "Looking for missing Parent Accounts",

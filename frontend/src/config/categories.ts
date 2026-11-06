@@ -19,7 +19,6 @@ export const DIAGNOSTIC_AREAS: DiagnosticArea[] = [
       'Duplicate Accounts',
       'Missing Key Fields (Accounts)',
       'Data Standardization Issues (Accounts)',
-      'Accounts Without Open Opportunities',
       'Duplicate Contacts',
       'Missing Key Fields (Contacts)',
       'Data Standardization Issues (Contacts)',
@@ -29,7 +28,6 @@ export const DIAGNOSTIC_AREAS: DiagnosticArea[] = [
       'Duplicate Opportunities',
       'Missing Key Fields (Opportunities)',
       'Data Standardization Issues (Opportunities)',
-      'Opportunities Without Line Items',
     ],
   },
   {
@@ -90,6 +88,7 @@ export const DIAGNOSTIC_AREAS: DiagnosticArea[] = [
       'Assess Account hierarchies and parent links, then Contact Roles on open Opportunities, Contacts with no Account, Contacts related to multiple Accounts, and Contacts on several deals.',
     indicators: [
       'Accounts Without Contacts',
+      'Accounts Without Open Opportunities',
       'Account Hierarchy Chains',
       'Child Accounts Under Inactive Parents',
       'Possible Missing Parent Accounts',
@@ -113,6 +112,7 @@ export const DIAGNOSTIC_AREAS: DiagnosticArea[] = [
       'Closed Lost Without a Reason (Opportunities)',
       'Opportunities with an Overdue Close Date',
       'Sales stage guidance gaps',
+      'Opportunities Without Line Items',
     ],
   },
   {

@@ -62,6 +62,8 @@ const GROUPS: Record<string, string> = {
   'Contacts to Multiple Accounts': 'Contacts',
   'Multi-Deal Contacts': 'Contacts',
   'Accounts Without Contacts': 'Accounts',
+  'Accounts Without Open Opportunities': 'Accounts',
+  'Opportunities Without Line Items': 'Opportunities',
   'Account Hierarchy Chains': 'Accounts',
   'Child Accounts Under Inactive Parents': 'Accounts',
   'Possible Missing Parent Accounts': 'Accounts',

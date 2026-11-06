@@ -125,6 +125,14 @@ function FieldsBehind({ indicator: v, object, flow }: { indicator: IndicatorValu
   );
 }
 
+/** The fields of Check fields' match rule (Account Name AND Email → Name, Email), by their column names. */
+const ruleFields = (check: FieldCheckResult) => {
+  const c = check.combined;
+  if (!c) return [];
+  const labels = new Set(c.rules.flat());
+  return c.columns.filter((col) => labels.has(col.label)).map((col) => col.name);
+};
+
 /** Several fields' duplicate groups from Check fields as one result (largest groups first). */
 function mergeDuplicates(check: FieldCheckResult, picked: string[]): DuplicateResult | null {
   const parts = [
@@ -422,11 +430,11 @@ function Records({
           </p>
         ) : dupResult ? (
           <div className="rounded-xl border border-line p-4">
-            <h4 className="mb-3 text-sm font-semibold">Duplicates on {dupResult.rules.map((r) => r.join(' + ')).join(' · ')}</h4>
+            <h4 className="mb-3 text-sm font-semibold">Duplicates on {dupResult.rules.map((r) => r.join(' AND ')).join(' OR ')}</h4>
             <DuplicateResults
               result={dupResult}
               fileName={`duplicate-${object!.toLowerCase()}s.csv`}
-              flag={dupPicked!.includes(ALL) ? null : dupPicked}
+              flag={dupPicked!.flatMap((f) => (f === ALL ? ruleFields(checkData!) : [f]))}
             />
           </div>
         ) : noneTicked ? (

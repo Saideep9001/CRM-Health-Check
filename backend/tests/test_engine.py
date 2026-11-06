@@ -137,11 +137,11 @@ def test_full_data_quality_run(client, sf):
     areas = {x["areaId"]: x for x in res["areas"]}
     ind = {i["label"]: i for i in areas["area-1"]["indicators"]}
     labels = [i["label"] for i in areas["area-1"]["indicators"]]
-    # Each object's cards together: Accounts get the three core cards plus one of their own (Accounts Without Contacts is in Area 4;
-    # No Activity in 6 Months isn't in Area 1).
-    assert labels[:4] == ["Duplicate Accounts", "Missing Key Fields (Accounts)", "Data Standardization Issues (Accounts)",
-                          "Accounts Without Open Opportunities"]
-    assert not any(label.startswith(("No Activity in 6 Months", "Campaign Association Gaps")) for label in labels)
+    # Each object's cards together: the three core cards (Accounts Without Contacts / Open Opportunities are in Area 4,
+    # Opportunities Without Line Items in Area 5, No Activity in 6 Months isn't in Area 1).
+    assert labels[:4] == ["Duplicate Accounts", "Missing Key Fields (Accounts)", "Data Standardization Issues (Accounts)", "Duplicate Contacts"]
+    assert not any(label.startswith(("No Activity in 6 Months", "Campaign Association Gaps", "Accounts Without", "Opportunities Without"))
+                   for label in labels)
     assert "Accounts Without Contacts" not in ind
     assert {"Duplicate Contacts", "Missing Key Fields (Contacts)", "Data Standardization Issues (Contacts)",
             "Duplicate Leads", "Missing Key Fields (Leads)", "Missing Key Fields (Opportunities)"} <= set(ind)
