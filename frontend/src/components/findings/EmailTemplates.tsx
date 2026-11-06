@@ -56,37 +56,42 @@ export function EmailTemplates({ assessmentId }: { assessmentId: string }) {
           <table className="w-full text-left text-sm">
             <thead className="sticky top-0 bg-surface text-xs text-ink-muted">
               <tr className="border-b border-line">
-                <th className="px-3 py-2 font-medium">Email Template Name</th>
+                {/* the column filters sit beside their headings: a name search, and a Type pick */}
+                <th className="px-3 py-2 font-medium">
+                  <span className="flex flex-wrap items-center gap-2">
+                    <span className="whitespace-nowrap">Email Template Name</span>
+                    <input
+                      type="search"
+                      value={nameFilter}
+                      onChange={(e) => setNameFilter(e.target.value)}
+                      placeholder="Search…"
+                      aria-label="Search email template names"
+                      className={cx('input h-7 w-36 py-0 text-xs font-normal', nameFilter && 'border-brand')}
+                    />
+                  </span>
+                </th>
                 <th className="px-3 py-2 font-medium">Description (what it’s for)</th>
-                <th className="px-3 py-2 font-medium">Type</th>
+                <th className="px-3 py-2 font-medium">
+                  <span className="flex flex-wrap items-center gap-2">
+                    <span>Type</span>
+                    <select
+                      value={typeFilter}
+                      onChange={(e) => setTypeFilter(e.target.value)}
+                      aria-label="Filter by type"
+                      className={cx('input h-7 w-auto max-w-[12rem] py-0 text-xs font-normal', typeFilter && 'border-brand')}
+                    >
+                      <option value="">All</option>
+                      {types.map((t) => (
+                        <option key={t} value={t}>
+                          {t} ({fmtNumber(d.templates.filter((x) => x.type === t).length)})
+                        </option>
+                      ))}
+                    </select>
+                  </span>
+                </th>
                 <th className="px-3 py-2 font-medium">Status</th>
                 <th className="px-3 py-2 text-right font-medium">Times used</th>
                 <th className="px-3 py-2 text-right font-medium">Usage %</th>
-              </tr>
-              {/* column filters */}
-              <tr className="border-b border-line">
-                <th className="px-3 pb-2 font-normal">
-                  <input
-                    type="search"
-                    value={nameFilter}
-                    onChange={(e) => setNameFilter(e.target.value)}
-                    placeholder="Filter by name…"
-                    aria-label="Filter by email template name"
-                    className="input h-7 w-full min-w-[10rem] py-0 text-xs"
-                  />
-                </th>
-                <th />
-                <th className="px-3 pb-2 font-normal">
-                  <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} aria-label="Filter by type" className="input h-7 w-auto py-0 text-xs">
-                    <option value="">All types</option>
-                    {types.map((t) => (
-                      <option key={t} value={t}>
-                        {t} ({fmtNumber(d.templates.filter((x) => x.type === t).length)})
-                      </option>
-                    ))}
-                  </select>
-                </th>
-                <th colSpan={3} />
               </tr>
             </thead>
             <tbody className="divide-y divide-line">
