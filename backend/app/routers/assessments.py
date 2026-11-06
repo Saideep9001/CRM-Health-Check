@@ -739,6 +739,7 @@ def web_lead_history(
     assessment_id: str,
     area_id: str,
     label: str = Query(WEB_LABEL, max_length=200),
+    year: int | None = Query(None, description="The chart's calendar year (none = the last 12 months)"),
     db: Session = Depends(get_db),
     http: httpx.Client = Depends(http_dep),
     settings: Settings = Depends(settings_dep),
@@ -748,7 +749,9 @@ def web_lead_history(
     if label != WEB_LABEL:
         raise HTTPException(422, "Only the Web-to-Lead measure has a lead history.")
     rec, org_id, _ = _indicator_records(db, assessment_id, area_id, label, "Lead")
-    return _salesforce(db, http, settings, lambda sf: web_leads.history(sf, rec.get("where")), org_id)
+    if year is not None and not 2000 <= year <= datetime.now(timezone.utc).year + 1:
+        raise HTTPException(422, "Pick a year from 2000 to this year.")
+    return _salesforce(db, http, settings, lambda sf: web_leads.history(sf, rec.get("where"), year=year), org_id)
 
 
 @router.get("/assessments/{assessment_id}/rep-activity")

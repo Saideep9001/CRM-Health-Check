@@ -924,5 +924,13 @@ def test_web_to_lead_period_and_history(client, sf, monkeypatch):
     assert len(h["weeks"]) == 12 and h["weeks"][-1]["end"] == today.isoformat() and h["weeks"][-1]["count"] == 0
     assert len(h["months"]) == 12 and h["months"][-1]["count"] == 4
     assert h["lastCreated"] == (today - timedelta(days=15)).isoformat()
+    assert h["year"] is None and h["years"][0] == today.year  # newest first
+    # one calendar year: January to December
+    y = client.get(f"{base}/web-lead-history", params={"year": today.year})
+    assert y.status_code == 200 and [m["label"] for m in y.json()["months"]][0] == f"Jan {today.year}"
+    assert len(y.json()["months"]) == 12 and y.json()["months"][today.month - 1]["count"] == 4
+    month_q = next(q for q in reversed(sf.soql) if q.startswith("SELECT CALENDAR_YEAR"))
+    assert f"CreatedDate >= {today.year}-01-01T00:00:00Z AND CreatedDate < {today.year + 1}-01-01T00:00:00Z" in month_q
+    assert client.get(f"{base}/web-lead-history", params={"year": 1990}).status_code == 422
     day_q = next(q for q in reversed(sf.soql) if q.startswith("SELECT DAY_ONLY"))
     assert "LeadSource IN (" in day_q and "LAST_N_DAYS:90" not in day_q

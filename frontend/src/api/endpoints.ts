@@ -277,15 +277,18 @@ export type WebLeadHistory = {
   lastCreated: string | null;
   weeks: { label: string; start: string; end: string; count: number }[];
   months: { label: string; count: number }[];
+  /** the chart's calendar year (null = the last 12 months), and the years with website Leads, newest first */
+  year: number | null;
+  years: number[];
 };
 
 /** The records one measure ("What we measure") counted, live from Salesforce. */
 export const indicatorApi = {
   /** Web-to-Lead issues: the website Lead history and health. */
-  webLeadHistory: (assessmentId: string, areaId: string, signal?: AbortSignal) =>
+  webLeadHistory: (assessmentId: string, areaId: string, signal?: AbortSignal, year?: number) =>
     http.get<WebLeadHistory>(
       `/assessments/${encodeURIComponent(assessmentId)}/areas/${encodeURIComponent(areaId)}/web-lead-history`,
-      { label: 'Web-to-Lead issues' },
+      { label: 'Web-to-Lead issues', year },
       signal,
     ),
   /** Reps with No Activities Logged Recently: each rep's Emails, Events and Tasks in the last `days` days. */

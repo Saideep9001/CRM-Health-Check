@@ -45,9 +45,12 @@ def _month_back(today: date, n: int) -> date:
     return date(y, m, 1)
 
 
-def history(sf: SalesforceClient, where: str | None, today: date | None = None) -> dict:
-    """Website Leads per week (last 12 weeks) and per month (last 12 months), the latest one, and the health verdict."""
+def history(sf: SalesforceClient, where: str | None, today: date | None = None, year: int | None = None) -> dict:
+    """Website Leads per week (last 12 weeks) and per month (the last 12 months, or January to December of `year`), the
+    years that have website Leads (for the year picker), the latest one, and the health verdict."""
     today = today or date.today()
+    if year is not None and not 2000 <= year <= today.year:
+        raise ValueError(f"Pick a year from 2000 to {today.year}.")
     w = base(where)
     cond = f"({w}) AND " if w else ""
     daily: dict[date, int] = {}
@@ -66,21 +69,25 @@ def history(sf: SalesforceClient, where: str | None, today: date | None = None) 
         start = end - timedelta(days=6)
         weeks.append({"label": f"{start.strftime('%d %b')} – {end.strftime('%d %b')}", "start": start.isoformat(), "end": end.isoformat(),
                       "count": in_days(7 * i, 7 * i + 6)})
-    first = _month_back(today, MONTHS - 1)
+    first = date(year, 1, 1) if year else _month_back(today, MONTHS - 1)
+    until = f" AND CreatedDate < {year + 1}-01-01T00:00:00Z" if year else ""
     monthly = {(int(r.get("y") or 0), int(r.get("m") or 0)): int(r.get("c") or 0) for r in sf.query(
         f"SELECT CALENDAR_YEAR(CreatedDate) y, CALENDAR_MONTH(CreatedDate) m, COUNT(Id) c FROM Lead WHERE {cond}"
-        f"CreatedDate >= {first.isoformat()}T00:00:00Z GROUP BY CALENDAR_YEAR(CreatedDate), CALENDAR_MONTH(CreatedDate)").get("records", [])}
+        f"CreatedDate >= {first.isoformat()}T00:00:00Z{until} GROUP BY CALENDAR_YEAR(CreatedDate), CALENDAR_MONTH(CreatedDate)").get("records", [])}
     months = []
-    for i in reversed(range(MONTHS)):
-        m = _month_back(today, i)
+    for i in range(12) if year else reversed(range(MONTHS)):
+        m = date(year, i + 1, 1) if year else _month_back(today, i)
         months.append({"label": m.strftime("%b %Y"), "count": monthly.get((m.year, m.month), 0)})
+    earliest = sf.query(f"SELECT CreatedDate FROM Lead{' WHERE ' + w if w else ''} ORDER BY CreatedDate ASC LIMIT 1").get("records", [])
+    since = int((earliest[0].get("CreatedDate") or str(today.year))[:4]) if earliest else today.year
+    years = list(range(today.year, max(2000, min(since, today.year)) - 1, -1))  # newest first
     latest = sf.query(f"SELECT CreatedDate FROM Lead{' WHERE ' + w if w else ''} ORDER BY CreatedDate DESC LIMIT 1").get("records", [])
     last = (latest[0].get("CreatedDate") or "")[:10] or None if latest else None
     recent = in_days(0, 13)
     before = in_days(14, 14 + 7 * WEEKS - 1)  # the 12 weeks before the last 14 days
     expected = round(before / (7 * WEEKS) * 14, 1)
-    year = sum(x["count"] for x in months)
-    if not year and not recent and not before:
+    in_chart = sum(x["count"] for x in months)
+    if not in_chart and not recent and not before and not year:
         verdict, tone = "No web leads", "muted"
         why = "No website Leads in the last 12 months. If your website has a form, it may not be connected to Salesforce."
     elif not recent and before:
@@ -93,4 +100,4 @@ def history(sf: SalesforceClient, where: str | None, today: date | None = None) 
         verdict, tone = "Healthy", "good"
         why = (f"{recent:,} website Leads in the last 14 days" + (f", in line with the usual {expected:g} (from the 12 weeks before)." if before else "."))
     return {"verdict": verdict, "tone": tone, "why": why, "last14": recent, "expected14": expected,
-            "last7": in_days(0, 6), "lastCreated": last, "weeks": weeks, "months": months}
+            "last7": in_days(0, 6), "lastCreated": last, "weeks": weeks, "months": months, "year": year, "years": years}

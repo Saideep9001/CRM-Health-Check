@@ -77,11 +77,14 @@ const TONES = {
 } as const;
 
 /** Bars for counts over time (oldest first), each labelled under it, with the count on hover and above the bar. */
-function Bars({ title, items, bar }: { title: string; items: { label: string; count: number }[]; bar: string }) {
+function Bars({ title, items, bar, action }: { title: string; items: { label: string; count: number }[]; bar: string; action?: React.ReactNode }) {
   const max = Math.max(1, ...items.map((i) => i.count));
   return (
     <div>
-      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">{title}</p>
+      <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">{title}</p>
+        {action}
+      </div>
       <div className="flex h-28 items-end gap-1">
         {items.map((i) => (
           <div key={i.label} className="flex min-w-0 flex-1 flex-col items-center justify-end gap-0.5" title={`${i.label}: ${i.count}`}>
@@ -104,10 +107,13 @@ function Bars({ title, items, bar }: { title: string; items: { label: string; co
 /** Web-to-Lead health: whether website Leads are still arriving as usual (from their history), with the last 12 weeks and
  *  12 months of website Leads, read live from Salesforce. */
 export function WebLeadHealth({ assessmentId, areaId }: { assessmentId: string; areaId: string }) {
+  // the chart's calendar year (undefined = the last 12 months)
+  const [year, setYear] = useState<number | undefined>();
   const data = useQuery({
-    queryKey: ['web-lead-history', assessmentId, areaId],
-    queryFn: ({ signal }) => indicatorApi.webLeadHistory(assessmentId, areaId, signal),
+    queryKey: ['web-lead-history', assessmentId, areaId, year],
+    queryFn: ({ signal }) => indicatorApi.webLeadHistory(assessmentId, areaId, signal, year),
     staleTime: 60_000,
+    placeholderData: (prev) => prev, // keep the chart while another year loads
   });
   if (data.isLoading) return <p className="text-sm text-ink-subtle">Reading the website Lead history from Salesforce…</p>;
   if (data.error) return <p className="rounded-lg bg-bad-soft/50 px-4 py-3 text-sm text-bad">Couldn’t read the website Lead history: {(data.error as Error).message}</p>;
@@ -140,7 +146,26 @@ export function WebLeadHealth({ assessmentId, areaId }: { assessmentId: string; 
           ))}
         </div>
       </div>
-      <Bars title="Website Leads per month (last 12 months)" items={h.months} bar={t.bar} />
+      <Bars
+        title={year ? `Website Leads per month (${year})` : 'Website Leads per month (last 12 months)'}
+        items={h.months}
+        bar={t.bar}
+        action={
+          <select
+            className="input h-7 w-auto py-0 text-xs"
+            value={year ?? ''}
+            onChange={(e) => setYear(e.target.value ? Number(e.target.value) : undefined)}
+            aria-label="Year"
+          >
+            <option value="">Last 12 months</option>
+            {(h.years ?? []).map((y) => (
+              <option key={y} value={y}>
+                {y}
+              </option>
+            ))}
+          </select>
+        }
+      />
     </div>
   );
 }
