@@ -365,7 +365,8 @@ export function FieldCheck({
           // open the field with the most to look at for this page (e.g. Account Phone's odd values)
           const count = (f: FieldCheckField) => (kind === 'empty' ? f.empty : kind === 'duplicates' ? (f.duplicates?.extraCopies ?? 0) : (f.standardization?.oddRecords ?? 0));
           const most = [...r.fields].sort((a, b) => count(b) - count(a))[0];
-          setPick({ field: kind === 'duplicates' && r.combined?.extraCopies ? ALL : (most ?? r.fields[0]).name, kind });
+          // AND / Custom: the rule's result, even with no duplicates (never one field's own groups instead)
+          setPick({ field: kind === 'duplicates' && how !== 'OR' && r.combined ? ALL : (most ?? r.fields[0]).name, kind });
         },
       },
     );
@@ -473,27 +474,7 @@ export function FieldCheck({
                   </div>
                 )}
               </div>
-              {chosen.length > 0 ? (
-                <div className={cx('flex flex-wrap items-center gap-1 text-xs text-ink-muted', listOpen ? 'mb-2' : 'mt-2 pl-8')}>
-                  <span className="mr-1">Checking:</span>
-                  {chosen.map((f, i) => (
-                    <span key={f} className="inline-flex items-center gap-1">
-                      {i > 0 && andOr && mode !== 'CUSTOM' && (
-                        <span className={cx('px-0.5 text-[10px] font-bold', mode === 'OR' ? 'text-warn' : 'text-brand')}>{mode}</span>
-                      )}
-                      <span className="inline-flex items-center gap-1 rounded-full border border-line bg-surface px-2 py-0.5 font-medium text-ink">
-                        {andOr && mode === 'CUSTOM' && (
-                          <span className="grid h-4 min-w-4 place-items-center rounded-full bg-brand px-1 text-[10px] font-bold text-white">{i + 1}</span>
-                        )}
-                        {label(f)}
-                      </span>
-                    </span>
-                  ))}
-                  <button type="button" className="ml-2 text-brand hover:underline" onClick={() => (setChosen([]), setLogic(''), setListOpen(true))}>Clear</button>
-                </div>
-              ) : (
-                !listOpen && <p className="mt-2 pl-8 text-xs text-ink-subtle">No fields picked yet. Open the list to choose some.</p>
-              )}
+              {chosen.length === 0 && !listOpen && <p className="mt-2 pl-8 text-xs text-ink-subtle">No fields picked yet. Open the list to choose some.</p>}
               {listOpen && (
               <div className="scrollbar-thin grid max-h-64 gap-1.5 overflow-y-auto sm:grid-cols-2 lg:grid-cols-3">
                 {fieldList.map((f) => {
@@ -622,7 +603,15 @@ export function FieldCheck({
                           Apply
                         </Button>
                       </label>
-                      {logicError ? (
+                      <p className="flex flex-wrap gap-x-3 gap-y-1 text-ink-muted">
+                      {chosen.map((f, i) => (
+                        <span key={f} className="inline-flex items-center gap-1">
+                          <span className="grid h-4 min-w-4 place-items-center rounded-full bg-brand px-1 text-[10px] font-bold text-white">{i + 1}</span>
+                          {label(f)}
+                        </span>
+                      ))}
+                    </p>
+                    {logicError ? (
                         <p className="text-bad">{logicError}</p>
                       ) : (
                         parsed && 'groups' in parsed && (
@@ -707,7 +696,8 @@ export function FieldCheck({
             </div>
             </div>
 
-            {pick && !inRecords(pick.field, pick.kind) && (
+            {/* one table: on a page with a records table, duplicates are only shown there */}
+            {pick && !inRecords(pick.field, pick.kind) && !(onPickFields && pick.kind === 'duplicates') && (
               <div className="rounded-xl border border-line p-4">
                 <h4 className="mb-3 text-sm font-semibold">
                   {pick.field === ALL

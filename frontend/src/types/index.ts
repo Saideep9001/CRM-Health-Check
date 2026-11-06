@@ -186,6 +186,8 @@ export interface FieldCheckResult {
   /** Duplicates on all chosen fields together (when more than one was chosen). */
   combined: DuplicateResult | null;
   recordUrlPrefix: string;
+  /** Set in the browser: how the fields were combined for this run (AND / Custom = only the rule's duplicates, OR = each field's). */
+  matchMode?: 'AND' | 'OR' | 'CUSTOM';
 }
 
 /** Records whose chosen fields are empty. */
