@@ -1700,8 +1700,7 @@ def required_field_gaps(ctx: Ctx) -> None:
 JUNK_LIST = ("test", "testing", "na", "n/a", "tbd", "tba", "none", "-", "--", ".", "..", "...", "x", "xx", "xxx", "asdf", "abc", "123",
              "null", "nil", "?", "unknown", "not provided", "[not provided]", "dummy", "sample", "temp", "aaa", "zzz")
 _JUNK = set(JUNK_LIST)
-_JUNK_IN = "(" + ", ".join("'" + v.replace("'", "\\'") + "'" for v in JUNK_LIST) + ")"  # SOQL = ignores case
-JUNK_MAX_ROWS = 1_000_000  # Opportunities read for Description (a long text field can't be filtered in a query)
+JUNK_MAX_ROWS = 1_000_000  # open Opportunities read for Description (a long text field can't be filtered in a query)
 
 
 def _is_junk(v: object) -> bool:
@@ -1716,49 +1715,36 @@ def junk_data(ctx: Ctx) -> None:
         fields = ctx.fields("Opportunity")
         cols = [c for c in ("NextStep", "Description") if c in fields]
         if cols:
-            # every Opportunity, open or closed (Description can't be filtered in a query, so each one is read)
-            recs = ctx.rows(f"SELECT Id, {', '.join(cols)} FROM Opportunity", limit=JUNK_MAX_ROWS)
+            # every open Opportunity (Description can't be filtered in a query, so each one is read)
+            recs = ctx.rows(f"SELECT Id, {', '.join(cols)} FROM Opportunity WHERE {OPEN_OPPS}", limit=JUNK_MAX_ROWS)
             checked += len(recs)
             bad = [r for r in recs if any(_is_junk(r.get(c)) for c in cols)]
             total_junk += len(bad)
             if bad:
-                found.append(f"{len(bad):,} Opportunities (Next Step / Description)")
-    for obj, fld in (("Lead", "Company"), ("Contact", "LastName"), ("Account", "Name")):
-        if ctx.has_field(obj, fld, "groupable"):
-            # every record: Salesforce counts the placeholder values itself, so nothing is missed however many records there are
-            groups = ctx.groups(obj, fld, f"{fld} IN {_JUNK_IN}")
-            bad = [(v, c) for v, c in groups if _is_junk(v)]
-            n = sum(c for _, c in bad)
-            checked += ctx.count(obj)
-            total_junk += n
-            if n:
-                found.append(f"{n:,} {obj}s ({fld} like {', '.join(f'“{v}”' for v, _ in bad[:3])})")
+                found.append(f"{len(bad):,} open Opportunities (Next Step / Description)")
     score = rate_score(total_junk / checked, 0.1) if checked else 100
     ctx.metric(
         "Potential junk data", total_junk, "count", "lower-better", score,
-        how="Records that hold placeholder values instead of real data.",
-        rule="100 when no checked record holds a placeholder. It falls evenly to 0 when 10% of them do.",
+        how="Open Opportunities that hold placeholder values instead of real data in Next Step or Description.",
+        rule="100 when no open Opportunity holds a placeholder. It falls evenly to 0 when 10% of them do.",
         criteria=[
-            ("Opportunity", "Next Step, Description: all"),
-            ("Lead", "Company: all"),
-            ("Contact", "Last Name: all"),
-            ("Account", "Name: all"),
+            ("Opportunity", "Next Step, Description: all open deals"),
             ("What counts as junk", "The whole value, ignoring case and spaces, is a placeholder. The list is: " + ", ".join(JUNK_LIST) + "."),
             ("Problem raised", "“Placeholder or junk values”, raised when the score is below 95."),
             ("Why it matters", "Junk usually means a required field is getting in people’s way, and it makes reports and searches unreliable."),
             ("Recommended fix", "Clean the values up. Then ask users which required fields they fill with junk, and fix that rule or layout."),
-            ("What's counted", f"{total_junk:,} of {checked:,} records checked hold a placeholder" + (f": {'; '.join(found)}" if found else "")),
+            ("What's counted", f"{total_junk:,} of {checked:,} open Opportunities hold a placeholder" + (f": {'; '.join(found)}" if found else "")),
         ],
     )
     ctx.finding(
         name="Placeholder or junk values",
         score=score,
         affected=total_junk,
-        description=f"{total_junk:,} records contain placeholder values like “test”, “na”, or “tbd”: " + "; ".join(found) + ".",
+        description=f"{total_junk:,} open Opportunities contain placeholder values like “test”, “na”, or “tbd”: " + "; ".join(found) + ".",
         why="Junk usually means a required field is getting in people’s way, and it makes reports and searches unreliable.",
         impact="Misleading reports and wasted time cleaning up.",
         action="Clean the values up. Then ask users which required fields they fill with junk, and fix that rule or layout.",
-        obj=None,  # spans several objects
+        obj="Opportunity",
         min_score=95,
     )
 

@@ -305,17 +305,16 @@ def test_all_workflow_areas(client, sf):
     assert ind["Reps with No Activities Logged Recently"] == 1  # Bob owns work but logged nothing
     assert ind["Web-to-Lead issues"] == 1 and ind["Email template availability"] == 2
     assert "Activity capture gaps" not in ind  # removed from Area 6
-    assert ind["Missing validation rules"] == 3 and ind["Potential junk data"] == 6  # 2 opps + 3 leads + 1 account
+    assert ind["Missing validation rules"] == 3 and ind["Potential junk data"] == 2  # 2 open opps (only open Opportunities are checked)
     assert res["salesProcessScore"] == res["categories"][0]["score"] and res["categories"][0]["categoryId"] == "workflows"
 
     assert not any("unexpected error" in (x["message"] or "") for x in res["areas"]), res["areas"]
     names = {f["name"]: f for f in findings}
     assert "Placeholder or junk values" in names
-    # junk data looks at every record: all Opportunities (no 2,000 limit, open or closed), and Salesforce counts the placeholders on the rest
+    # junk data looks at every open Opportunity (no 2,000 limit), and no other object
     opp = next(q for q in sf.soql if q.startswith("SELECT Id, NextStep, Description FROM Opportunity"))
-    assert "LIMIT" not in opp and "IsClosed" not in opp
-    lead = next(q for q in sf.soql if q.startswith("SELECT Company v, COUNT(Id) c FROM Lead"))
-    assert "Company IN ('test', 'testing'" in lead and "IsConverted" not in lead
+    assert "LIMIT" not in opp and "IsClosed = false" in opp
+    assert not any(q.startswith(("SELECT Company v", "SELECT LastName v", "SELECT Name v")) for q in sf.soql)
     assert "Website leads have stopped arriving" in names and names["Website leads have stopped arriving"]["severity"] == "critical"
     assert "Reps with no logged activity" not in names
     assert names["Leads with no assignment path"]["description"] == ("1 open Leads match no entry of the active Lead Assignment Rule “Standard” and "
