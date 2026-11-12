@@ -1696,8 +1696,10 @@ def required_field_gaps(ctx: Ctx) -> None:
         )
 
 
-_JUNK = {"test", "testing", "na", "n/a", "tbd", "tba", "none", "-", "--", ".", "..", "...", "x", "xx", "xxx", "asdf", "abc", "123",
-         "null", "nil", "?", "unknown", "[not provided]", "not provided", "dummy", "sample", "temp", "aaa", "zzz"}
+# Placeholder values, in the order the card lists them.
+JUNK_LIST = ("test", "testing", "na", "n/a", "tbd", "tba", "none", "-", "--", ".", "..", "...", "x", "xx", "xxx", "asdf", "abc", "123",
+             "null", "nil", "?", "unknown", "not provided", "[not provided]", "dummy", "sample", "temp", "aaa", "zzz")
+_JUNK = set(JUNK_LIST)
 
 
 def _is_junk(v: object) -> bool:
@@ -1730,13 +1732,18 @@ def junk_data(ctx: Ctx) -> None:
     score = rate_score(total_junk / checked, 0.1) if checked else 100
     ctx.metric(
         "Potential junk data", total_junk, "count", "lower-better", score,
-        how="Records with placeholder values like “test”, “na” or “tbd”: in Next Step or Description on the 2,000 most recently changed open Opportunities, Company on open Leads, Last Name on Contacts, and Name on Accounts.",
-        rule="100 when no checked records hold placeholder values, falling evenly to 0 when 10% of them do.",
+        how="Records that hold placeholder values instead of real data.",
+        rule="100 when no checked record holds a placeholder. It falls evenly to 0 when 10% of them do.",
         criteria=[
-            ("Records checked", f"{checked:,} records: the 2,000 most recently changed open Opportunities, plus open Leads, Contacts and Accounts"),
-            ("Fields checked", "Opportunity Next Step and Description, Lead Company, Contact Last Name, Account Name"),
-            ("Junk value", "The whole value (ignoring case and spaces) is a placeholder like test, na, n/a, tbd, none, -, x, asdf, 123, unknown, dummy, sample, temp"),
-            ("What's counted", f"{total_junk:,} records with a placeholder" + (f": {'; '.join(found)}" if found else "")),
+            ("Opportunity", "Next Step, Description: the 2,000 most recently changed open deals"),
+            ("Lead", "Company: open Leads"),
+            ("Contact", "Last Name: all"),
+            ("Account", "Name: all"),
+            ("What counts as junk", "The whole value, ignoring case and spaces, is a placeholder. The list is: " + ", ".join(JUNK_LIST) + "."),
+            ("Problem raised", "“Placeholder or junk values”, raised when the score is below 95."),
+            ("Why it matters", "Junk usually means a required field is getting in people’s way, and it makes reports and searches unreliable."),
+            ("Recommended fix", "Clean the values up. Then ask users which required fields they fill with junk, and fix that rule or layout."),
+            ("What's counted", f"{total_junk:,} of {checked:,} records checked hold a placeholder" + (f": {'; '.join(found)}" if found else "")),
         ],
     )
     ctx.finding(
@@ -1744,9 +1751,9 @@ def junk_data(ctx: Ctx) -> None:
         score=score,
         affected=total_junk,
         description=f"{total_junk:,} records contain placeholder values like “test”, “na”, or “tbd”: " + "; ".join(found) + ".",
-        why="Junk values usually mean a required field is getting in people’s way, and they make reports and searches unreliable.",
+        why="Junk usually means a required field is getting in people’s way, and it makes reports and searches unreliable.",
         impact="Misleading reports and wasted time cleaning up.",
-        action="Clean these values up, then ask users which required fields they fill with junk — and fix the rule or layout behind it.",
+        action="Clean the values up. Then ask users which required fields they fill with junk, and fix that rule or layout.",
         obj=None,  # spans several objects
         min_score=95,
     )
