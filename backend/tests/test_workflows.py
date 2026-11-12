@@ -229,6 +229,8 @@ class FakeSalesOrg(FakeSalesforce):
             return [{"Name": "Old Lead", "CreatedDate": "2026-01-01T00:00:00.000+0000"}]
         if q.startswith("SELECT Name, StageName"):
             return [{"Name": "Big Deal", "StageName": "Proposal", "Amount": 90000}]
+        if "Id IN ('006000000000001AAA', '006000000000002AAA')" in q:  # Potential junk data's records table
+            return [{"Id": "006000000000001AAA", "Name": "Deal A", "NextStep": "tbd"}, {"Id": "006000000000002AAA", "Name": "Deal B", "Description": "test"}]
         if q.startswith("SELECT Id, NextStep, Description FROM Opportunity"):
             return [{"Id": "006000000000001AAA", "NextStep": "tbd"}, {"Id": "006000000000002AAA", "Description": "test"},
                     {"Id": "006000000000003AAA", "NextStep": "Call Monday", "Description": "Real notes"}]
@@ -322,6 +324,11 @@ def test_all_workflow_areas(client, sf):
     assert client.get(f"{API}/findings/{junk['id']}/records").status_code == 200
     q = sf.soql[-1]
     assert "FROM Opportunity" in q and "Id IN ('006000000000001AAA', '006000000000002AAA')" in q and "IsClosed = false" in q
+    # the junk values themselves are marked red, with why (Next Step "tbd" on one, Description "test" on the other)
+    page = client.get(f"{API}/assessments/{a['id']}/areas/area-7/indicator-records", params={"label": "Potential junk data", "object": "Opportunity"})
+    assert page.status_code == 200
+    assert page.json()["cellNotes"] == {"006000000000001AAA": {"NextStep": "Placeholder value “tbd”"},
+                                        "006000000000002AAA": {"Description": "Placeholder value “test”"}}
     assert "Website leads have stopped arriving" in names and names["Website leads have stopped arriving"]["severity"] == "critical"
     assert "Reps with no logged activity" not in names
     assert names["Leads with no assignment path"]["description"] == ("1 open Leads match no entry of the active Lead Assignment Rule “Standard” and "

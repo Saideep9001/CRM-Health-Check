@@ -1716,6 +1716,7 @@ def junk_data(ctx: Ctx) -> None:
     checked = 0
     total_junk = 0
     bad_ids: list[str] = []
+    notes: dict[str, dict[str, str]] = {}  # record id -> field -> why its value is junk (shown in red in the records table)
     if ctx.has_object("Opportunity"):
         fields = ctx.fields("Opportunity")
         cols = [c for c in ("NextStep", "Description") if c in fields]
@@ -1726,12 +1727,15 @@ def junk_data(ctx: Ctx) -> None:
             bad = [r for r in recs if any(_is_junk(r.get(c)) for c in cols)]
             total_junk += len(bad)
             bad_ids = [r["Id"] for r in bad if r.get("Id")]
+            for r in bad[:JUNK_SHOWN]:
+                if r.get("Id"):
+                    notes[r["Id"]] = {c: f"Placeholder value “{str(r[c]).strip()}”" for c in cols if _is_junk(r.get(c))}
             if bad:
                 found.append(f"{len(bad):,} open Opportunities (Next Step / Description)")
     score = rate_score(total_junk / checked, 0.1) if checked else 100
     # the records behind the number: the open Opportunities found above, by Id
     records = ("Opportunity", OPEN_OPPS, ctx.ids_in(bad_ids, limit=JUNK_SHOWN))
-    ctx.metric(
+    m = ctx.metric(
         "Potential junk data", total_junk, "count", "lower-better", score,
         records=records, recent=False, columns=JUNK_COLUMNS, order="Name",
         how="Open Opportunities that hold placeholder values instead of real data in Next Step or Description.",
@@ -1746,6 +1750,8 @@ def junk_data(ctx: Ctx) -> None:
              + (f". The records table lists the first {JUNK_SHOWN:,}" if total_junk > JUNK_SHOWN else "")),
         ],
     )
+    if m.records and notes:  # the junk value itself is marked in red, with why
+        m.records[0]["notes"] = notes
     ctx.finding(
         name="Placeholder or junk values",
         score=score,
