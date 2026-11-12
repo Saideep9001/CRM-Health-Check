@@ -1,0 +1,291 @@
+"""Required field gaps: every active rule that makes a field required or stops a save on Accounts, Contacts, Leads and
+Opportunities, and the existing records that don't meet them.
+
+Rules read (only active or currently applied ones):
+- Required on the field: fields Salesforce itself requires (standard required fields, and custom fields marked Required).
+- Page layouts: fields marked Required on a layout, applied to the records of the record types that layout is assigned to.
+- Validation rules: each active rule's error condition formula, worked out for every record (see sf_formula).
+- Apex triggers: active before insert / before update triggers (and the handler classes they call) that stop a save with
+  addError when a field is empty. Read from the code, so these are a best guess.
+"""
+from __future__ import annotations
+
+import re
+import xml.etree.ElementTree as ET
+from dataclasses import dataclass, field
+from urllib.parse import quote, unquote
+
+from ..salesforce import assignment
+from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
+from .core import Ctx, Unavailable
+from .sf_formula import Formula, Unsupported, get_path
+
+MASTER_RT = "012000000000000AAA"  # the master record type (records with no record type)
+MAX_ROWS = 500_000  # records read per object
+SHOWN = 2000  # failing records listed per object (picked by Id)
+_NS = assignment.NS
+
+
+@dataclass
+class Rule:
+    kind: str  # "field" | "layout" | "validation" | "trigger"
+    name: str  # what people see: the layout, rule or trigger name
+    fields: list[str]  # the fields it marks (red in the records table)
+    message: str = ""  # validation rule error message
+    formula: Formula | None = None
+    record_types: set[str | None] | None = None  # layouts: the record types it applies to (None = every record)
+    broken: int = 0
+
+    def describe(self) -> str:
+        return {"field": "Required on the field", "layout": f"Page layout “{self.name}”", "validation": f"Validation rule “{self.name}”",
+                "trigger": f"Apex trigger “{self.name}”"}[self.kind]
+
+
+@dataclass
+class ObjectCheck:
+    obj: str
+    rules: list[Rule] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)  # rules that couldn't be checked, with why
+    notes_read: list[str] = field(default_factory=list)  # setup that couldn't be read
+    checked: int = 0
+    capped: bool = False
+    bad_ids: list[str] = field(default_factory=list)
+    notes: dict[str, dict[str, str]] = field(default_factory=dict)  # record id -> field -> why (first SHOWN records)
+
+
+def _read(ctx: Ctx, kind: str, names: list[str]) -> list[ET.Element]:
+    """Metadata API records of one type (10 names per call); raises Unavailable when it can't be read."""
+    read = getattr(ctx.sf, "read_metadata", None)
+    if read is None:
+        raise Unavailable("The Metadata API isn’t available.")
+    out: list[ET.Element] = []
+    try:
+        for i in range(0, len(names), 10):
+            xml = read(kind, [quote(n, safe=" -_.") for n in names[i:i + 10]])
+            out += list(ET.fromstring(xml).iter(f"{{{_NS['m']}}}records"))
+    except SalesforceAuthExpired:
+        raise
+    except (SalesforceError, ET.ParseError) as exc:
+        raise Unavailable(str(exc)) from None
+    return out
+
+
+def _rt(value: object) -> str | None:
+    v = str(value or "")
+    return None if not v or v.startswith(MASTER_RT[:15]) else v[:15]
+
+
+def field_rules(ctx: Ctx, obj: str, fields: dict[str, dict]) -> list[Rule]:
+    """Fields Salesforce requires on every record: not nillable, set by people (not defaulted or calculated)."""
+    names = [n for n, f in fields.items()
+             if not f.get("nillable", True) and f.get("createable", True) and not f.get("defaultedOnCreate") and not f.get("calculated")
+             and f.get("type") not in ("boolean", "id")]
+    return [Rule("field", ("Custom required field" if fields[n].get("custom") else "Standard required field") + f" {fields[n].get('label') or n}", [n])
+            for n in names]
+
+
+def layout_rules(ctx: Ctx, obj: str, fields: dict[str, dict], check: ObjectCheck) -> list[Rule]:
+    """Fields marked Required on each page layout, for the record types the layout is assigned to."""
+    try:
+        rows = ctx.setup(f"SELECT Id, Name, NamespacePrefix FROM Layout WHERE TableEnumOrId = '{obj}'")
+    except Unavailable:
+        check.notes_read.append("page layouts")
+        return []
+    full = {f"{obj}-" + (f"{r['NamespacePrefix']}__" if r.get("NamespacePrefix") else "") + r["Name"]: r for r in rows if r.get("Name")}
+    if not full:
+        return []
+    try:
+        recs = _read(ctx, "Layout", sorted(full))
+    except Unavailable:
+        check.notes_read.append("page layouts")
+        return []
+    # which record types each layout is used for (any profile); unreadable = every record
+    used: dict[str, set[str | None]] | None = {}
+    try:
+        for a in ctx.setup(f"SELECT LayoutId, RecordTypeId FROM ProfileLayout WHERE TableEnumOrId = '{obj}'"):
+            used.setdefault(str(a.get("LayoutId") or "")[:15], set()).add(_rt(a.get("RecordTypeId")))
+    except Unavailable:
+        used = None
+    has_rt = "RecordTypeId" in fields
+    out: list[Rule] = []
+    for rec in recs:
+        name = unquote(rec.findtext("m:fullName", "", _NS))
+        req = []
+        for item in rec.iter(f"{{{_NS['m']}}}layoutItems"):
+            if (item.findtext("m:behavior", "", _NS) or "") != "Required":
+                continue
+            f = item.findtext("m:field", "", _NS) or ""
+            if f == "Name" and obj in ("Contact", "Lead"):
+                f = "LastName"  # the Name compound field: Last Name is the required part
+            meta = fields.get(f)
+            if meta and meta.get("nillable", True) and meta.get("updateable", True) and f not in req:
+                req.append(f)  # not already required everywhere
+        if not req:
+            continue
+        row = full.get(name) or {}
+        types = None
+        if used is not None and has_rt:
+            types = used.get(str(row.get("Id") or "")[:15], set())
+            if not types:
+                continue  # assigned to nobody: it never applies
+        out.append(Rule("layout", name.removeprefix(f"{obj}-"), req, record_types=types))
+    return out
+
+
+def validation_rules(ctx: Ctx, obj: str, fields: dict[str, dict], check: ObjectCheck) -> list[Rule]:
+    """Each active validation rule with its error condition formula."""
+    try:
+        rows = [r for r in ctx.setup(f"SELECT Id, ValidationName, NamespacePrefix, Active, ErrorMessage FROM ValidationRule "
+                                     f"WHERE EntityDefinition.QualifiedApiName = '{obj}'") if r.get("Active")]
+    except Unavailable:
+        check.notes_read.append("validation rules")
+        return []
+    if not rows:
+        return []
+    names = {f"{obj}." + (f"{r['NamespacePrefix']}__" if r.get("NamespacePrefix") else "") + r["ValidationName"]: r for r in rows}
+    try:
+        recs = {unquote(e.findtext("m:fullName", "", _NS)): e for e in _read(ctx, "ValidationRule", sorted(names))}
+    except Unavailable:
+        check.notes_read.append("validation rule formulas")
+        check.skipped += [f"Validation rule “{r['ValidationName']}”: its formula couldn’t be read" for r in rows]
+        return []
+    out: list[Rule] = []
+    for full, row in names.items():
+        label = row["ValidationName"]
+        e = recs.get(full)
+        text = e.findtext("m:errorConditionFormula", "", _NS) if e is not None else ""
+        if not text:
+            check.skipped.append(f"Validation rule “{label}”: its formula couldn’t be read")
+            continue
+        try:
+            formula = Formula(text)
+        except (Unsupported, RecursionError) as exc:
+            check.skipped.append(f"Validation rule “{label}”: {exc}")
+            continue
+        shown = e.findtext("m:errorDisplayField", "", _NS) if e is not None else ""
+        own = [p for p in formula.fields if "." not in p and p in fields]
+        marks = [shown] if shown in fields else own[:3] or ["Name"]
+        out.append(Rule("validation", label, marks, message=(row.get("ErrorMessage") or "").strip(), formula=formula))
+    return out
+
+
+_NULL_CHECKS = (
+    re.compile(r"\b\w+\.(\w+)\s*==\s*null\b"),
+    re.compile(r"\bnull\s*==\s*\w+\.(\w+)\b"),
+    re.compile(r"\bString\s*\.\s*is(?:Blank|Empty)\s*\(\s*\w+\.(\w+)\s*\)", re.I),
+    re.compile(r"\b\w+\.(\w+)\s*==\s*''"),
+    re.compile(r"\.get\(\s*'(\w+)'\s*\)\s*==\s*null"),
+)
+
+
+def _empty_checks(code: str, fields: dict[str, dict]) -> list[str]:
+    """Fields the code tests for empty, in code that stops the save with addError."""
+    if "adderror" not in code.lower():
+        return []
+    code = re.sub(r"/\*.*?\*/|//[^\n]*", " ", code, flags=re.S)
+    lower = {n.lower(): n for n in fields}
+    out: list[str] = []
+    for pat in _NULL_CHECKS:
+        for m in pat.finditer(code):
+            f = lower.get(m.group(1).lower())
+            if f and f not in out and fields[f].get("nillable", True):
+                out.append(f)
+    return out
+
+
+def trigger_rules(ctx: Ctx, obj: str, fields: dict[str, dict], check: ObjectCheck) -> list[Rule]:
+    """Active before insert / before update triggers that stop a save when a field is empty (with their handler classes)."""
+    try:
+        rows = ctx.setup(f"SELECT Id, Name, Status, UsageBeforeInsert, UsageBeforeUpdate, Body FROM ApexTrigger WHERE TableEnumOrId = '{obj}'")
+    except Unavailable:
+        check.notes_read.append("Apex triggers")
+        return []
+    out: list[Rule] = []
+    for t in rows:
+        if t.get("Status") != "Active" or not (t.get("UsageBeforeInsert") or t.get("UsageBeforeUpdate")):
+            continue
+        body = t.get("Body") or ""
+        found = _empty_checks(body, fields)
+        # handler classes the trigger calls (Handler.method(...) or new Handler(...))
+        classes = sorted({m for m in re.findall(r"\bnew\s+(\w+)\s*\(|\b(\w+)\s*\.\s*\w+\s*\(", body) for m in m if m} - {"Trigger", "System", "String", "Database"})
+        if classes:
+            try:
+                for c in ctx.setup("SELECT Name, Body FROM ApexClass WHERE Name IN (" + ", ".join(f"'{n}'" for n in classes[:50]) + ")"):
+                    found += [f for f in _empty_checks(c.get("Body") or "", fields) if f not in found]
+            except Unavailable:
+                pass
+        if found:
+            out.append(Rule("trigger", t.get("Name") or "trigger", found))
+    return out
+
+
+def _reason(rule: Rule, value_empty: bool) -> str:
+    if rule.kind == "validation":
+        return f"Breaks validation rule “{rule.name}”" + (f": {rule.message}" if rule.message else "")
+    if rule.kind == "layout":
+        return f"Empty, but required on page layout “{rule.name}”"
+    if rule.kind == "trigger":
+        return f"Empty, but Apex trigger “{rule.name}” requires it (read from its code)"
+    return "Empty, but Salesforce requires this field"
+
+
+def check_object(ctx: Ctx, obj: str, base: str | None = None) -> ObjectCheck:
+    """Collect `obj`'s rules and check its records (those matching `base`) against them."""
+    check = ObjectCheck(obj)
+    fields = ctx.fields(obj)
+    check.rules = (field_rules(ctx, obj, fields) + layout_rules(ctx, obj, fields, check)
+                   + validation_rules(ctx, obj, fields, check) + trigger_rules(ctx, obj, fields, check))
+    if not check.rules:
+        return check
+    simple = sorted({f for r in check.rules if r.kind != "validation" for f in r.fields})
+    extra = ["RecordTypeId"] if "RecordTypeId" in fields else []
+    # the fields every rule reads; a validation rule whose fields can't be queried is set aside
+    def soql(rules: list[Rule]) -> str:
+        cols = list(dict.fromkeys(["Id", *extra, *simple, *(p for r in rules if r.formula for p in r.formula.fields)]))
+        return f"SELECT {', '.join(cols)} FROM {obj}" + (f" WHERE {base}" if base else "")
+
+    vrules = [r for r in check.rules if r.kind == "validation"]
+    try:
+        rows = ctx.rows(soql(vrules), limit=MAX_ROWS)
+    except SalesforceAuthExpired:
+        raise
+    except SalesforceError:
+        ok = []
+        for r in vrules:
+            try:
+                ctx.rows(soql([r]) + (" AND" if base else " WHERE") + " Id = null", limit=1)
+                ok.append(r)
+            except SalesforceAuthExpired:
+                raise
+            except SalesforceError:
+                check.skipped.append(f"Validation rule “{r.name}”: a field it uses can’t be read")
+        check.rules = [r for r in check.rules if r.kind != "validation" or r in ok]
+        rows = ctx.rows(soql(ok), limit=MAX_ROWS)
+    check.checked = len(rows)
+    check.capped = len(rows) >= MAX_ROWS
+    for rec in rows:
+        why: dict[str, str] = {}
+        rt = _rt(rec.get("RecordTypeId")) if extra else None
+        for r in check.rules:
+            if r.kind == "validation":
+                try:
+                    bad = r.formula(rec)  # type: ignore[misc]
+                except Exception:  # noqa: BLE001 - a value the evaluator can't handle: not counted against the record
+                    bad = False
+                if bad:
+                    r.broken += 1
+                    for f in r.fields:
+                        why[f] = "; ".join(filter(None, [why.get(f), _reason(r, False)]))
+                continue
+            if r.record_types is not None and rt not in r.record_types:
+                continue
+            empty = [f for f in r.fields if get_path(rec, f) in (None, "")]
+            if empty:
+                r.broken += 1
+                for f in empty:
+                    why[f] = "; ".join(filter(None, [why.get(f), _reason(r, True)]))
+        if why and rec.get("Id"):
+            check.bad_ids.append(rec["Id"])
+            if len(check.notes) < SHOWN:
+                check.notes[rec["Id"]] = why
+    return check

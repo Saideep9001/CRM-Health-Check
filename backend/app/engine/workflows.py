@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from urllib.parse import quote, unquote
 
 from ..salesforce import assignment, eac, queues, rep_activity
+from . import required_rules
 from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
 from .core import Ctx, FindingDraft, Unavailable, pct, rate_score
 from .core import in_list as soql_in
@@ -55,7 +56,6 @@ SETTING_FIX = {
     'Few email templates for the sales team': '/lightning/o/EmailTemplate/home',
     'Key objects with no validation rules': '/lightning/setup/ObjectManager/home',
     'Unclear validation error messages': '/lightning/setup/ObjectManager/home',
-    'Important fields that are optional and often empty': '/lightning/setup/ObjectManager/home',
     'Crowded or fragmented page layouts': '/lightning/setup/ObjectManager/home',
 }
 
@@ -1646,53 +1646,91 @@ def validation_rules(ctx: Ctx) -> None:
         )
 
 
-REQUIRED_CANDIDATES = {
-    "Opportunity": ("Amount", "NextStep", "LeadSource", "Type"),
-    "Lead": ("Email", "Phone", "LeadSource"),
-    "Contact": ("Email", "AccountId"),
-    "Account": ("Industry", "Phone", "Type"),
-}
-BASE = {"Lead": (OPEN_LEADS,), "Opportunity": (OPEN_OPPS,)}
+REQUIRED_BASE = {"Lead": "IsConverted = false"}  # converted Leads can't be edited, so they can't break a rule any more
+_KIND_LABEL = {"field": "required on the field", "layout": "page layouts", "validation": "validation rules", "trigger": "Apex triggers"}
+
+
+def _rules_text(c: "required_rules.ObjectCheck") -> str:
+    """One object's rules for the card: what each kind requires."""
+    parts = []
+    req = [f for r in c.rules if r.kind == "field" for f in r.fields]
+    parts.append(f"Required on the field: {', '.join(req[:10]) + (' …' if len(req) > 10 else '')}" if req else "No fields required on the field itself")
+    lay = [r for r in c.rules if r.kind == "layout"]
+    parts.append("Page layouts: " + "; ".join(f"{r.name} ({', '.join(r.fields[:6])})" for r in lay[:5]) if lay else "No fields required on page layouts")
+    val = [r for r in c.rules if r.kind == "validation"]
+    skipped = [s for s in c.skipped if s.startswith("Validation rule")]
+    parts.append(f"{len(val) + len(skipped)} active validation rule(s)" + (f", {len(skipped)} not checked" if skipped else ""))
+    trig = [r for r in c.rules if r.kind == "trigger"]
+    parts.append("Apex triggers: " + "; ".join(f"{r.name} ({', '.join(r.fields[:5])})" for r in trig[:5]) if trig else "No before-save Apex trigger requiring a field")
+    if c.notes_read:
+        parts.append("Couldn’t read: " + ", ".join(c.notes_read))
+    return ". ".join(parts)
 
 
 def required_field_gaps(ctx: Ctx) -> None:
-    gaps: list[str] = []
-    checked = 0
-    for obj, names in REQUIRED_CANDIDATES.items():
+    checks: list[required_rules.ObjectCheck] = []
+    for i, obj in enumerate(CORE):
         if not ctx.has_object(obj):
             continue
-        fields = ctx.fields(obj)
-        total = ctx.count(obj, *BASE.get(obj, ()))
-        if not total:
-            continue
-        for name in names:
-            f = fields.get(name)
-            if not f or not f.get("filterable") or not f.get("nillable", True):
-                continue  # missing, or already required
-            checked += 1
-            filled = 100 - pct(ctx.count(obj, *BASE.get(obj, ()), f"{name} = null"), total)
-            if filled < 80:
-                gaps.append(f"{obj}.{f.get('label') or name} ({filled:.0f}% filled)")
-    score = rate_score(len(gaps) / checked, 0.6) if checked else 100
-    ctx.metric(
-        "Required field gaps", len(gaps), "count", "lower-better", score,
-        how=f"Key fields that aren’t required (like Amount and Next Step on open Opportunities, Email and Phone on open Leads, Email and Account on Contacts, Industry and Type on Accounts) and are filled in on less than 80% of records. We checked {checked} fields.",
-        rule="100 when none of the checked fields are under 80% filled, falling evenly to 0 when 60% of them are.",
+        checks.append(required_rules.check_object(ctx, obj, REQUIRED_BASE.get(obj)))
+        ctx.tick((i + 1) / len(CORE))
+    checked = sum(c.checked for c in checks)
+    bad = sum(len(c.bad_ids) for c in checks)
+    score = rate_score(bad / checked, 0.2) if checked else 100
+    failing = [c for c in checks if c.bad_ids]
+    records = [(c.obj, *((REQUIRED_BASE[c.obj],) if c.obj in REQUIRED_BASE else ()), ctx.ids_in(c.bad_ids, limit=required_rules.SHOWN))
+               for c in failing]
+    # the fields that break most often come first in the table, after the name
+    counts: dict[str, int] = {}
+    for c in failing:
+        for why in c.notes.values():
+            for f in why:
+                counts[f] = counts.get(f, 0) + 1
+    columns = ["Name", *sorted(counts, key=lambda f: -counts[f])[:8], "RecordTypeId", "OwnerId"]
+    top = sorted(((r.broken, c.obj, r) for c in checks for r in c.rules if r.broken), key=lambda x: -x[0])[:8]
+    skipped = [f"{c.obj}: {s}" for c in checks for s in c.skipped]
+    m = ctx.metric(
+        "Required field gaps", bad, "count", "lower-better", score,
+        records=records or None, recent=False, columns=list(dict.fromkeys(columns)), order="Name",
+        how="Records on Accounts, Contacts, Leads and Opportunities that don’t meet the org’s own active rules: fields required on the "
+            "field, on page layouts, by validation rules or by Apex triggers. Each of these records would fail if someone saved it today.",
+        rule="100 when every record meets the rules. It falls evenly to 0 when 20% of the records checked break at least one.",
         criteria=[
-            ("Fields checked", "Opportunity: Amount, Next Step, Lead Source, Type (open deals). Lead: Email, Phone, Lead Source (open Leads). "
-             "Contact: Email, Account. Account: Industry, Phone, Type"),
-            ("Skipped", "Fields that are missing, can't be filtered, or are already required"),
-            ("Gap", "The field is filled in on less than 80% of records"),
-            ("What's counted", f"{len(gaps)} of {checked} fields checked" + (f": {', '.join(gaps[:8])}" if gaps else "")),
+            ("Objects checked", "Account, Contact, Lead (not converted), Opportunity: every record"),
+            *[(f"{c.obj} rules", _rules_text(c)) for c in checks],
+            ("Required on the field", "Standard fields Salesforce always requires, and custom fields marked Required"),
+            ("Page layouts", "Fields marked Required on a layout, checked on the records of the record types that layout is assigned to"),
+            ("Validation rules", "Each active rule’s error condition is worked out for every record; a record breaks it when the condition is true. "
+             "ISNEW() and ISCHANGED() count as false (an existing record saved again)"),
+            ("Apex triggers", "Active before insert / before update triggers, and the classes they call, that stop the save with addError "
+             "when a field is empty. Read from the code, so a best guess"),
+            ("Not checked", "; ".join(skipped[:8]) + (" …" if len(skipped) > 8 else "") if skipped else "Nothing: every active rule was checked"),
+            ("Most broken", "; ".join(f"{obj} {r.describe()[0].lower() + r.describe()[1:]}: {n:,} record(s)" for n, obj, r in top) if top else "None"),
+            ("What's counted", f"{bad:,} of {checked:,} records break at least one rule"
+             + (": " + ", ".join(f"{c.obj} {len(c.bad_ids):,}" for c in failing) if failing else "")
+             + "".join(f". {c.obj}: the first {required_rules.MAX_ROWS:,} records were read" for c in checks if c.capped)
+             + (f". The records table lists the first {required_rules.SHOWN:,} per object" if any(len(c.bad_ids) > required_rules.SHOWN for c in failing) else "")),
         ],
     )
-    if gaps:
-        _setting(
-            ctx,
-            "Important fields that are optional and often empty",
-            f"{len(gaps)} key fields aren’t required and are often left blank: {', '.join(gaps[:8])}.",
-            "Make the most important ones required — on the page layout, with Dynamic Forms, or with a validation rule at the right stage — so they get filled in as work happens.",
-            severity="medium" if len(gaps) >= 3 else "low",
+    for spec, c in zip(m.records or [], failing):  # each broken value in red, with the rule it breaks
+        spec["notes"] = c.notes
+    if failing:
+        worst = max(failing, key=lambda c: len(c.bad_ids))
+        ctx.finding(
+            name="Records that break required-field rules",
+            score=score,
+            affected=bad,
+            description=f"{bad:,} records don’t meet the org’s own required-field and validation rules ("
+                        + ", ".join(f"{c.obj} {len(c.bad_ids):,}" for c in failing) + "). They fail the next time someone edits them.",
+            why="People get blocked by errors on records they didn’t create, and reports miss the values the rules were meant to guarantee.",
+            impact="Stalled edits, workarounds with junk values, and unreliable reports.",
+            action="Fill in the missing values (start with the most broken rules), and review rules that most records break: they may be "
+                   "out of date or need a condition so they only apply when relevant.",
+            obj=worst.obj,
+            records=records[failing.index(worst)],
+            recent=False,
+            min_score=95,
+            fix=f"/lightning/o/{worst.obj}/list",
         )
 
 
@@ -1811,6 +1849,7 @@ def junk_data(ctx: Ctx) -> None:
         records=records,
         recent=False,
         min_score=95,
+        fix="/lightning/o/Opportunity/list",  # Fix it in Salesforce: the Opportunities, to clean up Next Step and Description
     )
 
 
@@ -1885,7 +1924,7 @@ STEP_LABELS = {
     eac_health: "Checking Einstein Activity Capture",
     quiet_reps: "Finding reps with no recent activity",
     validation_rules: "Reading validation rules",
-    required_field_gaps: "Checking required fields",
+    required_field_gaps: "Checking records against required-field rules",
     junk_data: "Looking for junk values",
     layout_usability: "Reviewing page layouts",
 }

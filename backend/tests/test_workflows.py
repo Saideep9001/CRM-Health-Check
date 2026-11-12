@@ -63,6 +63,11 @@ LAYOUT_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <records xsi:type="Layout"><fullName>Opportunity-Sales %28Marketing%29 Layout</fullName>
  <relatedLists><relatedList>RelatedNoteList</relatedList></relatedLists></records>
 </result></readMetadataResponse></soapenv:Body></soapenv:Envelope>"""
+# Required field gaps: the Opportunity validation rule's formula (Metadata API)
+VR_XML = """<?xml version="1.0" encoding="UTF-8"?><soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+xmlns="http://soap.sforce.com/2006/04/metadata"><soapenv:Body><readMetadataResponse><result>
+<records><fullName>Opportunity.Amount_Required</fullName><errorConditionFormula>ISPICKVAL(StageName, "Proposal") &amp;&amp; ISBLANK(Amount)</errorConditionFormula>
+<errorDisplayField>Amount</errorDisplayField></records></result></readMetadataResponse></soapenv:Body></soapenv:Envelope>"""
 # Contact Roles on open deals: Pat is on two (Multi-Deal Contacts), Sam on one.
 ROLES = [
     {"ContactId": "003000000000001", "Role": "Influencer", "Opportunity": {"Name": "Acme Renewal"}},
@@ -158,7 +163,7 @@ class FakeSalesOrg(FakeSalesforce):
         if url.path.startswith("/services/Soap/m/"):
             self.soap.append(request.content.decode())
             xml = (LAYOUT_XML if "<met:type>Layout</met:type>" in self.soap[-1] else EAC_XML if "<met:type>EACSettings</met:type>" in self.soap[-1]
-                   else self.rules_xml)
+                   else VR_XML if "<met:type>ValidationRule</met:type>" in self.soap[-1] else self.rules_xml)
             return httpx.Response(200, text=xml, headers={"Content-Type": "text/xml"})
         if url.path.endswith("/sobjects"):
             return httpx.Response(200, json={"sobjects": [{"name": n, "label": n, "labelPlural": n + "s", "queryable": True, "retrieveable": True,
@@ -235,6 +240,11 @@ class FakeSalesOrg(FakeSalesforce):
                     {"Id": "006000000000005AAA", "Name": "Deal E", "NextStep": "tdt"}]
             lists = re.findall(r"Id IN \(([^)]*)\)", q)  # every Id list must hold the record (the measure's, and a narrowing)
             return [r for r in junk if all(f"'{r['Id']}'" in ids for ids in lists)]
+        if q.startswith("SELECT Id, StageName, Amount FROM Opportunity"):  # Required field gaps: every Opportunity, for its validation rule
+            return [{"Id": "006000000000007AAA", "StageName": "Proposal", "Amount": None}, {"Id": "006000000000008AAA", "StageName": "Proposal", "Amount": 5},
+                    {"Id": "006000000000009AAA", "StageName": "Prospecting", "Amount": None}]
+        if "Id IN ('006000000000007AAA')" in q:
+            return [{"Id": "006000000000007AAA", "Name": "Deal G", "StageName": "Proposal", "Amount": None}]
         if q.startswith("SELECT Id, NextStep, Description FROM Opportunity"):
             return [{"Id": "006000000000001AAA", "NextStep": "tbd"}, {"Id": "006000000000002AAA", "Description": "test"},
                     {"Id": "006000000000003AAA", "NextStep": "Call Monday", "Description": "Real notes"},
@@ -314,6 +324,7 @@ def test_all_workflow_areas(client, sf):
     assert ind["Reps with No Activities Logged Recently"] == 1  # Bob owns work but logged nothing
     assert ind["Web-to-Lead issues"] == 1 and ind["Email template availability"] == 2
     assert "Activity capture gaps" not in ind  # removed from Area 6
+    assert ind["Required field gaps"] == 1  # one Proposal deal with no Amount breaks the Amount_Required validation rule
     assert ind["Missing validation rules"] == 3 and ind["Potential junk data"] == 4  # 4 open opps (only open Opportunities are checked)
     assert res["salesProcessScore"] == res["categories"][0]["score"] and res["categories"][0]["categoryId"] == "workflows"
 
@@ -325,8 +336,14 @@ def test_all_workflow_areas(client, sf):
     assert "LIMIT" not in opp and "IsClosed = false" in opp
     assert not any(q.startswith(("SELECT Company v", "SELECT LastName v", "SELECT Name v")) for q in sf.soql)
     # its records table lists exactly the open Opportunities with a placeholder, by Id
+    gaps = names["Records that break required-field rules"]
+    assert gaps["affectedRecords"] == 1 and gaps["fixUrl"].endswith("/lightning/o/Opportunity/list")
+    page = client.get(f"{API}/assessments/{a['id']}/areas/area-7/indicator-records", params={"label": "Required field gaps", "object": "Opportunity"})
+    assert page.status_code == 200 and [r["id"] for r in page.json()["records"]] == ["006000000000007AAA"]
+    assert page.json()["cellNotes"] == {"006000000000007AAA": {"Amount": "Breaks validation rule “Amount_Required”: Error"}}
     junk = names["Placeholder or junk values"]
     assert junk["recordsAvailable"]
+    assert junk["fixUrl"].endswith("/lightning/o/Opportunity/list")  # Fix it in Salesforce
     assert client.get(f"{API}/findings/{junk['id']}/records").status_code == 200
     q = sf.soql[-1]
     assert "FROM Opportunity" in q and "Id IN ('006000000000001AAA', '006000000000002AAA', '006000000000004AAA', '006000000000005AAA')" in q and "IsClosed = false" in q
