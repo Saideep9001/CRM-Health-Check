@@ -1711,9 +1711,11 @@ _DATE = re.compile(r"^\s*\d{1,4}[/.-]\d{1,2}([/.-]\d{1,4})?\s*$")
 def _mashed(word: str) -> bool:
     """A made-up word typed to get past the field (gjhdhe, sdfsdf, kkkk, qwrtp), not a real word or an acronym (RFP, SOW)."""
     w = word.lower()
-    if len(w) < 4 or (word.isupper() and len(w) <= 5):
-        return False
+    if word.isupper() and len(w) <= 5:
+        return False  # an acronym: RFP, SOW, QBR
     vowels = sum(ch in _VOWELS for ch in w)
+    if len(w) < 4:
+        return len(w) >= 2 and vowels == 0  # a short scrap with no vowel: tdt, jk
     run = longest = 0
     for ch in w:
         run = 0 if ch in _VOWELS else run + 1
@@ -1786,7 +1788,7 @@ def junk_data(ctx: Ctx) -> None:
             ("Opportunity", "Next Step, Description: all open deals"),
             ("What counts as junk", "The whole value, ignoring case and spaces, is a placeholder (" + ", ".join(JUNK_LIST) + "); "
              "or it has no words at all, only numbers or symbols (a date on its own is fine); or every word is made up, typed just to "
-             "fill the field: keys in a row on the keyboard (qwerty, hjkl), no vowel (sdfg), five consonants in a row (gjhdhe), hardly any vowels, or the same letters repeated "
+             "fill the field: keys in a row on the keyboard (qwerty, hjkl), no vowel (tdt, sdfg), five consonants in a row (gjhdhe), hardly any vowels, or the same letters repeated "
              "(aaaa, sdfsdf). Short acronyms in capitals (RFP, SOW) count as real words."),
             ("Problem raised", "“Placeholder or junk values”, raised when the score is below 95."),
             ("Why it matters", "Junk usually means a required field is getting in people’s way, and it makes reports and searches unreliable."),

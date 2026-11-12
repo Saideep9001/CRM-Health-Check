@@ -231,13 +231,15 @@ class FakeSalesOrg(FakeSalesforce):
             return [{"Name": "Big Deal", "StageName": "Proposal", "Amount": 90000}]
         if "Id IN ('006000000000001AAA'" in q or "Id IN ('006000000000002AAA'" in q:  # Potential junk data's records table
             junk = [{"Id": "006000000000001AAA", "Name": "Deal A", "NextStep": "tbd"}, {"Id": "006000000000002AAA", "Name": "Deal B", "Description": "test"},
-                    {"Id": "006000000000004AAA", "Name": "Deal D", "Description": "gjhdhe"}]
+                    {"Id": "006000000000004AAA", "Name": "Deal D", "Description": "gjhdhe"},
+                    {"Id": "006000000000005AAA", "Name": "Deal E", "NextStep": "tdt"}]
             lists = re.findall(r"Id IN \(([^)]*)\)", q)  # every Id list must hold the record (the measure's, and a narrowing)
             return [r for r in junk if all(f"'{r['Id']}'" in ids for ids in lists)]
         if q.startswith("SELECT Id, NextStep, Description FROM Opportunity"):
             return [{"Id": "006000000000001AAA", "NextStep": "tbd"}, {"Id": "006000000000002AAA", "Description": "test"},
                     {"Id": "006000000000003AAA", "NextStep": "Call Monday", "Description": "Real notes"},
-                    {"Id": "006000000000004AAA", "NextStep": "Send RFP", "Description": "gjhdhe"}]
+                    {"Id": "006000000000004AAA", "NextStep": "Send RFP", "Description": "gjhdhe"},
+                    {"Id": "006000000000005AAA", "NextStep": "tdt", "Description": "QBR with CFO"}]
         if m := re.search(r"SELECT (\w+) v, COUNT\(Id\) c FROM (\w+)", q):
             return {("Company", "Lead"): [{"v": "[not provided]", "c": 3}, {"v": "Acme", "c": 5}], ("Name", "Account"): [{"v": "test", "c": 1}]}.get((m[1], m[2]), [])
         if "FROM AssignmentRule WHERE SobjectType = 'Lead'" in q:  # rule ids, for links into Setup
@@ -312,7 +314,7 @@ def test_all_workflow_areas(client, sf):
     assert ind["Reps with No Activities Logged Recently"] == 1  # Bob owns work but logged nothing
     assert ind["Web-to-Lead issues"] == 1 and ind["Email template availability"] == 2
     assert "Activity capture gaps" not in ind  # removed from Area 6
-    assert ind["Missing validation rules"] == 3 and ind["Potential junk data"] == 3  # 3 open opps (only open Opportunities are checked)
+    assert ind["Missing validation rules"] == 3 and ind["Potential junk data"] == 4  # 4 open opps (only open Opportunities are checked)
     assert res["salesProcessScore"] == res["categories"][0]["score"] and res["categories"][0]["categoryId"] == "workflows"
 
     assert not any("unexpected error" in (x["message"] or "") for x in res["areas"]), res["areas"]
@@ -327,13 +329,14 @@ def test_all_workflow_areas(client, sf):
     assert junk["recordsAvailable"]
     assert client.get(f"{API}/findings/{junk['id']}/records").status_code == 200
     q = sf.soql[-1]
-    assert "FROM Opportunity" in q and "Id IN ('006000000000001AAA', '006000000000002AAA', '006000000000004AAA')" in q and "IsClosed = false" in q
+    assert "FROM Opportunity" in q and "Id IN ('006000000000001AAA', '006000000000002AAA', '006000000000004AAA', '006000000000005AAA')" in q and "IsClosed = false" in q
     # the junk values themselves are marked red, with why (Next Step "tbd" on one, Description "test" on the other)
     page = client.get(f"{API}/assessments/{a['id']}/areas/area-7/indicator-records", params={"label": "Potential junk data", "object": "Opportunity"})
     assert page.status_code == 200
     assert page.json()["cellNotes"] == {"006000000000001AAA": {"NextStep": "Placeholder value “tbd”"},
                                         "006000000000002AAA": {"Description": "Placeholder value “test”"},
-                                        "006000000000004AAA": {"Description": "Meaningless text “gjhdhe”"}}
+                                        "006000000000004AAA": {"Description": "Meaningless text “gjhdhe”"},
+                                        "006000000000005AAA": {"NextStep": "Meaningless text “tdt”"}}
     # narrowed to Description (the field picker above the table): only the deals with junk in Description
     page = client.get(f"{API}/assessments/{a['id']}/areas/area-7/indicator-records",
                       params={"label": "Potential junk data", "object": "Opportunity", "only": "Description"})
