@@ -47,6 +47,7 @@ class ObjectCheck:
     rules: list[Rule] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)  # rules that couldn't be checked, with why
     notes_read: list[str] = field(default_factory=list)  # setup that couldn't be read
+    read_errors: list[str] = field(default_factory=list)  # why, as Salesforce said it
     checked: int = 0
     capped: bool = False
     bad_ids: list[str] = field(default_factory=list)
@@ -192,12 +193,38 @@ def layout_rules(ctx: Ctx, obj: str, fields: dict[str, dict], check: ObjectCheck
     return out
 
 
+def _validation_rows(ctx: Ctx, obj: str, check: ObjectCheck) -> list[dict] | None:
+    """`obj`'s validation rules (active and inactive) from the Tooling API; None when they can't be read.
+    Orgs differ in which filter works, so if one fails or finds nothing, simpler ones are tried, then every rule in the org."""
+    errors: list[str] = []
+    for soql in (
+        f"SELECT Id, ValidationName, NamespacePrefix, Active, Description, ErrorMessage FROM ValidationRule "
+        f"WHERE EntityDefinition.QualifiedApiName = '{obj}'",
+        f"SELECT Id, ValidationName, NamespacePrefix, Active, Description, ErrorMessage FROM ValidationRule WHERE EntityDefinitionId = '{obj}'",
+        f"SELECT Id, ValidationName, Active, ErrorMessage FROM ValidationRule WHERE EntityDefinition.QualifiedApiName = '{obj}'",
+    ):
+        try:
+            rows = ctx.setup(soql)
+        except Unavailable as exc:
+            errors.append(str(exc))
+            continue
+        if rows:
+            return rows
+    try:
+        every = ctx.setup("SELECT Id, ValidationName, Active, ErrorMessage, EntityDefinitionId, EntityDefinition.QualifiedApiName FROM ValidationRule")
+        return [r for r in every if obj in (r.get("EntityDefinitionId"), (r.get("EntityDefinition") or {}).get("QualifiedApiName"))]
+    except Unavailable as exc:
+        errors.append(str(exc))
+    if len(errors) == 4:  # nothing could be read
+        check.read_errors.append(f"validation rules: {errors[0]}")
+        return None
+    return []
+
+
 def validation_rules(ctx: Ctx, obj: str, fields: dict[str, dict], check: ObjectCheck) -> list[Rule]:
     """Each active validation rule with its error condition formula."""
-    try:
-        every = ctx.setup(f"SELECT Id, ValidationName, NamespacePrefix, Active, Description, ErrorMessage FROM ValidationRule "
-                          f"WHERE EntityDefinition.QualifiedApiName = '{obj}'")
-    except Unavailable:
+    every = _validation_rows(ctx, obj, check)
+    if every is None:
         check.notes_read.append("validation rules")
         return []
     if not every:

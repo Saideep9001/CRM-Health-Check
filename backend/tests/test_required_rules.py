@@ -161,3 +161,38 @@ def test_layout_rows_fields_profiles_and_usage():
     ]
     assert [r["required"] for r in rows] == [1, 1]  # Industry; Type
     assert rows[0]["url"].endswith("/lightning/setup/ObjectManager/Account/PageLayouts/00h000000000001AAA/view")
+
+
+class FallbackCtx(FakeCtx):
+    """An org where the per-object filter fails or finds nothing: the rules come from reading every validation rule."""
+
+    def setup(self, soql, tooling=True):
+        if "FROM ValidationRule WHERE" in soql:
+            if "NamespacePrefix" in soql and "QualifiedApiName" in soql:
+                raise Unavailable("No such column 'Description'")
+            return []
+        if "FROM ValidationRule" in soql:
+            return [{"Id": "03d000000000001AAA", "ValidationName": "Phone_Format", "Active": True, "ErrorMessage": "Error",
+                     "EntityDefinitionId": "Account"},
+                    {"Id": "03d000000000002AAA", "ValidationName": "Lead_Rule", "Active": True, "ErrorMessage": "x",
+                     "EntityDefinition": {"QualifiedApiName": "Lead"}}]
+        return super().setup(soql, tooling)
+
+
+class NoSetupCtx(FakeCtx):
+    def setup(self, soql, tooling=True):
+        if "FROM ValidationRule" in soql:
+            raise Unavailable("INSUFFICIENT_ACCESS")
+        return super().setup(soql, tooling)
+
+
+def test_validation_rules_read_when_the_object_filter_finds_nothing():
+    c = required_rules.collect(FallbackCtx([]), "Account")
+    vr = [r for r in c.audit if r["area"] == "Validation Rule"]
+    assert [(r["name"], r["issue"]) for r in vr] == [("Phone_Format", "Only “Error”")]  # only the Account one
+    assert not c.read_errors
+
+
+def test_validation_rules_unreadable_says_why():
+    c = required_rules.collect(NoSetupCtx([]), "Account")
+    assert "validation rules" in c.notes_read and c.read_errors == ["validation rules: INSUFFICIENT_ACCESS"]

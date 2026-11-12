@@ -1614,10 +1614,12 @@ def validation_rules(ctx: Ctx) -> None:
     rows: list[dict] = []
     layouts: list[dict] = []
     unread: list[str] = []
+    checks: list[required_rules.ObjectCheck] = []
     for obj in CORE:
         if not ctx.has_object(obj):
             continue
         check = required_rules.collect(ctx, obj)
+        checks.append(check)
         rows += [r for r in check.audit if r["area"] != "Page Layout"]  # page layouts get their own table, with their profiles and usage
         layouts += _layout_rows(ctx, obj, check)
         if "validation rules" in check.notes_read:
@@ -1643,6 +1645,8 @@ def validation_rules(ctx: Ctx) -> None:
             ("Inactive rules", f"{len(inactive)} rule(s) switched off (validation rules, triggers) or page layouts assigned to nobody"),
             ("Page layouts and system rules", "Salesforce shows its own standard message for these, so their message is N/A"),
             ("Apex triggers", "Error message quality is judged for active triggers whose message is written in their code; otherwise N/A"),
+            ("Couldn’t read", "; ".join(f"{c.obj} {e}" for c in checks for e in c.read_errors)
+             + ". The connected user needs “View Setup and Configuration” (and API access to the Tooling API)" if any(c.read_errors for c in checks) else ""),
         ],
     )
     m.rule_audit = rows

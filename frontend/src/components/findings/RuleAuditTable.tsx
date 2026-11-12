@@ -9,7 +9,7 @@ const OBJECTS = ['Account', 'Contact', 'Lead', 'Opportunity'] as const;
 type Area = 'validation' | 'system' | 'trigger' | 'layout';
 type Status = 'all' | 'active' | 'inactive';
 type Row = RuleAuditItem | LayoutListItem;
-type Col = { label: string; cell: (r: Row) => ReactNode; className?: string };
+type Col = { label: string; cell: (r: Row) => ReactNode; className?: string; flag?: (r: Row) => boolean };
 
 const na = <span className="text-ink-subtle">N/A</span>;
 const statusPill = (active: boolean | null) =>
@@ -31,6 +31,18 @@ const linked = (name: string, url: string | null) =>
   );
 // a validation rule's or trigger's own message, as written (empty shows as such); none written = N/A
 const message = (r: RuleAuditItem) => (!r.assessed ? na : r.message ? r.message : <span className="text-ink-subtle">(empty)</span>);
+// an active validation rule's improper message: red, with why
+const unclear = (r: Row) => 'assessed' in r && r.active && !!r.issue;
+const judged = (r: RuleAuditItem) => (
+  <>
+    {message(r)}
+    {r.active && r.issue && (
+      <span className="mt-0.5 flex items-start gap-1 text-[10.5px] font-medium leading-snug text-bad">
+        <AlertTriangle className="mt-px h-3 w-3 shrink-0" /> {r.issue}
+      </span>
+    )}
+  </>
+);
 // an active trigger's message, judged; inactive ones, or messages not written in the code, aren't
 const quality = (r: RuleAuditItem) =>
   !r.active || !r.assessed ? na : r.issue ? (
@@ -44,13 +56,14 @@ const lay = (r: Row) => r as LayoutListItem;
 const wide = 'max-w-[22rem] whitespace-normal break-words';
 const AREAS: { key: Area; label: string; status: boolean; empty: string; cols: Col[] }[] = [
   {
-    key: 'validation', label: 'Validation Rules', status: true, empty: 'No validation rules here.',
+    key: 'validation', label: 'Validation Rules', status: true,
+    empty: 'No validation rules found on these objects. If you expect some, check “Couldn’t read” in the rules above: the connected user may need “View Setup and Configuration”.',
     cols: [
       { label: 'Object', cell: (r) => r.object },
       { label: 'Rule Name', cell: (r) => linked(r.name, r.url) },
       { label: 'Description', cell: (r) => rule(r).description || '—', className: cx(wide, 'text-ink-muted') },
       { label: 'Status', cell: (r) => statusPill(rule(r).active) },
-      { label: 'Error Message', cell: (r) => message(rule(r)), className: wide },
+      { label: 'Error Message', cell: (r) => judged(rule(r)), className: wide, flag: unclear },
     ],
   },
   {
@@ -72,7 +85,7 @@ const AREAS: { key: Area; label: string; status: boolean; empty: string; cols: C
       { label: 'Description', cell: (r) => rule(r).description || '—', className: cx(wide, 'text-ink-muted') },
       { label: 'Trigger Event', cell: (r) => rule(r).events || '—' },
       { label: 'Status', cell: (r) => statusPill(rule(r).active) },
-      { label: 'Error Message', cell: (r) => message(rule(r)), className: wide },
+      { label: 'Error Message', cell: (r) => message(rule(r)), className: wide, flag: unclear },
       { label: 'Error Message Quality', cell: (r) => quality(rule(r)), className: 'max-w-[14rem] whitespace-normal' },
     ],
   },
@@ -81,7 +94,6 @@ const AREAS: { key: Area; label: string; status: boolean; empty: string; cols: C
     cols: [
       { label: 'Object', cell: (r) => r.object },
       { label: 'Layout Name', cell: (r) => linked(r.name, r.url) },
-      { label: 'Status', cell: (r) => statusPill(lay(r).active) },
       { label: 'Total Fields', cell: (r) => fmtNumber(lay(r).fields), className: 'text-right tabular-nums' },
       { label: 'Required Fields', cell: (r) => (lay(r).required == null ? na : fmtNumber(lay(r).required!)), className: 'text-right tabular-nums' },
       { label: 'Assigned Profiles', cell: (r) => (lay(r).profiles == null ? na : lay(r).profiles!.length ? lay(r).profiles!.join(', ') : '—'), className: cx(wide, 'text-ink-muted') },
@@ -125,6 +137,11 @@ export function RuleAuditTable({ rows, layouts = [] }: { rows: RuleAuditItem[]; 
       <header className="flex flex-wrap items-center gap-2 border-b border-line bg-muted/50 px-3 py-2">
         <span className="text-sm font-semibold">{def.label}</span>
         <span className="rounded-full bg-surface px-2 text-[11px] tabular-nums text-ink-muted">{fmtNumber(shown.length)}</span>
+        {shown.filter(unclear).length > 0 && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-bad-soft px-2 text-[11px] font-medium text-bad">
+            <AlertTriangle className="h-3 w-3" /> {fmtNumber(shown.filter(unclear).length)} without a proper error message
+          </span>
+        )}
         <div className="ml-auto flex flex-wrap items-center gap-2 [&_select]:h-7 [&_select]:py-0 [&_select]:text-xs">
           <Select<string> label="Object" className="w-36" value={object} onChange={setObject}
             options={[{ value: '', label: 'All objects' }, ...OBJECTS.map((o) => ({ value: o, label: o }))]} />
@@ -151,7 +168,7 @@ export function RuleAuditTable({ rows, layouts = [] }: { rows: RuleAuditItem[]; 
               {shown.map((r, i) => (
                 <tr key={`${r.object}-${r.name}-${i}`} className="align-top hover:bg-muted/60">
                   {def.cols.map((c) => (
-                    <td key={c.label} className={cx('px-3 py-2', c.className)}>{c.cell(r)}</td>
+                    <td key={c.label} className={cx('px-3 py-2', c.className, c.flag?.(r) && 'bg-bad-soft/60')}>{c.cell(r)}</td>
                   ))}
                 </tr>
               ))}
@@ -160,10 +177,10 @@ export function RuleAuditTable({ rows, layouts = [] }: { rows: RuleAuditItem[]; 
         </div>
       )}
       <p className="border-t border-line bg-muted/30 px-3 py-1.5 text-[11px] text-ink-muted">
-        {area === 'validation' && 'Every validation rule, active and inactive, with its own error message.'}
+        {area === 'validation' && 'Every validation rule, active and inactive, with its own error message. Red: an active rule whose message is empty, only “Error” or “Invalid”, generic, or too short to explain the issue.'}
         {area === 'system' && 'Fields Salesforce requires on every record (standard required fields, and custom fields marked Required). Salesforce shows its own message for these.'}
         {area === 'trigger' && 'Triggers that stop a save (addError), active and inactive. Message quality is judged for active triggers whose message is written in their code; otherwise N/A.'}
-        {area === 'layout' && 'Every page layout. Active: assigned to a profile with active users. Usage: the share of active users who get the layout; with record types totals can pass 100%.'}
+        {area === 'layout' && 'Every page layout. Usage: the share of active users (in the profiles with this object’s layouts) who get the layout; with record types totals can pass 100%.'}
       </p>
     </section>,
   );
