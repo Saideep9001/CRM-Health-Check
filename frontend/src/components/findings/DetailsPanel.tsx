@@ -57,6 +57,14 @@ const FIELD_CARD_OBJECTS: Record<string, string> = { Accounts: 'Account', Contac
 /** "Unused & Low-Completion Fields (Accounts)" → Account. */
 const objectOfFieldCard = (label: string) => FIELD_CARD_OBJECTS[label.match(/\(([^)]+)\)$/)?.[1] ?? ''] ?? null;
 const OTHER = '__other__';
+/** Required field gaps: the kinds of rule its records can be narrowed to ('' = all). */
+const RULE_KINDS = [
+  { value: '', label: 'All rules' },
+  { value: 'field', label: 'Standard / required on the field' },
+  { value: 'layout', label: 'Page layout' },
+  { value: 'validation', label: 'Validation rule' },
+  { value: 'trigger', label: 'Apex trigger' },
+] as const;
 /** Potential junk data: the fields checked for junk, picked above its records table. */
 const JUNK_FIELDS = [
   { field: 'NextStep', label: 'Next Step' },
@@ -364,6 +372,8 @@ function Records({
   const byQueue = stuckQueue || byRule || stale || byStage;
   // Web-to-Lead: the website Leads' health from their history above the table, and a created-date period on it
   const web = indicator?.label === 'Web-to-Lead issues';
+  // Required field gaps: one kind of rule (sent as the queue; the server narrows to the records breaking that kind)
+  const ruleGaps = indicator?.label === 'Required field gaps';
   const [queueDays, setQueueDays] = useState(3);
   const [queue, setQueue] = useState<PickedQueue | undefined>();
   // Stale Leads: only one record type's Leads (undefined = all)
@@ -533,6 +543,15 @@ function Records({
             noActivity ? <ActivityPeriod key={`${object}-${indicator!.label}`} onChange={setPeriod} />
               : stale ? <ActivityPeriod key={`${object}-${indicator!.label}`} onChange={setPeriod} own="30" what="No status change" />
               : web ? <CreatedPeriod key={`${object}-${indicator!.label}`} onChange={setPeriod} />
+              : ruleGaps ? (
+                <Select<string>
+                  label="Rule"
+                  className="w-60 [&_select]:h-7 [&_select]:py-0 [&_select]:text-xs"
+                  value={queue?.id ?? ''}
+                  options={RULE_KINDS.map((k) => ({ value: k.value, label: k.label }))}
+                  onChange={(v) => setQueue(v ? { id: v, name: RULE_KINDS.find((k) => k.value === v)!.label } : undefined)}
+                />
+              )
                 : undefined
           }
           filters={filters}

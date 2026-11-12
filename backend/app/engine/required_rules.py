@@ -51,6 +51,9 @@ class ObjectCheck:
     capped: bool = False
     bad_ids: list[str] = field(default_factory=list)
     notes: dict[str, dict[str, str]] = field(default_factory=dict)  # record id -> field -> why (first SHOWN records)
+    # the same, one rule kind at a time (for the rule filter above the table), and each record's broken rules by name
+    kind_notes: dict[str, dict[str, dict[str, str]]] = field(default_factory=dict)
+    broken: dict[str, list[tuple[str, str]]] = field(default_factory=dict)  # record id -> [(kind, rule as shown)]
 
 
 def _read(ctx: Ctx, kind: str, names: list[str]) -> list[ET.Element]:
@@ -265,6 +268,16 @@ def check_object(ctx: Ctx, obj: str, base: str | None = None) -> ObjectCheck:
     check.capped = len(rows) >= MAX_ROWS
     for rec in rows:
         why: dict[str, str] = {}
+        hit: list[tuple[str, str]] = []
+        per_kind: dict[str, dict[str, str]] = {}
+
+        def mark(r: Rule, f: str) -> None:
+            reason = _reason(r, True)
+            why[f] = "; ".join(filter(None, [why.get(f), reason]))
+            k = per_kind.setdefault(r.kind, {})
+            k[f] = "; ".join(filter(None, [k.get(f), reason]))
+            if (r.kind, r.describe()) not in hit:
+                hit.append((r.kind, r.describe()))
         rt = _rt(rec.get("RecordTypeId")) if extra else None
         for r in check.rules:
             if r.kind == "validation":
@@ -275,7 +288,7 @@ def check_object(ctx: Ctx, obj: str, base: str | None = None) -> ObjectCheck:
                 if bad:
                     r.broken += 1
                     for f in r.fields:
-                        why[f] = "; ".join(filter(None, [why.get(f), _reason(r, False)]))
+                        mark(r, f)
                 continue
             if r.record_types is not None and rt not in r.record_types:
                 continue
@@ -283,9 +296,12 @@ def check_object(ctx: Ctx, obj: str, base: str | None = None) -> ObjectCheck:
             if empty:
                 r.broken += 1
                 for f in empty:
-                    why[f] = "; ".join(filter(None, [why.get(f), _reason(r, True)]))
+                    mark(r, f)
         if why and rec.get("Id"):
             check.bad_ids.append(rec["Id"])
             if len(check.notes) < SHOWN:
                 check.notes[rec["Id"]] = why
+                check.broken[rec["Id"]] = hit
+                for k, n in per_kind.items():
+                    check.kind_notes.setdefault(k, {})[rec["Id"]] = n
     return check

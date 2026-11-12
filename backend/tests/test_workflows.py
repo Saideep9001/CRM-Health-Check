@@ -243,7 +243,7 @@ class FakeSalesOrg(FakeSalesforce):
         if q.startswith("SELECT Id, StageName, Amount FROM Opportunity"):  # Required field gaps: every Opportunity, for its validation rule
             return [{"Id": "006000000000007AAA", "StageName": "Proposal", "Amount": None}, {"Id": "006000000000008AAA", "StageName": "Proposal", "Amount": 5},
                     {"Id": "006000000000009AAA", "StageName": "Prospecting", "Amount": None}]
-        if "Id IN ('006000000000007AAA')" in q:
+        if "Id IN ('006000000000007AAA')" in q and "Id = null" not in q:
             return [{"Id": "006000000000007AAA", "Name": "Deal G", "StageName": "Proposal", "Amount": None}]
         if q.startswith("SELECT Id, NextStep, Description FROM Opportunity"):
             return [{"Id": "006000000000001AAA", "NextStep": "tbd"}, {"Id": "006000000000002AAA", "Description": "test"},
@@ -341,6 +341,16 @@ def test_all_workflow_areas(client, sf):
     page = client.get(f"{API}/assessments/{a['id']}/areas/area-7/indicator-records", params={"label": "Required field gaps", "object": "Opportunity"})
     assert page.status_code == 200 and [r["id"] for r in page.json()["records"]] == ["006000000000007AAA"]
     assert page.json()["cellNotes"] == {"006000000000007AAA": {"Amount": "Breaks validation rule “Amount_Required”: Error"}}
+    broken = next(c for c in page.json()["columns"] if c["name"] == "BrokenRules")  # the rule it breaks, frozen on the right
+    assert broken["frozen"] and page.json()["records"][0]["values"]["BrokenRules"] == "Validation rule “Amount_Required”"
+    gaps_card = next(i for x in res["areas"] for i in x["indicators"] if i["label"] == "Required field gaps")
+    assert gaps_card["recordObjects"] == ["Account", "Contact", "Lead", "Opportunity"]  # every object gets its tab
+    # the rule filter: validation rules keep the deal; page layouts (none broken here) list nothing
+    url = f"{API}/assessments/{a['id']}/areas/area-7/indicator-records"
+    only_rule = client.get(url, params={"label": "Required field gaps", "object": "Opportunity", "queue": "validation"})
+    assert [r["id"] for r in only_rule.json()["records"]] == ["006000000000007AAA"]
+    assert client.get(url, params={"label": "Required field gaps", "object": "Opportunity", "queue": "layout"}).json()["records"] == []
+    assert client.get(url, params={"label": "Required field gaps", "object": "Opportunity", "queue": "nope"}).status_code == 422
     junk = names["Placeholder or junk values"]
     assert junk["recordsAvailable"]
     assert junk["fixUrl"].endswith("/lightning/o/Opportunity/list")  # Fix it in Salesforce

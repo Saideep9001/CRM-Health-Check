@@ -98,4 +98,9 @@ def test_check_object_against_every_kind_of_rule():
         "001A": {"Industry": "Empty, but required on page layout “Sales Layout”", "Phone": "Breaks validation rule “Phone_Format”: Phone needs 10 digits"},
         "001B": {"Website": "Empty, but Apex trigger “AccountTrigger” requires it (read from its code)"},
     }
+    # the rules each record breaks (the frozen Broken rule column), and the red notes one kind of rule at a time (the rule filter)
+    assert c.broken == {"001A": [("layout", "Page layout “Sales Layout”"), ("validation", "Validation rule “Phone_Format”")],
+                        "001B": [("trigger", "Apex trigger “AccountTrigger”")]}
+    assert c.kind_notes["validation"] == {"001A": {"Phone": "Breaks validation rule “Phone_Format”: Phone needs 10 digits"}}
+    assert set(c.kind_notes["layout"]) == {"001A"} and set(c.kind_notes["trigger"]) == {"001B"}
     assert "Industry" in ctx.soql[0] and "Website" in ctx.soql[0] and "RecordTypeId" in ctx.soql[0]

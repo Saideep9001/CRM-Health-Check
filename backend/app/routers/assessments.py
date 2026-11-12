@@ -366,6 +366,12 @@ def _by_queue(rec: dict) -> bool:
             or bool(rec.get("by_status")) or bool(rec.get("by_stage")))
 
 
+# Required field gaps: the rules each record breaks, one per line, the last column, frozen so it stays in view
+BROKEN_RULES_COLUMN = {"name": "BrokenRules", "label": "Broken rule", "type": "lines", "frozen": True}
+# its rule filter: the kind of rule, and how that kind's rules start in the Broken rule column
+RULE_KINDS = {"field": "Required on the field", "layout": "Page layout", "validation": "Validation rule", "trigger": "Apex trigger"}
+
+
 # one role per line, the last column, frozen so it stays in view while the table scrolls sideways
 def _rule_owner_ids(rec: dict) -> set[str]:
     """Inactive Lead Assignment Rules: the owners its records can be narrowed to (the inactive queues, and every inactive
@@ -444,6 +450,11 @@ def _with_extra(sf, rec: dict, columns: list[dict], records: list[dict]) -> list
         records.sort(key=lambda r: (place(r).get("batch") or 10**9, place(r).get("level") or 0, str(r["values"].get("Name") or "").lower()))
         names = {BATCH_COLUMN["name"], CHILDREN_COLUMN["name"]}
         return [BATCH_COLUMN, *(c for c in columns if c["name"] not in names), CHILDREN_COLUMN]
+    if rec.get("extra") == "broken_rules":  # Required field gaps: the rules each record breaks, frozen on the right
+        reasons = rec.get("reasons") or {}
+        for r in records:
+            r["values"][BROKEN_RULES_COLUMN["name"]] = reasons.get(r.get("id") or "")
+        return [*(c for c in columns if c["name"] != BROKEN_RULES_COLUMN["name"]), BROKEN_RULES_COLUMN]
     if rec.get("extra") == "deal_roles":  # Multi-Deal Contacts: each Contact's roles on open deals, saved by the check
         reasons = rec.get("reasons") or {}
         for r in records:
@@ -554,6 +565,16 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
         else:
             raise HTTPException(422, "Unknown record type.")
         rec = {**rec, "where": f"{explorer.and_part(rec['where'])} AND {cond}" if rec.get("where") else cond}
+    if queue and rec.get("rule_kinds") is not None:  # Required field gaps: only the records breaking one kind of rule
+        if queue not in RULE_KINDS:
+            raise HTTPException(422, "Unknown kind of rule.")
+        ids = [i for i, kinds in rec["rule_kinds"].items() if queue in kinds and re.fullmatch(r"[A-Za-z0-9]{15,18}", i)]
+        cond = "Id IN (" + ", ".join(f"'{i}'" for i in ids) + ")" if ids else "Id = null"
+        notes = (rec.get("kind_notes") or {}).get(queue) or {}
+        reasons = {i: "\n".join(line for line in (rec.get("reasons") or {}).get(i, "").split("\n") if line.startswith(RULE_KINDS[queue]))
+                   for i in ids}
+        rec = {**rec, "where": f"{explorer.and_part(rec['where'])} AND {cond}" if rec.get("where") else cond, "notes": notes, "reasons": reasons}
+        queue = None
     if queue:
         if not _by_queue(rec):
             raise HTTPException(422, "Only the Stuck Queue-Owned Leads and Inactive Lead Assignment Rules measures take a queue.")

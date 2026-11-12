@@ -1678,8 +1678,9 @@ def required_field_gaps(ctx: Ctx) -> None:
     bad = sum(len(c.bad_ids) for c in checks)
     score = rate_score(bad / checked, 0.2) if checked else 100
     failing = [c for c in checks if c.bad_ids]
+    # every object checked gets its tab, even with nothing broken
     records = [(c.obj, *((REQUIRED_BASE[c.obj],) if c.obj in REQUIRED_BASE else ()), ctx.ids_in(c.bad_ids, limit=required_rules.SHOWN))
-               for c in failing]
+               for c in checks]
     # the fields that break most often come first in the table, after the name
     counts: dict[str, int] = {}
     for c in failing:
@@ -1691,7 +1692,7 @@ def required_field_gaps(ctx: Ctx) -> None:
     skipped = [f"{c.obj}: {s}" for c in checks for s in c.skipped]
     m = ctx.metric(
         "Required field gaps", bad, "count", "lower-better", score,
-        records=records or None, recent=False, columns=list(dict.fromkeys(columns)), order="Name",
+        records=records or None, recent=False, columns=list(dict.fromkeys(columns)), order="Name", extra="broken_rules",
         how="Records on Accounts, Contacts, Leads and Opportunities that don’t meet the org’s own active rules: fields required on the "
             "field, on page layouts, by validation rules or by Apex triggers. Each of these records would fail if someone saved it today.",
         rule="100 when every record meets the rules. It falls evenly to 0 when 20% of the records checked break at least one.",
@@ -1712,8 +1713,11 @@ def required_field_gaps(ctx: Ctx) -> None:
              + (f". The records table lists the first {required_rules.SHOWN:,} per object" if any(len(c.bad_ids) > required_rules.SHOWN for c in failing) else "")),
         ],
     )
-    for spec, c in zip(m.records or [], failing):  # each broken value in red, with the rule it breaks
+    for spec, c in zip(m.records or [], checks):  # each broken value in red, with the rule it breaks
         spec["notes"] = c.notes
+        spec["kind_notes"] = c.kind_notes  # the rule filter above the table: one kind of rule
+        spec["reasons"] = {i: "\n".join(name for _, name in hit) for i, hit in c.broken.items()}  # the frozen Broken rule column
+        spec["rule_kinds"] = {i: sorted({k for k, _ in hit}) for i, hit in c.broken.items()}
     if failing:
         worst = max(failing, key=lambda c: len(c.bad_ids))
         ctx.finding(
@@ -1727,7 +1731,7 @@ def required_field_gaps(ctx: Ctx) -> None:
             action="Fill in the missing values (start with the most broken rules), and review rules that most records break: they may be "
                    "out of date or need a condition so they only apply when relevant.",
             obj=worst.obj,
-            records=records[failing.index(worst)],
+            records=records[checks.index(worst)],
             recent=False,
             min_score=95,
             fix=f"/lightning/o/{worst.obj}/list",
