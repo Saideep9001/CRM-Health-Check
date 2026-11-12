@@ -311,6 +311,11 @@ def test_all_workflow_areas(client, sf):
     assert not any("unexpected error" in (x["message"] or "") for x in res["areas"]), res["areas"]
     names = {f["name"]: f for f in findings}
     assert "Placeholder or junk values" in names
+    # junk data looks at every record: all Opportunities (no 2,000 limit, open or closed), and Salesforce counts the placeholders on the rest
+    opp = next(q for q in sf.soql if q.startswith("SELECT Id, NextStep, Description FROM Opportunity"))
+    assert "LIMIT" not in opp and "IsClosed" not in opp
+    lead = next(q for q in sf.soql if q.startswith("SELECT Company v, COUNT(Id) c FROM Lead"))
+    assert "Company IN ('test', 'testing'" in lead and "IsConverted" not in lead
     assert "Website leads have stopped arriving" in names and names["Website leads have stopped arriving"]["severity"] == "critical"
     assert "Reps with no logged activity" not in names
     assert names["Leads with no assignment path"]["description"] == ("1 open Leads match no entry of the active Lead Assignment Rule “Standard” and "

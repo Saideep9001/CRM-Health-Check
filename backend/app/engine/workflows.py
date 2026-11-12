@@ -1700,6 +1700,8 @@ def required_field_gaps(ctx: Ctx) -> None:
 JUNK_LIST = ("test", "testing", "na", "n/a", "tbd", "tba", "none", "-", "--", ".", "..", "...", "x", "xx", "xxx", "asdf", "abc", "123",
              "null", "nil", "?", "unknown", "not provided", "[not provided]", "dummy", "sample", "temp", "aaa", "zzz")
 _JUNK = set(JUNK_LIST)
+_JUNK_IN = "(" + ", ".join("'" + v.replace("'", "\\'") + "'" for v in JUNK_LIST) + ")"  # SOQL = ignores case
+JUNK_MAX_ROWS = 1_000_000  # Opportunities read for Description (a long text field can't be filtered in a query)
 
 
 def _is_junk(v: object) -> bool:
@@ -1714,29 +1716,31 @@ def junk_data(ctx: Ctx) -> None:
         fields = ctx.fields("Opportunity")
         cols = [c for c in ("NextStep", "Description") if c in fields]
         if cols:
-            recs = ctx.rows(f"SELECT Id, {', '.join(cols)} FROM Opportunity WHERE {OPEN_OPPS} ORDER BY LastModifiedDate DESC LIMIT 2000")
+            # every Opportunity, open or closed (Description can't be filtered in a query, so each one is read)
+            recs = ctx.rows(f"SELECT Id, {', '.join(cols)} FROM Opportunity", limit=JUNK_MAX_ROWS)
             checked += len(recs)
             bad = [r for r in recs if any(_is_junk(r.get(c)) for c in cols)]
             total_junk += len(bad)
             if bad:
-                found.append(f"{len(bad):,} open Opportunities (Next Step / Description)")
-    for obj, fld, conds in (("Lead", "Company", (OPEN_LEADS,)), ("Contact", "LastName", ()), ("Account", "Name", ())):
+                found.append(f"{len(bad):,} Opportunities (Next Step / Description)")
+    for obj, fld in (("Lead", "Company"), ("Contact", "LastName"), ("Account", "Name")):
         if ctx.has_field(obj, fld, "groupable"):
-            groups = ctx.groups(obj, fld, *conds)
+            # every record: Salesforce counts the placeholder values itself, so nothing is missed however many records there are
+            groups = ctx.groups(obj, fld, f"{fld} IN {_JUNK_IN}")
             bad = [(v, c) for v, c in groups if _is_junk(v)]
             n = sum(c for _, c in bad)
-            checked += sum(c for _, c in groups)
+            checked += ctx.count(obj)
             total_junk += n
             if n:
-                found.append(f"{n:,} {('open ' if obj == 'Lead' else '')}{obj}s ({fld} like {', '.join(f'“{v}”' for v, _ in bad[:3])})")
+                found.append(f"{n:,} {obj}s ({fld} like {', '.join(f'“{v}”' for v, _ in bad[:3])})")
     score = rate_score(total_junk / checked, 0.1) if checked else 100
     ctx.metric(
         "Potential junk data", total_junk, "count", "lower-better", score,
         how="Records that hold placeholder values instead of real data.",
         rule="100 when no checked record holds a placeholder. It falls evenly to 0 when 10% of them do.",
         criteria=[
-            ("Opportunity", "Next Step, Description: the 2,000 most recently changed open deals"),
-            ("Lead", "Company: open Leads"),
+            ("Opportunity", "Next Step, Description: all"),
+            ("Lead", "Company: all"),
             ("Contact", "Last Name: all"),
             ("Account", "Name: all"),
             ("What counts as junk", "The whole value, ignoring case and spaces, is a placeholder. The list is: " + ", ".join(JUNK_LIST) + "."),
