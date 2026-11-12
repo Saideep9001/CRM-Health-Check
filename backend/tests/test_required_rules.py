@@ -132,11 +132,14 @@ def test_rule_audit_lists_every_rule_with_its_message():
     # page layouts and system rules: Salesforce's standard message (N/A); a layout assigned to nobody is inactive
     assert rows[("Page Layout", "Sales Layout")]["active"] and rows[("Page Layout", "Sales Layout")]["message"] is None
     assert not rows[("Page Layout", "Unused Layout")]["active"] and "not assigned" in rows[("Page Layout", "Unused Layout")]["description"]
-    assert rows[("System Rule", "Name")]["assessed"] is False
+    sysrule = rows[("System Rule", "Name")]
+    assert sysrule["assessed"] is False and sysrule["message"] is None and sysrule["required"] == "Required (standard field)"
+    assert sysrule["label"] == "Name" and "type" in sysrule
     # triggers: the message written in the handler's code, judged
     trig = rows[("Trigger", "AccountTrigger")]
     assert trig["active"] and trig["message"] == "Website please" and trig["issue"] == "Too short to explain the issue"
     assert "Website is empty" in trig["description"] and "handler: AccountHandler" in trig["description"]
+    assert trig["events"] == "before insert, before update"
 
 
 @pytest.mark.parametrize("message, issue", [
@@ -156,4 +159,5 @@ def test_layout_rows_fields_profiles_and_usage():
         ("Sales Layout", 2, True, ["Sales User (Partner)", "System Administrator (Partner)"], 8, 100.0),  # all 8 active users
         ("Unused Layout", 1, False, [], 0, 0.0),  # assigned to nobody
     ]
+    assert [r["required"] for r in rows] == [1, 1]  # Industry; Type
     assert rows[0]["url"].endswith("/lightning/setup/ObjectManager/Account/PageLayouts/00h000000000001AAA/view")

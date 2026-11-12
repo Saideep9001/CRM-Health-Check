@@ -349,7 +349,8 @@ def test_all_workflow_areas(client, sf):
     vr_card = next(i for x in res["areas"] for i in x["indicators"] if i["label"] == "Missing validation rules")
     assert vr_card["ruleAudit"] == [{"object": "Opportunity", "area": "Validation Rule", "name": "Amount_Required",
                                      "description": 'Error when: ISPICKVAL(StageName, "Proposal") && ISBLANK(Amount)', "active": True,
-                                     "message": "Error", "issue": "Only “Error”", "assessed": True, "url": None}]
+                                     "message": "Error", "issue": "Only “Error”", "assessed": True, "url": None,
+                                     "label": None, "type": None, "required": None, "events": None}]
     # the rule filter: validation rules keep the deal; page layouts (none broken here) list nothing
     url = f"{API}/assessments/{a['id']}/areas/area-7/indicator-records"
     only_rule = client.get(url, params={"label": "Required field gaps", "object": "Opportunity", "queue": "validation"})

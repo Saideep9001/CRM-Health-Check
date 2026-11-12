@@ -971,13 +971,13 @@ export function DetailsPanel({
 
           {extra}
 
-          {v?.layoutList ? (
+          {v?.ruleAudit ? (
+            <Section icon={<Database className="h-3.5 w-3.5" />} title="The rules behind this number">
+              <RuleAuditTable rows={v.ruleAudit} layouts={v.layoutList ?? []} />
+            </Section>
+          ) : v?.layoutList ? (
             <Section icon={<Database className="h-3.5 w-3.5" />} title="The page layouts behind this number">
               <LayoutTable rows={v.layoutList} />
-            </Section>
-          ) : v?.ruleAudit ? (
-            <Section icon={<Database className="h-3.5 w-3.5" />} title="The rules behind this number">
-              <RuleAuditTable rows={v.ruleAudit} />
             </Section>
           ) : v?.fieldList ? (
             <Section icon={<Database className="h-3.5 w-3.5" />} title="The fields behind this number">

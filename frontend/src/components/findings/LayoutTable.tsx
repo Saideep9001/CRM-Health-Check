@@ -33,9 +33,11 @@ export function LayoutTable({ rows }: { rows: LayoutListItem[] }) {
           <table className="w-full min-w-[720px] text-left text-xs">
             <thead className="sticky top-0 z-10 bg-surface shadow-[0_1px_0_rgb(var(--line))]">
               <tr className="text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">
+                <th className="px-3 py-2">Object</th>
                 <th className="px-3 py-2">Layout Name</th>
                 <th className="px-3 py-2">Status</th>
-                <th className="px-3 py-2 text-right">Total Fields in Layout</th>
+                <th className="px-3 py-2 text-right">Total Fields</th>
+                <th className="px-3 py-2 text-right">Required Fields</th>
                 <th className="px-3 py-2">Assigned Profiles</th>
                 <th className="px-3 py-2 text-right">Usage Percentage</th>
               </tr>
@@ -43,6 +45,7 @@ export function LayoutTable({ rows }: { rows: LayoutListItem[] }) {
             <tbody className="divide-y divide-line">
               {shown.map((r, i) => (
                 <tr key={`${r.object}-${r.name}-${i}`} className="align-top hover:bg-muted/60">
+                  <td className="px-3 py-2">{r.object}</td>
                   <td className="max-w-[16rem] px-3 py-2">
                     {r.url ? (
                       <a href={r.url} target="_blank" rel="noopener noreferrer" title="Open this layout in Salesforce Setup"
@@ -52,7 +55,6 @@ export function LayoutTable({ rows }: { rows: LayoutListItem[] }) {
                     ) : (
                       <span className="font-medium">{r.name}</span>
                     )}
-                    {!object && <span className="mt-0.5 block text-[11px] text-ink-muted">{r.object}</span>}
                   </td>
                   <td className="whitespace-nowrap px-3 py-2">
                     {r.active == null ? (
@@ -65,6 +67,7 @@ export function LayoutTable({ rows }: { rows: LayoutListItem[] }) {
                     )}
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums">{fmtNumber(r.fields)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{r.required == null ? <span className="text-ink-subtle">N/A</span> : fmtNumber(r.required)}</td>
                   <td className="max-w-[22rem] whitespace-normal break-words px-3 py-2 text-ink-muted">
                     {r.profiles == null ? <span className="text-ink-subtle">Couldn’t be read</span> : r.profiles.length ? r.profiles.join(', ') : '—'}
                   </td>

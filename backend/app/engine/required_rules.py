@@ -82,11 +82,12 @@ def message_issue(message: str | None) -> str | None:
 
 
 def audit_row(obj: str, kind: str, name: str, description: str, active: bool, message: str | None, assessed: bool,
-              url: str | None = None) -> dict:
+              url: str | None = None, **details: object) -> dict:
     """One rule in the validation rules card's table. `assessed` = the error message is the rule's own (validation rules, and
     trigger messages found in the code), so its quality is judged; otherwise it's Salesforce's standard message (N/A)."""
     return {"object": obj, "area": AREA[kind], "name": name, "description": description, "active": active,
-            "message": message if assessed else None, "issue": message_issue(message) if assessed else None, "assessed": assessed, "url": url}
+            "message": message if assessed else None, "issue": message_issue(message) if assessed else None, "assessed": assessed, "url": url,
+            **details}
 
 
 def _read(ctx: Ctx, kind: str, names: list[str]) -> list[ET.Element]:
@@ -122,7 +123,9 @@ def field_rules(ctx: Ctx, obj: str, fields: dict[str, dict], check: ObjectCheck 
             check.audit.append(audit_row(
                 obj, "field", n, f"{fields[n].get('label') or n} is required on every {obj} "
                 + ("(custom field marked Required)" if custom else "(standard field Salesforce always requires)"),
-                True, None, False, ctx.setup_url(f"/lightning/setup/ObjectManager/{obj}/FieldsAndRelationships/{n}/view")))
+                True, None, False, ctx.setup_url(f"/lightning/setup/ObjectManager/{obj}/FieldsAndRelationships/{n}/view"),
+                label=fields[n].get("label") or n, type=fields[n].get("type") or "",
+                required="Required (custom field)" if custom else "Required (standard field)"))
     return [Rule("field", ("Custom required field" if fields[n].get("custom") else "Standard required field") + f" {fields[n].get('label') or n}", [n])
             for n in names]
 
@@ -158,7 +161,10 @@ def layout_rules(ctx: Ctx, obj: str, fields: dict[str, dict], check: ObjectCheck
     for rec in recs:
         name = unquote(rec.findtext("m:fullName", "", _NS))
         placed = {f for f in (i.findtext("m:field", "", _NS) for i in rec.iter(f"{{{_NS['m']}}}layoutItems")) if f}
-        check.layouts.append({"id": str((full.get(name) or {}).get("Id") or ""), "name": name.removeprefix(f"{obj}-"), "fields": len(placed)})
+        required = {i.findtext("m:field", "", _NS) for i in rec.iter(f"{{{_NS['m']}}}layoutItems")
+                    if (i.findtext("m:behavior", "", _NS) or "") == "Required" and i.findtext("m:field", "", _NS)}
+        check.layouts.append({"id": str((full.get(name) or {}).get("Id") or ""), "name": name.removeprefix(f"{obj}-"), "fields": len(placed),
+                              "required": len(required)})
         req = []
         for item in rec.iter(f"{{{_NS['m']}}}layoutItems"):
             if (item.findtext("m:behavior", "", _NS) or "") != "Required":
@@ -263,7 +269,8 @@ def _empty_checks(code: str, fields: dict[str, dict]) -> list[str]:
 def trigger_rules(ctx: Ctx, obj: str, fields: dict[str, dict], check: ObjectCheck) -> list[Rule]:
     """Active before insert / before update triggers that stop a save when a field is empty (with their handler classes)."""
     try:
-        rows = ctx.setup(f"SELECT Id, Name, Status, UsageBeforeInsert, UsageBeforeUpdate, Body FROM ApexTrigger WHERE TableEnumOrId = '{obj}'")
+        rows = ctx.setup(f"SELECT Id, Name, Status, UsageBeforeInsert, UsageBeforeUpdate, UsageBeforeDelete, UsageAfterInsert, UsageAfterUpdate, "
+                         f"UsageAfterDelete, UsageAfterUndelete, Body FROM ApexTrigger WHERE TableEnumOrId = '{obj}'")
     except Unavailable:
         check.notes_read.append("Apex triggers")
         return []
@@ -294,7 +301,11 @@ def trigger_rules(ctx: Ctx, obj: str, fields: dict[str, dict], check: ObjectChec
         url = ctx.setup_url(f"/lightning/setup/ApexTriggers/page?address=%2F{t['Id']}") if t.get("Id") else None
         # its messages are judged only when the code spells them out (not a Custom Label or a variable)
         worst = next((m for m in messages if message_issue(m)), messages[0] if messages else None)
-        row = audit_row(obj, "trigger", t.get("Name") or "trigger", desc, active, worst, bool(messages), url)
+        every_event = ", ".join(e for e, k in (("before insert", "UsageBeforeInsert"), ("before update", "UsageBeforeUpdate"),
+                                                 ("before delete", "UsageBeforeDelete"), ("after insert", "UsageAfterInsert"),
+                                                 ("after update", "UsageAfterUpdate"), ("after delete", "UsageAfterDelete"),
+                                                 ("after undelete", "UsageAfterUndelete")) if t.get(k))
+        row = audit_row(obj, "trigger", t.get("Name") or "trigger", desc, active, worst, bool(messages), url, events=every_event)
         if len(messages) > 1:
             row["message"] = " | ".join(messages)
         check.audit.append(row)

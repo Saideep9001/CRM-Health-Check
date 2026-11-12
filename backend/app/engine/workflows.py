@@ -1612,12 +1612,14 @@ def validation_rules(ctx: Ctx) -> None:
     required fields) listed with its status and error message, so unclear messages and inactive rules can be reviewed."""
     missing: list[str] = []
     rows: list[dict] = []
+    layouts: list[dict] = []
     unread: list[str] = []
     for obj in CORE:
         if not ctx.has_object(obj):
             continue
         check = required_rules.collect(ctx, obj)
-        rows += check.audit
+        rows += [r for r in check.audit if r["area"] != "Page Layout"]  # page layouts get their own table, with their profiles and usage
+        layouts += _layout_rows(ctx, obj, check)
         if "validation rules" in check.notes_read:
             unread.append(obj)
             continue
@@ -1629,8 +1631,8 @@ def validation_rules(ctx: Ctx) -> None:
     inactive = [r for r in rows if not r["active"]]
     m = ctx.metric(
         "Missing validation rules", len(missing), "count", "lower-better", 100 - 20 * len(missing),
-        how="Of Accounts, Contacts, Leads and Opportunities, how many have no active validation rules. Below, every rule that stops a "
-            "save (validation rules, Apex triggers, page layout and system required fields) is listed with its status and error message.",
+        how="Of Accounts, Contacts, Leads and Opportunities, how many have no active validation rules. Below, in four tables: every "
+            "validation rule, the system required fields, the Apex triggers that stop a save, and the page layouts.",
         rule="Starts at 100 and drops 20 points for each of these objects with no active validation rules.",
         criteria=[
             ("Objects checked", ", ".join(CORE) + " (those this user can see)"),
@@ -1640,9 +1642,11 @@ def validation_rules(ctx: Ctx) -> None:
              "characters. Validation rules, and triggers whose message is written in their code. Reported, but not scored"),
             ("Inactive rules", f"{len(inactive)} rule(s) switched off (validation rules, triggers) or page layouts assigned to nobody"),
             ("Page layouts and system rules", "Salesforce shows its own standard message for these, so their message is N/A"),
+            ("Apex triggers", "Error message quality is judged for active triggers whose message is written in their code; otherwise N/A"),
         ],
     )
     m.rule_audit = rows
+    m.layout_list = layouts or None
     if missing:
         _setting(
             ctx,
@@ -1919,7 +1923,8 @@ def _layout_rows(ctx: Ctx, obj: str, check: "required_rules.ObjectCheck") -> lis
             n = sum(users.get(p, 0) for p in mine)
             pct = round(100 * n / everyone, 1) if everyone else (0.0 if not mine else None)
             active = n > 0
-        rows.append({"object": obj, "name": lay["name"], "fields": lay["fields"], "active": active, "profiles": profs, "users": n,
+        rows.append({"object": obj, "name": lay["name"], "fields": lay["fields"], "required": lay.get("required"), "active": active,
+                     "profiles": profs, "users": n,
                      "usage": pct, "url": ctx.setup_url(f"/lightning/setup/ObjectManager/{obj}/PageLayouts/{lay['id']}/view") if lay["id"] else None})
     rows.sort(key=lambda r: (-(r["usage"] or 0), r["name"].lower()))
     return rows

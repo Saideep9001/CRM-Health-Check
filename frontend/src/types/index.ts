@@ -315,6 +315,8 @@ export interface LayoutListItem {
   name: string;
   /** Fields placed on the layout. */
   fields: number;
+  /** Fields marked Required on the layout. */
+  required?: number | null;
   /** Assigned to a profile with active users; null = the assignments couldn't be read. */
   active: boolean | null;
   /** "Sales User (Partner, Customer)": the profile, and the record types it gets this layout for. */
@@ -342,6 +344,12 @@ export interface RuleAuditItem {
   assessed: boolean;
   /** The rule in Salesforce Setup. */
   url: string | null;
+  /** System rules: the field's label, data type and how it's required. */
+  label?: string | null;
+  type?: string | null;
+  required?: string | null;
+  /** Triggers: before insert, after update… */
+  events?: string | null;
 }
 
 export interface FieldListItem {

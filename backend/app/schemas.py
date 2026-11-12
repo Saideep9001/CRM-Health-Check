@@ -430,6 +430,10 @@ class RuleAuditItem(ApiModel):
     issue: str | None = None  # why the message is unclear (active rules)
     assessed: bool = False  # the message's quality can be judged
     url: str | None = None  # the rule in Salesforce Setup
+    label: str | None = None  # system rules: the field's label
+    type: str | None = None  # system rules: the field's data type
+    required: str | None = None  # system rules: Required (standard field) / Required (custom field)
+    events: str | None = None  # triggers: before insert, after update…
 
 
 class LayoutListItem(ApiModel):
@@ -437,6 +441,7 @@ class LayoutListItem(ApiModel):
     object: str
     name: str
     fields: int  # fields placed on the layout
+    required: int | None = None  # fields marked Required on the layout
     active: bool | None = None  # assigned to a profile with active users; None = assignments couldn't be read
     profiles: list[str] | None = None  # "Sales User (Partner, Customer)": the profile, and the record types it gets this layout for
     users: int | None = None  # active users who get it
