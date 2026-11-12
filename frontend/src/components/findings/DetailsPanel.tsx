@@ -473,14 +473,16 @@ function Records({
         {junk && (
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-xs font-medium text-ink-muted">Fields:</span>
-            {JUNK_FIELDS.map((f) => {
-              const on = junkPick.includes(f.field);
+            {[{ field: '', label: 'All' }, ...JUNK_FIELDS].map((f) => {
+              const everyField = JUNK_FIELDS.map((x) => x.field);
+              // All: on when every field is ticked; clicking it ticks them all, or clears them when they already are
+              const on = f.field ? junkPick.includes(f.field) : junkPick.length === everyField.length;
               return (
                 <button
-                  key={f.field}
+                  key={f.label}
                   type="button"
                   aria-pressed={on}
-                  onClick={() => setJunkPick(JUNK_FIELDS.map((x) => x.field).filter((x) => (x === f.field ? !on : junkPick.includes(x))))}
+                  onClick={() => setJunkPick(f.field ? everyField.filter((x) => (x === f.field ? !on : junkPick.includes(x))) : on ? [] : everyField)}
                   className={cx('inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition',
                     on ? 'border-brand bg-brand-soft text-brand-ink' : 'border-line text-ink-muted hover:text-ink')}
                 >
