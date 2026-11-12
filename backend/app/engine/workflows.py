@@ -1707,10 +1707,15 @@ def _is_junk(v: object) -> bool:
     return isinstance(v, str) and v.strip().lower() in _JUNK
 
 
+JUNK_SHOWN = 2000  # open Opportunities with a placeholder listed in the records table (picked by Id: Description can't be filtered)
+JUNK_COLUMNS = ["Name", "AccountId", "StageName", "NextStep", "Description", "OwnerId", "CloseDate"]
+
+
 def junk_data(ctx: Ctx) -> None:
     found: list[str] = []
     checked = 0
     total_junk = 0
+    bad_ids: list[str] = []
     if ctx.has_object("Opportunity"):
         fields = ctx.fields("Opportunity")
         cols = [c for c in ("NextStep", "Description") if c in fields]
@@ -1720,11 +1725,15 @@ def junk_data(ctx: Ctx) -> None:
             checked += len(recs)
             bad = [r for r in recs if any(_is_junk(r.get(c)) for c in cols)]
             total_junk += len(bad)
+            bad_ids = [r["Id"] for r in bad if r.get("Id")]
             if bad:
                 found.append(f"{len(bad):,} open Opportunities (Next Step / Description)")
     score = rate_score(total_junk / checked, 0.1) if checked else 100
+    # the records behind the number: the open Opportunities found above, by Id
+    records = ("Opportunity", OPEN_OPPS, ctx.ids_in(bad_ids, limit=JUNK_SHOWN))
     ctx.metric(
         "Potential junk data", total_junk, "count", "lower-better", score,
+        records=records, recent=False, columns=JUNK_COLUMNS, order="Name",
         how="Open Opportunities that hold placeholder values instead of real data in Next Step or Description.",
         rule="100 when no open Opportunity holds a placeholder. It falls evenly to 0 when 10% of them do.",
         criteria=[
@@ -1733,7 +1742,8 @@ def junk_data(ctx: Ctx) -> None:
             ("Problem raised", "“Placeholder or junk values”, raised when the score is below 95."),
             ("Why it matters", "Junk usually means a required field is getting in people’s way, and it makes reports and searches unreliable."),
             ("Recommended fix", "Clean the values up. Then ask users which required fields they fill with junk, and fix that rule or layout."),
-            ("What's counted", f"{total_junk:,} of {checked:,} open Opportunities hold a placeholder" + (f": {'; '.join(found)}" if found else "")),
+            ("What's counted", f"{total_junk:,} of {checked:,} open Opportunities hold a placeholder" + (f": {'; '.join(found)}" if found else "")
+             + (f". The records table lists the first {JUNK_SHOWN:,}" if total_junk > JUNK_SHOWN else "")),
         ],
     )
     ctx.finding(
@@ -1745,6 +1755,8 @@ def junk_data(ctx: Ctx) -> None:
         impact="Misleading reports and wasted time cleaning up.",
         action="Clean the values up. Then ask users which required fields they fill with junk, and fix that rule or layout.",
         obj="Opportunity",
+        records=records,
+        recent=False,
         min_score=95,
     )
 

@@ -230,7 +230,8 @@ class FakeSalesOrg(FakeSalesforce):
         if q.startswith("SELECT Name, StageName"):
             return [{"Name": "Big Deal", "StageName": "Proposal", "Amount": 90000}]
         if q.startswith("SELECT Id, NextStep, Description FROM Opportunity"):
-            return [{"NextStep": "tbd"}, {"Description": "test"}, {"NextStep": "Call Monday", "Description": "Real notes"}]
+            return [{"Id": "006000000000001AAA", "NextStep": "tbd"}, {"Id": "006000000000002AAA", "Description": "test"},
+                    {"Id": "006000000000003AAA", "NextStep": "Call Monday", "Description": "Real notes"}]
         if m := re.search(r"SELECT (\w+) v, COUNT\(Id\) c FROM (\w+)", q):
             return {("Company", "Lead"): [{"v": "[not provided]", "c": 3}, {"v": "Acme", "c": 5}], ("Name", "Account"): [{"v": "test", "c": 1}]}.get((m[1], m[2]), [])
         if "FROM AssignmentRule WHERE SobjectType = 'Lead'" in q:  # rule ids, for links into Setup
@@ -315,6 +316,12 @@ def test_all_workflow_areas(client, sf):
     opp = next(q for q in sf.soql if q.startswith("SELECT Id, NextStep, Description FROM Opportunity"))
     assert "LIMIT" not in opp and "IsClosed = false" in opp
     assert not any(q.startswith(("SELECT Company v", "SELECT LastName v", "SELECT Name v")) for q in sf.soql)
+    # its records table lists exactly the open Opportunities with a placeholder, by Id
+    junk = names["Placeholder or junk values"]
+    assert junk["recordsAvailable"]
+    assert client.get(f"{API}/findings/{junk['id']}/records").status_code == 200
+    q = sf.soql[-1]
+    assert "FROM Opportunity" in q and "Id IN ('006000000000001AAA', '006000000000002AAA')" in q and "IsClosed = false" in q
     assert "Website leads have stopped arriving" in names and names["Website leads have stopped arriving"]["severity"] == "critical"
     assert "Reps with no logged activity" not in names
     assert names["Leads with no assignment path"]["description"] == ("1 open Leads match no entry of the active Lead Assignment Rule “Standard” and "
