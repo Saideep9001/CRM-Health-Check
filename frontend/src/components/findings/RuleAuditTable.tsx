@@ -1,9 +1,10 @@
-import { AlertTriangle, CheckCircle2, ExternalLink } from 'lucide-react';
+import { AlertTriangle, ExternalLink } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { Select } from '@/components/ui/Form';
 import { useExpand } from '@/components/ui/Expand';
 import { cx, fmtNumber } from '@/lib/format';
 import type { LayoutListItem, RuleAuditItem } from '@/types';
+import { ProfilesCell } from './LayoutTable';
 
 const OBJECTS = ['Account', 'Contact', 'Lead', 'Opportunity'] as const;
 type Area = 'validation' | 'system' | 'trigger' | 'layout';
@@ -43,14 +44,6 @@ const judged = (r: RuleAuditItem) => (
     )}
   </>
 );
-// an active trigger's message, judged; inactive ones, or messages not written in the code, aren't
-const quality = (r: RuleAuditItem) =>
-  !r.active || !r.assessed ? na : r.issue ? (
-    <span className="flex items-start gap-1 font-medium text-bad"><AlertTriangle className="mt-px h-3 w-3 shrink-0" /> {r.issue}</span>
-  ) : (
-    <span className="inline-flex items-center gap-1 font-medium text-good"><CheckCircle2 className="h-3 w-3" /> Clear</span>
-  );
-
 const rule = (r: Row) => r as RuleAuditItem;
 const lay = (r: Row) => r as LayoutListItem;
 const wide = 'max-w-[22rem] whitespace-normal break-words';
@@ -73,7 +66,6 @@ const AREAS: { key: Area; label: string; status: boolean; empty: string; cols: C
       { label: 'Field Name', cell: (r) => linked(r.name, r.url) },
       { label: 'Field Label', cell: (r) => rule(r).label ?? '—' },
       { label: 'Data Type', cell: (r) => rule(r).type || '—' },
-      { label: 'Required Status', cell: (r) => rule(r).required ?? 'Required' },
       { label: 'Description', cell: (r) => rule(r).description || '—', className: cx(wide, 'text-ink-muted') },
     ],
   },
@@ -85,8 +77,7 @@ const AREAS: { key: Area; label: string; status: boolean; empty: string; cols: C
       { label: 'Description', cell: (r) => rule(r).description || '—', className: cx(wide, 'text-ink-muted') },
       { label: 'Trigger Event', cell: (r) => rule(r).events || '—' },
       { label: 'Status', cell: (r) => statusPill(rule(r).active) },
-      { label: 'Error Message', cell: (r) => message(rule(r)), className: wide, flag: unclear },
-      { label: 'Error Message Quality', cell: (r) => quality(rule(r)), className: 'max-w-[14rem] whitespace-normal' },
+      { label: 'Error Message', cell: (r) => judged(rule(r)), className: wide, flag: unclear },
     ],
   },
   {
@@ -96,7 +87,7 @@ const AREAS: { key: Area; label: string; status: boolean; empty: string; cols: C
       { label: 'Layout Name', cell: (r) => linked(r.name, r.url) },
       { label: 'Total Fields', cell: (r) => fmtNumber(lay(r).fields), className: 'text-right tabular-nums' },
       { label: 'Required Fields', cell: (r) => (lay(r).required == null ? na : fmtNumber(lay(r).required!)), className: 'text-right tabular-nums' },
-      { label: 'Assigned Profiles', cell: (r) => (lay(r).profiles == null ? na : lay(r).profiles!.length ? lay(r).profiles!.join(', ') : '—'), className: cx(wide, 'text-ink-muted') },
+      { label: 'Assigned Profiles', cell: (r) => <ProfilesCell row={lay(r)} />, className: 'max-w-[26rem]' },
       {
         label: 'Usage Percentage', className: 'whitespace-nowrap text-right tabular-nums',
         cell: (r) => (lay(r).usage == null ? na : (
@@ -179,7 +170,7 @@ export function RuleAuditTable({ rows, layouts = [] }: { rows: RuleAuditItem[]; 
       <p className="border-t border-line bg-muted/30 px-3 py-1.5 text-[11px] text-ink-muted">
         {area === 'validation' && 'Every validation rule, active and inactive, with its own error message. Red: an active rule whose message is empty, only “Error” or “Invalid”, generic, or too short to explain the issue.'}
         {area === 'system' && 'Fields Salesforce requires on every record (standard required fields, and custom fields marked Required). Salesforce shows its own message for these.'}
-        {area === 'trigger' && 'Triggers that stop a save (addError), active and inactive. Message quality is judged for active triggers whose message is written in their code; otherwise N/A.'}
+        {area === 'trigger' && 'Triggers that stop a save (addError), active and inactive. Red: an active trigger whose message, written in its code, doesn’t explain the issue. N/A: the message isn’t written in the code.'}
         {area === 'layout' && 'Every page layout. Usage: the share of active users (in the profiles with this object’s layouts) who get the layout; with record types totals can pass 100%.'}
       </p>
     </section>,

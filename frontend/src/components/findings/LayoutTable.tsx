@@ -6,6 +6,63 @@ import { cx, fmtNumber } from '@/lib/format';
 import type { LayoutListItem } from '@/types';
 
 const OBJECTS = ['Account', 'Contact', 'Lead', 'Opportunity'] as const;
+const SHOWN_PROFILES = 5;
+
+/** A layout's profiles, easy to read: how many, the busiest ones with their active users, the rest folded away, and the record
+ *  types it's used for once (not repeated per profile). */
+export function ProfilesCell({ row }: { row: LayoutListItem }) {
+  const list = row.profileList;
+  if (list == null) {
+    // saved by an older health check: the plain list
+    return row.profiles == null ? <span className="text-ink-subtle">Couldn’t be read</span> : <span>{row.profiles.join(', ') || '—'}</span>;
+  }
+  if (!list.length) return <span className="text-ink-subtle">Not assigned to any profile</span>;
+  const withUsers = list.filter((p) => p.users > 0);
+  const top = withUsers.slice(0, SHOWN_PROFILES);
+  const rest = list.filter((p) => !top.includes(p));
+  const types = row.recordTypes ?? [];
+  return (
+    <div className="min-w-[16rem] space-y-1.5 whitespace-normal">
+      <p className="text-[11px] text-ink-muted">
+        <span className="font-semibold text-ink">{fmtNumber(list.length)}</span> profile{list.length === 1 ? '' : 's'}
+        {' · '}
+        <span className="font-semibold text-ink">{fmtNumber(withUsers.length)}</span> with active users
+      </p>
+      {top.length > 0 && (
+        <ul className="flex flex-wrap gap-1">
+          {top.map((p) => (
+            <li key={p.name} className="inline-flex items-center gap-1 rounded-full border border-line bg-surface px-2 py-0.5 text-[11px] text-ink"
+              title={p.recordTypes.length ? `Record types: ${p.recordTypes.join(', ')}` : undefined}>
+              {p.name} <span className="tabular-nums text-ink-subtle">{fmtNumber(p.users)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {rest.length > 0 && (
+        <details className="group text-[11px]">
+          <summary className="cursor-pointer select-none font-medium text-brand hover:underline">
+            {top.length ? `+ ${fmtNumber(rest.length)} more profile${rest.length === 1 ? '' : 's'}` : `Show ${fmtNumber(rest.length)} profile${rest.length === 1 ? '' : 's'}`}
+            {rest.every((p) => p.users === 0) && ' (no active users)'}
+          </summary>
+          <ul className="mt-1 max-h-48 space-y-0.5 overflow-auto rounded-md border border-line bg-muted/40 p-2">
+            {rest.map((p) => (
+              <li key={p.name} className={cx('flex justify-between gap-3', p.users === 0 && 'text-ink-subtle')}>
+                <span className="truncate" title={p.name}>{p.name}</span>
+                <span className="shrink-0 tabular-nums">{p.users ? `${fmtNumber(p.users)} user${p.users === 1 ? '' : 's'}` : 'no users'}</span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      {types.length > 0 && (
+        <p className="text-[11px] text-ink-muted" title={types.join(', ')}>
+          <span className="font-medium text-ink">Record types:</span> {types.slice(0, 4).join(', ')}
+          {types.length > 4 && ` +${types.length - 4} more`}
+        </p>
+      )}
+    </div>
+  );
+}
 
 /** Layout usability concerns: every page layout with its fields, the profiles it's assigned to, and how many users get it. */
 export function LayoutTable({ rows }: { rows: LayoutListItem[] }) {
@@ -68,9 +125,7 @@ export function LayoutTable({ rows }: { rows: LayoutListItem[] }) {
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums">{fmtNumber(r.fields)}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{r.required == null ? <span className="text-ink-subtle">N/A</span> : fmtNumber(r.required)}</td>
-                  <td className="max-w-[22rem] whitespace-normal break-words px-3 py-2 text-ink-muted">
-                    {r.profiles == null ? <span className="text-ink-subtle">Couldn’t be read</span> : r.profiles.length ? r.profiles.join(', ') : '—'}
-                  </td>
+                  <td className="max-w-[26rem] px-3 py-2"><ProfilesCell row={r} /></td>
                   <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums" title={r.users != null ? `${fmtNumber(r.users)} active user(s)` : undefined}>
                     {r.usage == null ? <span className="text-ink-subtle">N/A</span> : `${r.usage}%`}
                     {r.users != null && <span className="block text-[11px] text-ink-subtle">{fmtNumber(r.users)} user{r.users === 1 ? '' : 's'}</span>}

@@ -160,6 +160,10 @@ def test_layout_rows_fields_profiles_and_usage():
         ("Unused Layout", 1, False, [], 0, 0.0),  # assigned to nobody
     ]
     assert [r["required"] for r in rows] == [1, 1]  # Industry; Type
+    # the profiles to read at a glance: most active users first, record types once
+    assert rows[0]["profile_list"] == [{"name": "Sales User", "users": 6, "recordTypes": ["Partner"]},
+                                       {"name": "System Administrator", "users": 2, "recordTypes": ["Partner"]}]
+    assert rows[0]["record_types"] == ["Partner"] and rows[1]["profile_list"] == [] and rows[1]["record_types"] == []
     assert rows[0]["url"].endswith("/lightning/setup/ObjectManager/Account/PageLayouts/00h000000000001AAA/view")
 
 

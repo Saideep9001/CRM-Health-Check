@@ -1894,6 +1894,13 @@ def _layout_rows(ctx: Ctx, obj: str, check: "required_rules.ObjectCheck") -> lis
             profiles = {str(p.get("Id") or "")[:15]: p.get("Name") or "" for p in ctx.setup("SELECT Id, Name FROM Profile", tooling=False)}
         except Unavailable:
             pass
+        unnamed = sorted({p for _, p, _ in check.assignments if p and not profiles.get(p)})
+        for i in range(0, len(unnamed), 100):
+            try:
+                ids = ", ".join(f"'{p}'" for p in unnamed[i:i + 100] if re.fullmatch(r"[A-Za-z0-9]{15}", p))
+                profiles.update({str(p.get("Id") or "")[:15]: p.get("Name") or "" for p in ctx.setup(f"SELECT Id, Name FROM Profile WHERE Id IN ({ids})")})
+            except Unavailable:
+                break
         try:
             users = {str(r.get("p") or "")[:15]: int(r.get("c") or 0)
                      for r in ctx.rows("SELECT ProfileId p, COUNT(Id) c FROM User WHERE IsActive = true GROUP BY ProfileId", limit=2000)}
@@ -1914,6 +1921,7 @@ def _layout_rows(ctx: Ctx, obj: str, check: "required_rules.ObjectCheck") -> lis
     rows = []
     for lay in check.layouts:
         lid = lay["id"][:15]
+        plist = None
         if check.assignments is None:
             profs, n, pct, active = None, None, None, None
         else:
@@ -1924,11 +1932,15 @@ def _layout_rows(ctx: Ctx, obj: str, check: "required_rules.ObjectCheck") -> lis
             profs = sorted(
                 (profiles.get(p) or p) + (f" ({', '.join(sorted(t))})" if t else "") for p, t in mine.items()
             )
+            # the same, to read at a glance: each profile with its active users (most first), and the record types once
+            plist = sorted(({"name": (profiles.get(p) or "").lstrip("*").strip() or f"Profile {p}", "users": users.get(p, 0),
+                             "recordTypes": sorted(t)} for p, t in mine.items()), key=lambda x: (-x["users"], x["name"].lower()))
             n = sum(users.get(p, 0) for p in mine)
             pct = round(100 * n / everyone, 1) if everyone else (0.0 if not mine else None)
             active = n > 0
         rows.append({"object": obj, "name": lay["name"], "fields": lay["fields"], "required": lay.get("required"), "active": active,
-                     "profiles": profs, "users": n,
+                     "profiles": profs, "users": n, "profile_list": plist,
+                     "record_types": sorted({t for x in plist for t in x["recordTypes"]}) if plist is not None else None,
                      "usage": pct, "url": ctx.setup_url(f"/lightning/setup/ObjectManager/{obj}/PageLayouts/{lay['id']}/view") if lay["id"] else None})
     rows.sort(key=lambda r: (-(r["usage"] or 0), r["name"].lower()))
     return rows

@@ -442,6 +442,8 @@ class LayoutListItem(ApiModel):
     name: str
     fields: int  # fields placed on the layout
     required: int | None = None  # fields marked Required on the layout
+    profile_list: list[dict] | None = None  # [{"name", "users", "recordTypes"}]: each profile it's assigned to, most active users first
+    record_types: list[str] | None = None  # the record types it's used for (any profile)
     active: bool | None = None  # assigned to a profile with active users; None = assignments couldn't be read
     profiles: list[str] | None = None  # "Sales User (Partner, Customer)": the profile, and the record types it gets this layout for
     users: int | None = None  # active users who get it

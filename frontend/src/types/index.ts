@@ -317,6 +317,10 @@ export interface LayoutListItem {
   fields: number;
   /** Fields marked Required on the layout. */
   required?: number | null;
+  /** Each profile it's assigned to, with its active users (most first) and the record types it gets this layout for. */
+  profileList?: { name: string; users: number; recordTypes: string[] }[] | null;
+  /** The record types it's used for (any profile). */
+  recordTypes?: string[] | null;
   /** Assigned to a profile with active users; null = the assignments couldn't be read. */
   active: boolean | null;
   /** "Sales User (Partner, Customer)": the profile, and the record types it gets this layout for. */
