@@ -66,7 +66,12 @@ class FakeCtx:
         if "FROM Layout" in soql:
             return [{"Id": "00h000000000001AAA", "Name": "Sales Layout"}, {"Id": "00h000000000002AAA", "Name": "Unused Layout"}]
         if "FROM ProfileLayout" in soql:  # Sales Layout is used for the Partner record type only; Unused Layout by nobody
-            return [{"LayoutId": "00h000000000001AAA", "RecordTypeId": "012000000000009AAA"}]
+            return [{"LayoutId": "00h000000000001AAA", "ProfileId": "00e000000000001AAA", "RecordTypeId": "012000000000009AAA"},
+                    {"LayoutId": "00h000000000001AAA", "ProfileId": "00e000000000002AAA", "RecordTypeId": "012000000000009AAA"},
+                    {"LayoutId": "00h000000000003AAA", "ProfileId": "00e000000000003AAA", "RecordTypeId": None}]
+        if "FROM Profile" in soql:
+            return [{"Id": "00e000000000001AAA", "Name": "Sales User"}, {"Id": "00e000000000002AAA", "Name": "System Administrator"},
+                    {"Id": "00e000000000003AAA", "Name": "Marketing User"}]
         if "FROM ValidationRule" in soql:
             return [{"ValidationName": "Phone_Format", "Active": True, "ErrorMessage": "Phone needs 10 digits"},
                     {"ValidationName": "Owner_Check", "Active": True, "ErrorMessage": "x"},
@@ -79,6 +84,10 @@ class FakeCtx:
         raise Unavailable("no")
 
     def rows(self, soql, limit=2000):
+        if "FROM User" in soql:  # active users per profile: Sales 6, Admin 2, Marketing 0
+            return [{"p": "00e000000000001AAA", "c": 6}, {"p": "00e000000000002AAA", "c": 2}]
+        if "FROM RecordType" in soql:
+            return [{"Id": "012000000000009AAA", "Name": "Partner"}]
         self.soql.append(soql)
         return self._rows
 
@@ -136,3 +145,15 @@ def test_rule_audit_lists_every_rule_with_its_message():
 ])
 def test_message_issue(message, issue):
     assert required_rules.message_issue(message) == issue
+
+
+def test_layout_rows_fields_profiles_and_usage():
+    from app.engine.workflows import _layout_rows
+
+    ctx = FakeCtx([])
+    rows = _layout_rows(ctx, "Account", required_rules.collect(ctx, "Account"))
+    assert [(r["name"], r["fields"], r["active"], r["profiles"], r["users"], r["usage"]) for r in rows] == [
+        ("Sales Layout", 2, True, ["Sales User (Partner)", "System Administrator (Partner)"], 8, 100.0),  # all 8 active users
+        ("Unused Layout", 1, False, [], 0, 0.0),  # assigned to nobody
+    ]
+    assert rows[0]["url"].endswith("/lightning/setup/ObjectManager/Account/PageLayouts/00h000000000001AAA/view")

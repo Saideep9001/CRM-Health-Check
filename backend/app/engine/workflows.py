@@ -1873,8 +1873,61 @@ def junk_data(ctx: Ctx) -> None:
     )
 
 
+def _layout_rows(ctx: Ctx, obj: str, check: "required_rules.ObjectCheck") -> list[dict]:
+    """Each page layout of `obj`: fields placed on it, the profiles (and record types) it's assigned to, and the share of active
+    users who get it. Active = assigned to a profile that has active users."""
+    if not check.layouts:
+        return []
+    profiles: dict[str, str] = {}
+    users: dict[str, int] = {}
+    types: dict[str, str] = {}
+    if check.assignments is not None:
+        try:
+            profiles = {str(p.get("Id") or "")[:15]: p.get("Name") or "" for p in ctx.setup("SELECT Id, Name FROM Profile", tooling=False)}
+        except Unavailable:
+            pass
+        try:
+            users = {str(r.get("p") or "")[:15]: int(r.get("c") or 0)
+                     for r in ctx.rows("SELECT ProfileId p, COUNT(Id) c FROM User WHERE IsActive = true GROUP BY ProfileId", limit=2000)}
+        except SalesforceAuthExpired:
+            raise
+        except SalesforceError:
+            users = {}
+        if any(rt for _, _, rt in check.assignments):
+            try:
+                types = {str(r.get("Id") or "")[:15]: r.get("Name") or "" for r in ctx.rows(
+                    f"SELECT Id, Name FROM RecordType WHERE SobjectType = {soql_str(obj)}", limit=500)}
+            except SalesforceAuthExpired:
+                raise
+            except SalesforceError:
+                types = {}
+    on_object = {p for _, p, _ in check.assignments or []}
+    everyone = sum(users.get(p, 0) for p in on_object)
+    rows = []
+    for lay in check.layouts:
+        lid = lay["id"][:15]
+        if check.assignments is None:
+            profs, n, pct, active = None, None, None, None
+        else:
+            mine: dict[str, set[str]] = {}
+            for l_id, p, rt in check.assignments:
+                if l_id == lid:
+                    mine.setdefault(p, set()).update({types.get(rt, "") or "Record type"} if rt else set())
+            profs = sorted(
+                (profiles.get(p) or p) + (f" ({', '.join(sorted(t))})" if t else "") for p, t in mine.items()
+            )
+            n = sum(users.get(p, 0) for p in mine)
+            pct = round(100 * n / everyone, 1) if everyone else (0.0 if not mine else None)
+            active = n > 0
+        rows.append({"object": obj, "name": lay["name"], "fields": lay["fields"], "active": active, "profiles": profs, "users": n,
+                     "usage": pct, "url": ctx.setup_url(f"/lightning/setup/ObjectManager/{obj}/PageLayouts/{lay['id']}/view") if lay["id"] else None})
+    rows.sort(key=lambda r: (-(r["usage"] or 0), r["name"].lower()))
+    return rows
+
+
 def layout_usability(ctx: Ctx) -> None:
     concerns: list[str] = []
+    table: list[dict] = []
     for obj in CORE:
         if not ctx.has_object(obj):
             continue
@@ -1885,17 +1938,25 @@ def layout_usability(ctx: Ctx) -> None:
         layouts = ctx.setup(f"SELECT Id, Name FROM Layout WHERE TableEnumOrId = '{obj}'")
         if len(layouts) > 5:
             concerns.append(f"{obj} has {len(layouts)} page layouts")
-    ctx.metric(
+        table += _layout_rows(ctx, obj, required_rules.collect(ctx, obj))
+    unused = [r for r in table if r["active"] is False]
+    m = ctx.metric(
         "Layout usability concerns", len(concerns), "count", "lower-better", 100 - 15 * min(len(concerns), 6),
-        how="For Accounts, Contacts, Leads and Opportunities, we flag each object with more than 100 custom fields or more than 5 page layouts.",
+        how="For Accounts, Contacts, Leads and Opportunities, we flag each object with more than 100 custom fields or more than 5 page layouts. "
+            "Below, every page layout with its fields, the profiles it's assigned to and how many users get it.",
         rule="Starts at 100 and drops 15 points for each concern, down to 10 after 6 or more concerns.",
         criteria=[
             ("Objects checked", ", ".join(CORE)),
             ("Too many fields", "More than 100 custom fields on the object"),
             ("Too many layouts", "More than 5 page layouts on the object"),
             ("What's counted", f"{len(concerns)} concern(s)" + (f": {'; '.join(concerns)}" if concerns else "")),
+            ("Layout status", "Active when it's assigned to a profile that has active users; Inactive otherwise"
+             + (f". {len(unused)} layout(s) are inactive: {', '.join(r['object'] + ' ' + r['name'] for r in unused[:6])}" if unused else "")),
+            ("Usage percentage", "Of the active users in the profiles that have this object's layouts assigned, the share who get this layout "
+             "(for at least one record type). With record types a user can get several layouts, so the percentages can add up to more than 100%"),
         ],
     )
+    m.layout_list = table or None
     if concerns:
         _setting(
             ctx,

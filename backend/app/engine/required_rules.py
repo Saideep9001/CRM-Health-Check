@@ -56,6 +56,10 @@ class ObjectCheck:
     broken: dict[str, list[tuple[str, str]]] = field(default_factory=dict)  # record id -> [(kind, "Field: rule")]
     # every rule found, active or not, for the validation rules card's table (see audit_row)
     audit: list[dict] = field(default_factory=list)
+    # every page layout, for Layout usability concerns: [{"id", "name", "fields"}]; None = couldn't be read
+    layouts: list[dict] | None = None
+    # its assignments: [(layout id 15, profile id 15, record type id 15 or None)]; None = couldn't be read
+    assignments: list[tuple[str, str, str | None]] | None = None
 
 
 AREA = {"field": "System Rule", "layout": "Page Layout", "validation": "Validation Rule", "trigger": "Trigger"}
@@ -141,14 +145,20 @@ def layout_rules(ctx: Ctx, obj: str, fields: dict[str, dict], check: ObjectCheck
     # which record types each layout is used for (any profile); unreadable = every record
     used: dict[str, set[str | None]] | None = {}
     try:
-        for a in ctx.setup(f"SELECT LayoutId, RecordTypeId FROM ProfileLayout WHERE TableEnumOrId = '{obj}'"):
+        check.assignments = []
+        for a in ctx.setup(f"SELECT LayoutId, ProfileId, RecordTypeId FROM ProfileLayout WHERE TableEnumOrId = '{obj}'"):
             used.setdefault(str(a.get("LayoutId") or "")[:15], set()).add(_rt(a.get("RecordTypeId")))
+            check.assignments.append((str(a.get("LayoutId") or "")[:15], str(a.get("ProfileId") or "")[:15], _rt(a.get("RecordTypeId"))))
     except Unavailable:
         used = None
+        check.assignments = None
     has_rt = "RecordTypeId" in fields
     out: list[Rule] = []
+    check.layouts = []
     for rec in recs:
         name = unquote(rec.findtext("m:fullName", "", _NS))
+        placed = {f for f in (i.findtext("m:field", "", _NS) for i in rec.iter(f"{{{_NS['m']}}}layoutItems")) if f}
+        check.layouts.append({"id": str((full.get(name) or {}).get("Id") or ""), "name": name.removeprefix(f"{obj}-"), "fields": len(placed)})
         req = []
         for item in rec.iter(f"{{{_NS['m']}}}layoutItems"):
             if (item.findtext("m:behavior", "", _NS) or "") != "Required":

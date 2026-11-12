@@ -57,6 +57,8 @@ class Metric:
     # For the validation rules card, every rule that stops a save: [{"object", "area", "name", "description", "active", "message",
     # "issue", "assessed", "url"}] (see required_rules.audit_row).
     rule_audit: list[dict] | None = None
+    # For Layout usability concerns, every page layout: [{"object", "name", "fields", "active", "profiles", "users", "usage", "url"}].
+    layout_list: list[dict] | None = None
     # What the number is out of, when it isn't the object's records: e.g. (225, "custom fields").
     out_of: int | None = None
     out_of_label: str | None = None

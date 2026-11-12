@@ -432,6 +432,18 @@ class RuleAuditItem(ApiModel):
     url: str | None = None  # the rule in Salesforce Setup
 
 
+class LayoutListItem(ApiModel):
+    """A page layout listed under Layout usability concerns."""
+    object: str
+    name: str
+    fields: int  # fields placed on the layout
+    active: bool | None = None  # assigned to a profile with active users; None = assignments couldn't be read
+    profiles: list[str] | None = None  # "Sales User (Partner, Customer)": the profile, and the record types it gets this layout for
+    users: int | None = None  # active users who get it
+    usage: float | None = None  # % of the active users in the profiles assigned this object's layouts
+    url: str | None = None
+
+
 class IndicatorValue(ApiModel):
     label: str
     value: float
@@ -445,6 +457,7 @@ class IndicatorValue(ApiModel):
     field_list: list[FieldListItem] | None = None  # cards about fields: the fields themselves
     rule_list: list[RuleListItem] | None = None  # cards about Lead Assignment Rules: the rules, with their entries
     rule_audit: list[RuleAuditItem] | None = None  # the validation rules card: every rule that stops a save
+    layout_list: list[LayoutListItem] | None = None  # Layout usability concerns: every page layout
     out_of: int | None = None  # what the number is out of, when not the object's records (e.g. 225 custom fields)
     out_of_label: str | None = None
 

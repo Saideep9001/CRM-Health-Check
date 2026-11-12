@@ -309,6 +309,23 @@ export interface RuleListItem {
   entries: { order: number; criteria: string; assignedTo: string; matches: number | null }[];
 }
 
+/** A page layout listed under Layout usability concerns. */
+export interface LayoutListItem {
+  object: string;
+  name: string;
+  /** Fields placed on the layout. */
+  fields: number;
+  /** Assigned to a profile with active users; null = the assignments couldn't be read. */
+  active: boolean | null;
+  /** "Sales User (Partner, Customer)": the profile, and the record types it gets this layout for. */
+  profiles: string[] | null;
+  /** Active users who get it. */
+  users: number | null;
+  /** % of the active users in the profiles assigned this object's layouts. */
+  usage: number | null;
+  url: string | null;
+}
+
 /** A rule that stops a save, listed under the validation rules card. */
 export interface RuleAuditItem {
   object: string;
@@ -361,6 +378,8 @@ export interface IndicatorValue {
   ruleList?: RuleListItem[] | null;
   /** The validation rules card: every rule that stops a save, with its status and error message judged. */
   ruleAudit?: RuleAuditItem[] | null;
+  /** Layout usability concerns: every page layout with its fields, profiles and usage. */
+  layoutList?: LayoutListItem[] | null;
   /** What the number is out of, when not the object's records (e.g. 225 "custom fields"). */
   outOf?: number | null;
   outOfLabel?: string | null;
