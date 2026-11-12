@@ -319,6 +319,8 @@ export interface LayoutListItem {
   required?: number | null;
   /** Related lists on the layout. */
   relatedLists?: number | null;
+  /** Layout usability concerns: why it's hard to use, in words (empty = none). */
+  concerns?: string[];
   /** Each profile it's assigned to, with its active users (most first) and the record types it gets this layout for. */
   profileList?: { name: string; users: number; recordTypes: string[] }[] | null;
   /** The record types it's used for (any profile). */

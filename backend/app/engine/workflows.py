@@ -1947,8 +1947,54 @@ def _layout_rows(ctx: Ctx, obj: str, check: "required_rules.ObjectCheck") -> lis
     return rows
 
 
+# Layout usability concerns: what makes one page layout hard to use
+LAYOUT_MAX_FIELDS = 75  # fields on the layout
+LAYOUT_EMPTY_FIELDS = 10  # this many fields on it that are almost never filled in…
+LAYOUT_EMPTY_SHARE = 0.10  # …filled in on under 10% of records
+LAYOUT_MAX_REQUIRED = 10  # fields marked Required on it
+LAYOUT_MAX_RELATED = 15  # related lists on it
+LAYOUT_RARE_USAGE = 5.0  # % of users: rarely used…
+LAYOUT_MANY = 5  # …on an object with more layouts than this
+_NEVER_EMPTY = {"boolean", "address", "location", "base64", "id"}  # always filled, or can't be counted
+
+
+def layout_concerns(row: dict, rarely_filled: list[str], layouts_on_object: int) -> list[str]:
+    """Why one page layout is hard to use, in words (empty = no concern)."""
+    out: list[str] = []
+    if row["fields"] > LAYOUT_MAX_FIELDS:
+        out.append(f"Too many fields: {row['fields']} (over {LAYOUT_MAX_FIELDS})")
+    if len(rarely_filled) >= LAYOUT_EMPTY_FIELDS:
+        out.append(f"{len(rarely_filled)} fields almost never filled in: {', '.join(rarely_filled[:5])}" + (" …" if len(rarely_filled) > 5 else ""))
+    if (row.get("required") or 0) > LAYOUT_MAX_REQUIRED:
+        out.append(f"Too many required fields: {row['required']} (over {LAYOUT_MAX_REQUIRED})")
+    if (row.get("related_lists") or 0) > LAYOUT_MAX_RELATED:
+        out.append(f"Too many related lists: {row['related_lists']} (over {LAYOUT_MAX_RELATED})")
+    if row.get("active") is False:
+        out.append("Unused: no profile with active users gets it")
+    elif row.get("usage") is not None and row["usage"] < LAYOUT_RARE_USAGE and layouts_on_object > LAYOUT_MANY:
+        out.append(f"Rarely used: {row['usage']}% of users, on an object with {layouts_on_object} layouts")
+    return out
+
+
+def _rarely_filled(ctx: Ctx, obj: str, names: set[str]) -> dict[str, str] | None:
+    """Of these fields, those filled in on under 10% of `obj`'s records, by name -> label; None when they can't be counted."""
+    fields = ctx.fields(obj)
+    countable = sorted(n for n in names if (f := fields.get(n)) and f.get("filterable") and f.get("nillable", True)
+                       and f.get("type") not in _NEVER_EMPTY)
+    total = ctx.count(obj, recent=False)
+    if not countable or not total:
+        return None
+    try:
+        filled = ctx.filled_counts(obj, countable, recent=False)
+    except SalesforceAuthExpired:
+        raise
+    except SalesforceError:
+        return None
+    return {n: fields[n].get("label") or n for n in countable if n in filled and filled[n] / total < LAYOUT_EMPTY_SHARE}
+
+
 def layout_usability(ctx: Ctx) -> None:
-    concerns: list[str] = []
+    object_notes: list[str] = []
     table: list[dict] = []
     for obj in CORE:
         if not ctx.has_object(obj):
@@ -1956,36 +2002,53 @@ def layout_usability(ctx: Ctx) -> None:
         fields = ctx.fields(obj)
         custom = sum(1 for f in fields.values() if f.get("custom"))
         if custom > 100:
-            concerns.append(f"{obj} has {custom} custom fields")
+            object_notes.append(f"{obj} has {custom} custom fields")
+        check = required_rules.collect(ctx, obj)
         layouts = ctx.setup(f"SELECT Id, Name FROM Layout WHERE TableEnumOrId = '{obj}'")
-        if len(layouts) > 5:
-            concerns.append(f"{obj} has {len(layouts)} page layouts")
-        table += _layout_rows(ctx, obj, required_rules.collect(ctx, obj))
-    unused = [r for r in table if r["active"] is False]
+        if len(layouts) > LAYOUT_MANY:
+            object_notes.append(f"{obj} has {len(layouts)} page layouts")
+        rows = _layout_rows(ctx, obj, check)
+        placed = {lay["name"]: lay.get("field_names") or [] for lay in check.layouts or []}
+        rare = _rarely_filled(ctx, obj, {f for names in placed.values() for f in names}) or {}
+        for row in rows:
+            empty = [rare[f] for f in placed.get(row["name"], []) if f in rare]
+            row["concerns"] = layout_concerns(row, empty, len(layouts))
+        table += rows
+        ctx.tick(len(table) / max(len(table), 1))
+    flagged = [r for r in table if r["concerns"]]
+    score = rate_score(len(flagged) / len(table), 0.5) if table else 100
     m = ctx.metric(
-        "Layout usability concerns", len(concerns), "count", "lower-better", 100 - 15 * min(len(concerns), 6),
-        how="For Accounts, Contacts, Leads and Opportunities, we flag each object with more than 100 custom fields or more than 5 page layouts. "
-            "Below, every page layout with its fields, the profiles it's assigned to and how many users get it.",
-        rule="Starts at 100 and drops 15 points for each concern, down to 10 after 6 or more concerns.",
+        "Layout usability concerns", len(flagged), "count", "lower-better", score,
+        how="Page layouts on Accounts, Contacts, Leads and Opportunities with at least one usability concern: too many fields, many fields "
+            "almost never filled in, too many required fields or related lists, or a layout nobody (or hardly anybody) uses.",
+        rule="100 when no layout has a concern. It falls evenly to 0 when half of the layouts have one.",
         criteria=[
             ("Objects checked", ", ".join(CORE)),
-            ("Too many fields", "More than 100 custom fields on the object"),
-            ("Too many layouts", "More than 5 page layouts on the object"),
-            ("What's counted", f"{len(concerns)} concern(s)" + (f": {'; '.join(concerns)}" if concerns else "")),
-            ("Layout status", "Active when it's assigned to a profile that has active users; Inactive otherwise"
-             + (f". {len(unused)} layout(s) are inactive: {', '.join(r['object'] + ' ' + r['name'] for r in unused[:6])}" if unused else "")),
+            ("Too many fields", f"More than {LAYOUT_MAX_FIELDS} fields on the layout"),
+            ("Fields almost never filled in", f"{LAYOUT_EMPTY_FIELDS} or more fields on the layout are filled in on under "
+             f"{LAYOUT_EMPTY_SHARE:.0%} of the object's records"),
+            ("Too many required fields", f"More than {LAYOUT_MAX_REQUIRED} fields marked Required on the layout"),
+            ("Too many related lists", f"More than {LAYOUT_MAX_RELATED} related lists on the layout"),
+            ("Unused", "No profile with active users gets the layout"),
+            ("Rarely used", f"Under {LAYOUT_RARE_USAGE:.0f}% of users get it, on an object with more than {LAYOUT_MANY} layouts"),
+            ("What's counted", f"{len(flagged)} of {len(table)} layouts have a concern"
+             + (": " + "; ".join(f"{r['object']} {r['name']}" for r in flagged[:6]) + (" …" if len(flagged) > 6 else "") if flagged else "")),
+            ("Object-wide", "; ".join(object_notes) if object_notes else "No object has more than 100 custom fields or more than 5 layouts"),
             ("Usage percentage", "Of the active users in the profiles that have this object's layouts assigned, the share who get this layout "
              "(for at least one record type). With record types a user can get several layouts, so the percentages can add up to more than 100%"),
         ],
     )
     m.layout_list = table or None
-    if concerns:
+    if flagged or object_notes:
+        worst = sorted(flagged, key=lambda r: -len(r["concerns"]))[:5]
         _setting(
             ctx,
             "Crowded or fragmented page layouts",
-            "Some pages are likely hard to use: " + "; ".join(concerns) + ".",
-            "Simplify with Dynamic Forms (show fields only when relevant), group fields into tabs, and consolidate similar layouts.",
-            severity="low",
+            (f"{len(flagged)} page layout(s) are likely hard to use: " + "; ".join(f"{r['object']} {r['name']} ({r['concerns'][0]})" for r in worst)
+             if flagged else "Some pages are likely hard to use") + (f". Also: {'; '.join(object_notes)}" if object_notes else "") + ".",
+            "Remove fields nobody fills in, group the rest into sections or tabs (Dynamic Forms shows fields only when relevant), trim related "
+            "lists to the ones people use, and delete or merge unused layouts.",
+            severity="medium" if len(flagged) >= 3 else "low",
         )
 
 

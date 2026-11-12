@@ -59,7 +59,7 @@ class FakeCtx:
         return "https://acme.my.salesforce.com" + path
 
     def fields(self, obj):
-        f = lambda n, **kw: {"name": n, "label": n, "nillable": True, "createable": True, "updateable": True, **kw}  # noqa: E731
+        f = lambda n, **kw: {"name": n, "label": n, "nillable": True, "createable": True, "updateable": True, "filterable": True, **kw}  # noqa: E731
         return {n: f(n) for n in ("Id", "Industry", "Phone", "Type", "Website", "OwnerId", "RecordTypeId")} | {"Name": f("Name", nillable=False)}
 
     def setup(self, soql, tooling=True):
@@ -201,3 +201,36 @@ def test_validation_rules_read_when_the_object_filter_finds_nothing():
 def test_validation_rules_unreadable_says_why():
     c = required_rules.collect(NoSetupCtx([]), "Account")
     assert "validation rules" in c.notes_read and c.read_errors == ["validation rules: INSUFFICIENT_ACCESS"]
+
+
+def test_layout_concerns():
+    from app.engine.workflows import layout_concerns
+
+    ok = {"fields": 30, "required": 2, "related_lists": 6, "active": True, "usage": 40.0}
+    assert layout_concerns(ok, [], 3) == []
+    busy = {"fields": 92, "required": 12, "related_lists": 18, "active": True, "usage": 3.5}
+    empty = [f"Field {i}" for i in range(11)]
+    assert layout_concerns(busy, empty, 7) == [
+        "Too many fields: 92 (over 75)",
+        "11 fields almost never filled in: Field 0, Field 1, Field 2, Field 3, Field 4 …",
+        "Too many required fields: 12 (over 10)",
+        "Too many related lists: 18 (over 15)",
+        "Rarely used: 3.5% of users, on an object with 7 layouts",
+    ]
+    assert layout_concerns({**ok, "usage": 3.5}, [], 4) == []  # rarely used only matters on an object with many layouts
+    assert layout_concerns({**ok, "active": False, "usage": 0.0}, empty[:9], 7) == ["Unused: no profile with active users gets it"]  # 9 empty: under 10
+
+
+def test_rarely_filled_fields():
+    from app.engine.workflows import _rarely_filled
+
+    class Counting(FakeCtx):
+        def count(self, obj, *conds, recent=True):
+            return 100
+
+        def filled_counts(self, obj, fields, *conds, recent=True):
+            assert "Name" not in fields  # required everywhere: never empty
+            return {"Industry": 5, "Phone": 80, "Type": 0, "Website": 9}
+
+    assert _rarely_filled(Counting([]), "Account", {"Industry", "Phone", "Type", "Website", "Name", "Unknown__c"}) == {
+        "Industry": "Industry", "Type": "Type", "Website": "Website"}

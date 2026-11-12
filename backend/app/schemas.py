@@ -443,6 +443,7 @@ class LayoutListItem(ApiModel):
     fields: int  # fields placed on the layout
     required: int | None = None  # fields marked Required on the layout
     related_lists: int | None = None  # related lists on the layout
+    concerns: list[str] = []  # Layout usability concerns: why it's hard to use, in words
     profile_list: list[dict] | None = None  # [{"name", "users", "recordTypes"}]: each profile it's assigned to, most active users first
     record_types: list[str] | None = None  # the record types it's used for (any profile)
     active: bool | None = None  # assigned to a profile with active users; None = assignments couldn't be read

@@ -166,7 +166,7 @@ def layout_rules(ctx: Ctx, obj: str, fields: dict[str, dict], check: ObjectCheck
                     if (i.findtext("m:behavior", "", _NS) or "") == "Required" and i.findtext("m:field", "", _NS)}
         related = sum(1 for _ in rec.iter(f"{{{_NS['m']}}}relatedLists"))
         check.layouts.append({"id": str((full.get(name) or {}).get("Id") or ""), "name": name.removeprefix(f"{obj}-"), "fields": len(placed),
-                              "required": len(required), "related": related})
+                              "required": len(required), "related": related, "field_names": sorted(placed)})
         req = []
         for item in rec.iter(f"{{{_NS['m']}}}layoutItems"):
             if (item.findtext("m:behavior", "", _NS) or "") != "Required":

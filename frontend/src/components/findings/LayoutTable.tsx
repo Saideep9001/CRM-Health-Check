@@ -1,4 +1,4 @@
-import { ExternalLink } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ExternalLink } from 'lucide-react';
 import { useState } from 'react';
 import { Select } from '@/components/ui/Form';
 import { useExpand } from '@/components/ui/Expand';
@@ -68,21 +68,34 @@ export function ProfilesCell({ row }: { row: LayoutListItem }) {
 export function LayoutTable({ rows }: { rows: LayoutListItem[] }) {
   const ex = useExpand();
   const [object, setObject] = useState('');
-  const shown = rows.filter((r) => !object || r.object === object);
+  const [onlyConcerns, setOnlyConcerns] = useState('');
+  const judged = rows.some((r) => r.concerns != null); // saved by a check that works out concerns
+  const inObject = rows.filter((r) => !object || r.object === object);
+  const flagged = inObject.filter((r) => r.concerns?.length).length;
+  const shown = inObject.filter((r) => !onlyConcerns || r.concerns?.length);
 
   return ex.wrap(
     <section className={cx('overflow-hidden rounded-xl border border-line', ex.boxClass)}>
       <header className="flex flex-wrap items-center gap-2 border-b border-line bg-muted/50 px-3 py-2">
         <span className="text-sm font-semibold">Page layouts</span>
         <span className="rounded-full bg-surface px-2 text-[11px] tabular-nums text-ink-muted">{fmtNumber(shown.length)}</span>
+        {judged && flagged > 0 && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-bad-soft px-2 text-[11px] font-medium text-bad">
+            <AlertTriangle className="h-3 w-3" /> {fmtNumber(flagged)} with concerns
+          </span>
+        )}
         <div className="ml-auto flex items-center gap-2 [&_select]:h-7 [&_select]:py-0 [&_select]:text-xs">
           <Select<string> label="Object" className="w-36" value={object} onChange={setObject}
             options={[{ value: '', label: 'All objects' }, ...OBJECTS.map((o) => ({ value: o, label: o }))]} />
+          {judged && (
+            <Select<string> label="Concerns" className="w-52" value={onlyConcerns} onChange={setOnlyConcerns}
+              options={[{ value: '', label: 'All layouts' }, { value: 'yes', label: 'Only layouts with concerns' }]} />
+          )}
           {ex.button}
         </div>
       </header>
       {shown.length === 0 ? (
-        <p className="px-3 py-6 text-center text-xs text-ink-subtle">No page layouts to show here.</p>
+        <p className="px-3 py-6 text-center text-xs text-ink-subtle">{onlyConcerns ? 'No layouts with a concern here.' : 'No page layouts to show here.'}</p>
       ) : (
         <div className={ex.scrollClass('max-h-[28rem]')}>
           <table className="w-full min-w-[720px] text-left text-xs">
@@ -90,6 +103,7 @@ export function LayoutTable({ rows }: { rows: LayoutListItem[] }) {
               <tr className="text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">
                 <th className="px-3 py-2">Object</th>
                 <th className="px-3 py-2">Layout Name</th>
+                {judged && <th className="px-3 py-2">Concerns</th>}
                 <th className="px-3 py-2 text-right">Total Fields</th>
                 <th className="px-3 py-2 text-right">Required Fields</th>
                 <th className="px-3 py-2 text-right">Related Lists</th>
@@ -99,7 +113,7 @@ export function LayoutTable({ rows }: { rows: LayoutListItem[] }) {
             </thead>
             <tbody className="divide-y divide-line">
               {shown.map((r, i) => (
-                <tr key={`${r.object}-${r.name}-${i}`} className="align-top hover:bg-muted/60">
+                <tr key={`${r.object}-${r.name}-${i}`} className={cx('align-top hover:bg-muted/60', !!r.concerns?.length && 'bg-bad-soft/20')}>
                   <td className="px-3 py-2">{r.object}</td>
                   <td className="max-w-[16rem] px-3 py-2">
                     {r.url ? (
@@ -111,6 +125,21 @@ export function LayoutTable({ rows }: { rows: LayoutListItem[] }) {
                       <span className="font-medium">{r.name}</span>
                     )}
                   </td>
+                  {judged && (
+                    <td className="min-w-[14rem] max-w-[20rem] whitespace-normal px-3 py-2">
+                      {r.concerns?.length ? (
+                        <ul className="space-y-1">
+                          {r.concerns.map((c) => (
+                            <li key={c} className="flex items-start gap-1 text-[11px] font-medium leading-snug text-bad">
+                              <AlertTriangle className="mt-px h-3 w-3 shrink-0" /> {c}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[11px] text-good"><CheckCircle2 className="h-3 w-3" /> None</span>
+                      )}
+                    </td>
+                  )}
                   <td className="px-3 py-2 text-right tabular-nums">{fmtNumber(r.fields)}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{r.required == null ? <span className="text-ink-subtle">N/A</span> : fmtNumber(r.required)}</td>
                   <td className="px-3 py-2 text-right tabular-nums" title="Related lists on the layout (Contacts, Opportunities, Activities…)">
@@ -128,8 +157,9 @@ export function LayoutTable({ rows }: { rows: LayoutListItem[] }) {
         </div>
       )}
       <p className="border-t border-line bg-muted/30 px-3 py-1.5 text-[11px] text-ink-muted">
-        Related lists: the lists of related records on the layout; long lists of them make a page slow and hard to scan. Usage: the share of active
-        users (in the profiles with this object’s layouts) who get the layout; with record types a user can get several, so totals can pass 100%.
+        Concerns: over 75 fields; 10+ fields filled in on under 10% of records; over 10 required fields; over 15 related lists; unused (no profile
+        with active users); or rarely used (under 5% of users on an object with more than 5 layouts). Usage: the share of active users who get the
+        layout; with record types a user can get several, so totals can pass 100%.
       </p>
     </section>,
   );
