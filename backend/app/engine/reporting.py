@@ -4,8 +4,12 @@ Based on the Aquarient RevenueOps Consultant Guide v1.0. Indicator labels match
 src/config/categories.ts exactly. Everything is read-only SOQL; a few checks look
 at report and dashboard names to see whether key topics are covered at all.
 """
+import csv
+import io
 import re
+from collections import Counter
 
+from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
 from .core import Ctx, FindingDraft, Unavailable, pct, rate_score
 from .workflows import OPEN_OPPS, _LOST_REASON, _ids_in, _worth, activity_by_owner, sales_reps
 
@@ -72,6 +76,98 @@ def _has_report(ctx: Ctx, pattern: str) -> bool:
 
 
 # ---------------------------------------------------------------- area 8: unused reports, leadership insights
+
+USAGE_DAYS = 30  # report runs counted from Event Monitoring's Report event log
+USAGE_MAX_LOGS = 31  # daily log files read
+USAGE_MAX_LOG_BYTES = 200_000_000  # a log file bigger than this is skipped
+
+
+def _report_runs(ctx: Ctx) -> tuple[dict[str, dict], str | None]:
+    """Runs and distinct users per report (15-character id) in the last 30 days, from the Report event log of Event Monitoring.
+    ({}, why) when it isn't available: Salesforce records report runs only with Event Monitoring (Shield or the add-on)."""
+    if not ctx.has_object("EventLogFile"):
+        return {}, "This org doesn’t have Event Monitoring (or the connected user can’t read event logs), so how often each report runs isn’t recorded"
+    logs: list[dict] = []
+    for soql in (f"SELECT Id, LogDate, LogFileLength FROM EventLogFile WHERE EventType = 'Report' AND Interval = 'Daily' "
+                 f"AND LogDate = LAST_N_DAYS:{USAGE_DAYS} ORDER BY LogDate DESC",
+                 f"SELECT Id, LogDate, LogFileLength FROM EventLogFile WHERE EventType = 'Report' AND LogDate = LAST_N_DAYS:{USAGE_DAYS} "
+                 "ORDER BY LogDate DESC"):
+        try:
+            logs = ctx.rows(soql, limit=USAGE_MAX_LOGS)
+            break
+        except SalesforceAuthExpired:
+            raise
+        except SalesforceError:
+            continue
+    if not logs:
+        return {}, f"Event Monitoring has no Report event logs for the last {USAGE_DAYS} days (the Report event type may not be included in this org’s licence)"
+    runs: Counter = Counter()
+    users: dict[str, set[str]] = {}
+    version = ctx.sf.settings.sf_api_version
+    for log in logs:
+        if (log.get("LogFileLength") or 0) > USAGE_MAX_LOG_BYTES or not log.get("Id"):
+            continue
+        try:
+            text = ctx.sf.request("GET", f"/services/data/{version}/sobjects/EventLogFile/{log['Id']}/LogFile", accept="text/csv").text
+        except SalesforceAuthExpired:
+            raise
+        except SalesforceError:
+            continue
+        for row in csv.DictReader(io.StringIO(text)):
+            rid = (row.get("REPORT_ID_DERIVED") or row.get("REPORT_ID") or "")[:15]
+            if rid:
+                runs[rid] += 1
+                users.setdefault(rid, set()).add(row.get("USER_ID_DERIVED") or row.get("USER_ID") or "")
+    total = sum(runs.values())
+    return {rid: {"runs": n, "users": len(users[rid]), "usage": round(100 * n / total, 1)} for rid, n in runs.items()}, None
+
+
+def _dashboard_reports(ctx: Ctx) -> Counter:
+    """How many dashboard components show each report (15-character id)."""
+    if not ctx.has_object("DashboardComponent"):
+        return Counter()
+    try:
+        return Counter(str(r.get("CustomReportId") or "")[:15] for r in ctx.rows("SELECT CustomReportId FROM DashboardComponent "
+                                                                                   "WHERE CustomReportId != null", 50000))
+    except SalesforceAuthExpired:
+        raise
+    except SalesforceError:
+        return Counter()
+
+
+def report_usage(ctx: Ctx) -> None:
+    """Every report with how much it's used: its share of report runs (Event Monitoring), the people who ran it, the dashboards it
+    feeds, and its last run. Shown for information; Unused reports scores the clean-up."""
+    _reports(ctx)
+    total = ctx.count("Report", "NamespacePrefix = null", recent=False)
+    recent = ctx.count("Report", "NamespacePrefix = null", f"LastRunDate = LAST_N_DAYS:{USAGE_DAYS}", recent=False) if total else 0
+    runs, why_not = _report_runs(ctx)
+    boards = _dashboard_reports(ctx)
+    m = ctx.metric(
+        "Report usage", pct(recent, total) if total else 0, "%", "higher-better", None,
+        how=f"Every report, with how much it’s used. The number is the share of reports run in the last {USAGE_DAYS} days. In the table, "
+            f"Usage % is each report’s share of all report runs in the last {USAGE_DAYS} days, read from Event Monitoring’s Report event log.",
+        rule="Shown for information, not scored: the Unused reports card scores the clean-up.",
+        records=("Report", "NamespacePrefix = null"),
+        recent=False,
+        columns=["Name", "FolderName", "LastRunDate", "CreatedDate", "OwnerId"],
+        order="-LastRunDate",
+        extra="report_usage",
+        criteria=[
+            ("Records checked", f"{total:,} reports (reports from installed packages aren’t counted)."),
+            ("What's counted", f"{recent:,} of {total:,} reports ({pct(recent, total):.0f}%) were run in the last {USAGE_DAYS} days."),
+            ("Usage %", f"Each report’s share of all report runs in the last {USAGE_DAYS} days ({sum(v['runs'] for v in runs.values()):,} runs)"
+             if runs else f"N/A: {why_not}. Last Run date and dashboards still show which reports are used"),
+            ("Runs and users", f"How many times it was run in the last {USAGE_DAYS} days, and by how many different people (Event Monitoring)"),
+            ("On dashboards", "How many dashboard components show the report: a report on a dashboard is in use even if nobody opens it directly"),
+            ("Last run", "The Last Run date Salesforce keeps for each report, and the days since"),
+        ],
+    )
+    if m.records:
+        m.records[0]["reasons"] = {rid: {**runs.get(rid, {}), "dashboards": boards.get(rid, 0)} for rid in set(runs) | set(boards)}
+        m.records[0]["usage_known"] = bool(runs)
+
+
 
 def unused_reports(ctx: Ctx) -> None:
     _reports(ctx)
@@ -839,13 +935,14 @@ def upsell_visibility(ctx: Ctx) -> None:
 
 
 AREAS = {
-    "area-8": [unused_reports, unused_dashboards, reporting_organization, leadership_reporting],
+    "area-8": [report_usage, unused_reports, unused_dashboards, reporting_organization, leadership_reporting],
     "area-9": [sales_activity_gaps, opps_without_open_tasks, handoff_visibility, pipeline_progression],
     "area-10": [stuck_visibility, overdue_visibility, regional_visibility, closed_lost_trends],
     "area-11": [win_loss_gaps, competitor_tracking, product_visibility, upsell_visibility],
 }
 
 STEP_LABELS = {
+    report_usage: "Measuring how much each report is used",
     unused_reports: "Finding reports nobody runs",
     unused_dashboards: "Finding dashboards nobody opens",
     reporting_organization: "Checking report folders and names",

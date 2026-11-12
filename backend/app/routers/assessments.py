@@ -366,6 +366,10 @@ def _by_queue(rec: dict) -> bool:
             or bool(rec.get("by_status")) or bool(rec.get("by_stage")))
 
 
+# Report usage: how much each report is used, after its own columns
+REPORT_USAGE_COLUMNS = [{"name": "UsagePct", "label": "Usage %", "type": "string"}, {"name": "Runs30", "label": "Runs (30 days)", "type": "int"},
+                        {"name": "RunUsers", "label": "Users", "type": "int"}, {"name": "OnDashboards", "label": "On Dashboards", "type": "int"},
+                        {"name": "DaysSinceRun", "label": "Days Since Last Run", "type": "string"}]
 # Required field gaps: the rules each record breaks, one per line, the last column, frozen so it stays in view
 BROKEN_RULES_COLUMN = {"name": "BrokenRules", "label": "Broken rule", "type": "lines", "frozen": True}
 # its rule filter: the kind of rule, and how that kind's rules read in the Broken rule column (“Field: Page layout “X””)
@@ -450,6 +454,25 @@ def _with_extra(sf, rec: dict, columns: list[dict], records: list[dict]) -> list
         records.sort(key=lambda r: (place(r).get("batch") or 10**9, place(r).get("level") or 0, str(r["values"].get("Name") or "").lower()))
         names = {BATCH_COLUMN["name"], CHILDREN_COLUMN["name"]}
         return [BATCH_COLUMN, *(c for c in columns if c["name"] not in names), CHILDREN_COLUMN]
+    if rec.get("extra") == "report_usage":  # Report usage: each report's share of runs, users, dashboards and days since it last ran
+        saved, known = rec.get("reasons") or {}, bool(rec.get("usage_known"))
+        today = datetime.now(timezone.utc).date()
+        for r in records:
+            u = saved.get((r.get("id") or "")[:15]) or {}
+            last = str(r["values"].get("LastRunDate") or "")[:10]
+            try:
+                days = (today - date.fromisoformat(last)).days if last else None
+            except ValueError:
+                days = None
+            r["values"].update({
+                "UsagePct": f"{u.get('usage', 0)}%" if known else "N/A",
+                "Runs30": u.get("runs", 0) if known else None,
+                "RunUsers": u.get("users", 0) if known else None,
+                "OnDashboards": u.get("dashboards", 0),
+                "DaysSinceRun": "Never run" if days is None else "Today" if days == 0 else f"{days:,} day{'s' if days != 1 else ''}",
+            })
+        names = {c["name"] for c in REPORT_USAGE_COLUMNS}
+        return [*(c for c in columns if c["name"] not in names), *REPORT_USAGE_COLUMNS]
     if rec.get("extra") == "broken_rules":  # Required field gaps: the rules each record breaks, frozen on the right
         reasons = rec.get("reasons") or {}
         for r in records:

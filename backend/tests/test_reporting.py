@@ -21,14 +21,22 @@ REPORTS = [
 ]
 DESCRIBE = {
     **wf.DESCRIBE,
-    "Report": [wf._f("Id", type="id")],
+    "Report": [wf._f("Id", type="id"), wf._f("Name"), wf._f("FolderName"), wf._f("LastRunDate", type="datetime"), wf._f("CreatedDate", type="datetime"),
+               wf._f("OwnerId", type="reference")],
     "Dashboard": [wf._f("Id", type="id")],
+    "EventLogFile": [wf._f("Id", type="id")],
+    "DashboardComponent": [wf._f("Id", type="id")],
     "OpportunityLineItem": [wf._f("Id", type="id")],
     "OpportunityCompetitor": [wf._f("Id", type="id")],
     "Opportunity": wf.DESCRIBE["Opportunity"] + [wf._f("HasOpportunityLineItem", type="boolean"), wf._f("Timezone__c", custom=True, label="Opportunity Timezone"),
                                                  wf._f("Region__c", type="picklist", custom=True, label="Region")],
 }
+# Event Monitoring's Report event log: Pipeline by Stage run 3 times by 2 people, Lost deals by reason once
+REPORT_LOG = ("EVENT_TYPE,USER_ID_DERIVED,REPORT_ID_DERIVED\n"
+              "Report,005A,00O000000000001AAA\nReport,005A,00O000000000001AAA\nReport,005B,00O000000000001AAA\n"
+              "Report,005B,00O000000000004AAA\n")
 COUNTS = [
+    (("FROM Report", "LastRunDate = LAST_N_DAYS:30"), 1),
     (("FROM Report", "LastRunDate"), 2),
     (("FROM Report",), 4),
     (("FROM Dashboard", "LastViewedDate"), 1),
@@ -52,6 +60,8 @@ class FakeReportingOrg(wf.FakeSalesOrg):
         authed = request.headers.get("authorization", "").removeprefix("Bearer ") in self.valid_access
         if authed and url.path.endswith("/sobjects"):
             return httpx.Response(200, json={"sobjects": [{"name": n, "label": n, "labelPlural": n + "s", "queryable": True, "retrieveable": True} for n in DESCRIBE]})
+        if authed and url.path.endswith("/sobjects/EventLogFile/0AT000000000001AAA/LogFile"):
+            return httpx.Response(200, text=REPORT_LOG, headers={"Content-Type": "text/csv"})
         if authed and (m := re.search(r"/sobjects/(\w+)/describe$", url.path)):
             return httpx.Response(200, json={"name": m[1], "fields": DESCRIBE[m[1]]})
         return super().handler(request)
@@ -66,6 +76,13 @@ class FakeReportingOrg(wf.FakeSalesOrg):
 
     @staticmethod
     def records(q: str) -> list[dict]:
+        if "FROM EventLogFile WHERE EventType = 'Report'" in q:
+            return [{"Id": "0AT000000000001AAA", "LogDate": "2026-11-11T00:00:00.000+0000", "LogFileLength": 400}]
+        if "FROM DashboardComponent" in q:
+            return [{"CustomReportId": "00O000000000001AAA"}, {"CustomReportId": "00O000000000001AAA"}, {"CustomReportId": "00O000000000003AAA"}]
+        if q.startswith("SELECT Name, FolderName, LastRunDate, CreatedDate, OwnerId, Id FROM Report WHERE NamespacePrefix = null"):  # Report usage's records
+            return [{"Id": "00O000000000001AAA", "Name": "Pipeline by Stage", "LastRunDate": None},
+                    {"Id": "00O000000000003AAA", "Name": "Old Quarterly Report", "LastRunDate": None}]
         if "FROM Report WHERE NamespacePrefix = null ORDER BY Name" in q:
             return REPORTS
         if q.startswith("SELECT Name, FolderName, LastRunDate FROM Report"):
@@ -101,6 +118,16 @@ def test_all_reporting_areas(client, sf):
     assert not any("unexpected error" in (x["message"] or "") for x in res["areas"]), [x["message"] for x in res["areas"]]
     ind = {i["label"]: i["value"] for x in res["areas"] for i in x["indicators"]}
     assert ind["Unused reports"] == 2 and ind["Unused dashboards"] == 1
+    assert ind["Report usage"] == 25.0  # 1 of 4 reports run in the last 30 days
+    assert [i["label"] for i in areas["area-8"]["indicators"]][0] == "Report usage"
+    # every report, with its share of the runs (Event Monitoring), people, dashboards and days since it last ran
+    page = sf_client_page(client, res)
+    rows = {r["values"]["Name"]: r["values"] for r in page["records"]}
+    assert rows["Pipeline by Stage"]["UsagePct"] == "75.0%"
+    assert (rows["Pipeline by Stage"]["Runs30"], rows["Pipeline by Stage"]["RunUsers"], rows["Pipeline by Stage"]["OnDashboards"]) == (3, 2, 2)
+    assert (rows["Old Quarterly Report"]["UsagePct"], rows["Old Quarterly Report"]["OnDashboards"]) == ("0%", 1)
+    assert rows["Old Quarterly Report"]["DaysSinceRun"] == "Never run"
+    assert [c["name"] for c in page["columns"]][-5:] == ["UsagePct", "Runs30", "RunUsers", "OnDashboards", "DaysSinceRun"]
     assert ind["Reporting organization issues"] == 1  # the unfiled "Copy of …" report, counted once
     assert ind["Leadership reporting gaps"] == 3  # only pipeline and win/loss-ish names exist
     assert ind["Sales activity gaps"] == 1  # Bob logged 2 in 30 days
@@ -119,12 +146,12 @@ def test_all_reporting_areas(client, sf):
     assert "Customers who bought only one product line" in names
     assert "No report analyses why deals are lost" not in names  # "Lost deals by reason" exists
     assert "Region" in names["Open deals with no region"]["description"]  # not the Timezone field
-    assert all("NamespacePrefix = null" in q for q in sf.soql if "FROM Report" in q or "FROM Dashboard" in q)
+    assert all("NamespacePrefix = null" in q for q in sf.soql if re.search(r"FROM (Report|Dashboard)\b", q))
     assert all(q.lstrip().upper().startswith("SELECT") for q in sf.soql)
 
 
 def test_no_reports_access_skips_report_checks(client, sf):
-    DESCRIBE.pop("Report")
+    report = DESCRIBE.pop("Report")
     try:
         connect(client)
         a, res, _ = wf.run(client, areaIds=["area-8", "area-11"], categoryIds=["reporting"])
@@ -133,4 +160,14 @@ def test_no_reports_access_skips_report_checks(client, sf):
         assert "Reports can’t be read" in (areas["area-8"]["message"] or "")
         assert areas["area-11"]["status"] == "assessed"
     finally:
-        DESCRIBE["Report"] = [wf._f("Id", type="id")]
+        DESCRIBE["Report"] = report
+
+
+def sf_client_page(client, res):
+    """The Report usage card's records, as the page lists them."""
+    aid = res["id"] if "id" in res else None
+    assessments = client.get(f"{API}/assessments").json()
+    aid = aid or (assessments["items"] if isinstance(assessments, dict) else assessments)[0]["id"]
+    got = client.get(f"{API}/assessments/{aid}/areas/area-8/indicator-records", params={"label": "Report usage", "object": "Report"})
+    assert got.status_code == 200, got.text
+    return got.json()
