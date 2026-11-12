@@ -345,6 +345,11 @@ def test_all_workflow_areas(client, sf):
     assert broken["frozen"] and page.json()["records"][0]["values"]["BrokenRules"] == "Amount: Validation rule “Amount_Required”"
     gaps_card = next(i for x in res["areas"] for i in x["indicators"] if i["label"] == "Required field gaps")
     assert gaps_card["recordObjects"] == ["Account", "Contact", "Lead", "Opportunity"]  # every object gets its tab
+    # the validation rules card lists every rule that stops a save, with its status and error message judged
+    vr_card = next(i for x in res["areas"] for i in x["indicators"] if i["label"] == "Missing validation rules")
+    assert vr_card["ruleAudit"] == [{"object": "Opportunity", "area": "Validation Rule", "name": "Amount_Required",
+                                     "description": 'Error when: ISPICKVAL(StageName, "Proposal") && ISBLANK(Amount)', "active": True,
+                                     "message": "Error", "issue": "Only “Error”", "assessed": True, "url": None}]
     # the rule filter: validation rules keep the deal; page layouts (none broken here) list nothing
     url = f"{API}/assessments/{a['id']}/areas/area-7/indicator-records"
     only_rule = client.get(url, params={"label": "Required field gaps", "object": "Opportunity", "queue": "validation"})

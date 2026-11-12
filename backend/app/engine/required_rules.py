@@ -54,6 +54,35 @@ class ObjectCheck:
     # the same, one rule kind at a time (for the rule filter above the table), and each record's broken rules by name
     kind_notes: dict[str, dict[str, dict[str, str]]] = field(default_factory=dict)
     broken: dict[str, list[tuple[str, str]]] = field(default_factory=dict)  # record id -> [(kind, "Field: rule")]
+    # every rule found, active or not, for the validation rules card's table (see audit_row)
+    audit: list[dict] = field(default_factory=list)
+
+
+AREA = {"field": "System Rule", "layout": "Page Layout", "validation": "Validation Rule", "trigger": "Trigger"}
+_VAGUE = re.compile(r"^(error|invalid|not allowed|required|please fix( this)?|check (the )?fields?|(an )?error (has )?occurred|"
+                    r"something went wrong|validation (error|failed)|invalid (data|value|input)|fix (this|errors?))[.!]*$", re.I)
+
+
+def message_issue(message: str | None) -> str | None:
+    """Why an error message doesn't help the person who sees it, or None when it explains the issue."""
+    m = (message or "").strip()
+    if not m:
+        return "Empty error message"
+    if re.fullmatch(r"(error|invalid)[.!]*", m, re.I):
+        return f"Only “{m}”"
+    if _VAGUE.match(m):
+        return "Generic: doesn’t say what to fix"
+    if len(m) < 20:
+        return "Too short to explain the issue"
+    return None
+
+
+def audit_row(obj: str, kind: str, name: str, description: str, active: bool, message: str | None, assessed: bool,
+              url: str | None = None) -> dict:
+    """One rule in the validation rules card's table. `assessed` = the error message is the rule's own (validation rules, and
+    trigger messages found in the code), so its quality is judged; otherwise it's Salesforce's standard message (N/A)."""
+    return {"object": obj, "area": AREA[kind], "name": name, "description": description, "active": active,
+            "message": message if assessed else None, "issue": message_issue(message) if assessed else None, "assessed": assessed, "url": url}
 
 
 def _read(ctx: Ctx, kind: str, names: list[str]) -> list[ET.Element]:
@@ -78,11 +107,18 @@ def _rt(value: object) -> str | None:
     return None if not v or v.startswith(MASTER_RT[:15]) else v[:15]
 
 
-def field_rules(ctx: Ctx, obj: str, fields: dict[str, dict]) -> list[Rule]:
+def field_rules(ctx: Ctx, obj: str, fields: dict[str, dict], check: ObjectCheck | None = None) -> list[Rule]:
     """Fields Salesforce requires on every record: not nillable, set by people (not defaulted or calculated)."""
     names = [n for n, f in fields.items()
              if not f.get("nillable", True) and f.get("createable", True) and not f.get("defaultedOnCreate") and not f.get("calculated")
              and f.get("type") not in ("boolean", "id")]
+    if check is not None:
+        for n in names:
+            custom = bool(fields[n].get("custom"))
+            check.audit.append(audit_row(
+                obj, "field", n, f"{fields[n].get('label') or n} is required on every {obj} "
+                + ("(custom field marked Required)" if custom else "(standard field Salesforce always requires)"),
+                True, None, False, ctx.setup_url(f"/lightning/setup/ObjectManager/{obj}/FieldsAndRelationships/{n}/view")))
     return [Rule("field", ("Custom required field" if fields[n].get("custom") else "Standard required field") + f" {fields[n].get('label') or n}", [n])
             for n in names]
 
@@ -126,29 +162,47 @@ def layout_rules(ctx: Ctx, obj: str, fields: dict[str, dict], check: ObjectCheck
         if not req:
             continue
         row = full.get(name) or {}
-        types = None
-        if used is not None and has_rt:
-            types = used.get(str(row.get("Id") or "")[:15], set())
-            if not types:
-                continue  # assigned to nobody: it never applies
-        out.append(Rule("layout", name.removeprefix(f"{obj}-"), req, record_types=types))
+        short = name.removeprefix(f"{obj}-")
+        lid = str(row.get("Id") or "")[:15]
+        assigned = used is None or bool(used.get(lid))
+        labels = ", ".join(fields[f].get("label") or f for f in req)
+        url = ctx.setup_url(f"/lightning/setup/ObjectManager/{obj}/PageLayouts/{row['Id']}/view") if row.get("Id") else None
+        check.audit.append(audit_row(obj, "layout", short, f"Requires {labels} on this layout"
+                                     + ("" if assigned else " (not assigned to any profile, so it never applies)"), assigned, None, False, url))
+        if not assigned:
+            continue  # assigned to nobody: it never applies
+        types = used.get(lid) if used is not None and has_rt else None
+        out.append(Rule("layout", short, req, record_types=types))
     return out
 
 
 def validation_rules(ctx: Ctx, obj: str, fields: dict[str, dict], check: ObjectCheck) -> list[Rule]:
     """Each active validation rule with its error condition formula."""
     try:
-        rows = [r for r in ctx.setup(f"SELECT Id, ValidationName, NamespacePrefix, Active, ErrorMessage FROM ValidationRule "
-                                     f"WHERE EntityDefinition.QualifiedApiName = '{obj}'") if r.get("Active")]
+        every = ctx.setup(f"SELECT Id, ValidationName, NamespacePrefix, Active, Description, ErrorMessage FROM ValidationRule "
+                          f"WHERE EntityDefinition.QualifiedApiName = '{obj}'")
     except Unavailable:
         check.notes_read.append("validation rules")
         return []
+    if not every:
+        return []
+    allnames = {f"{obj}." + (f"{r['NamespacePrefix']}__" if r.get("NamespacePrefix") else "") + r["ValidationName"]: r for r in every}
+    try:
+        recs = {unquote(e.findtext("m:fullName", "", _NS)): e for e in _read(ctx, "ValidationRule", sorted(allnames))}
+    except Unavailable:
+        recs = None
+    for full, row in allnames.items():
+        e = (recs or {}).get(full)
+        text = (e.findtext("m:errorConditionFormula", "", _NS) if e is not None else "").strip()
+        desc = (row.get("Description") or "").strip() or (f"Error when: {' '.join(text.split())[:160]}" if text else "No description")
+        url = ctx.setup_url(f"/lightning/setup/ObjectManager/{obj}/ValidationRules/{row['Id']}/view") if row.get("Id") else None
+        check.audit.append(audit_row(obj, "validation", row["ValidationName"], desc, bool(row.get("Active")),
+                                     (row.get("ErrorMessage") or "").strip(), True, url))
+    rows = [r for r in every if r.get("Active")]
+    names = {k: r for k, r in allnames.items() if r.get("Active")}
     if not rows:
         return []
-    names = {f"{obj}." + (f"{r['NamespacePrefix']}__" if r.get("NamespacePrefix") else "") + r["ValidationName"]: r for r in rows}
-    try:
-        recs = {unquote(e.findtext("m:fullName", "", _NS)): e for e in _read(ctx, "ValidationRule", sorted(names))}
-    except Unavailable:
+    if recs is None:
         check.notes_read.append("validation rule formulas")
         check.skipped += [f"Validation rule “{r['ValidationName']}”: its formula couldn’t be read" for r in rows]
         return []
@@ -205,20 +259,48 @@ def trigger_rules(ctx: Ctx, obj: str, fields: dict[str, dict], check: ObjectChec
         return []
     out: list[Rule] = []
     for t in rows:
-        if t.get("Status") != "Active" or not (t.get("UsageBeforeInsert") or t.get("UsageBeforeUpdate")):
-            continue
         body = t.get("Body") or ""
+        code = [body]
         found = _empty_checks(body, fields)
         # handler classes the trigger calls (Handler.method(...) or new Handler(...))
         classes = sorted({m for m in re.findall(r"\bnew\s+(\w+)\s*\(|\b(\w+)\s*\.\s*\w+\s*\(", body) for m in m if m} - {"Trigger", "System", "String", "Database"})
+        handlers: list[str] = []
         if classes:
             try:
                 for c in ctx.setup("SELECT Name, Body FROM ApexClass WHERE Name IN (" + ", ".join(f"'{n}'" for n in classes[:50]) + ")"):
+                    code.append(c.get("Body") or "")
+                    handlers.append(c.get("Name") or "")
                     found += [f for f in _empty_checks(c.get("Body") or "", fields) if f not in found]
             except Unavailable:
                 pass
-        if found:
+        if not any("adderror" in c.lower() for c in code):
+            continue  # never stops a save: not an enforcement rule
+        active = t.get("Status") == "Active"
+        before = bool(t.get("UsageBeforeInsert") or t.get("UsageBeforeUpdate"))
+        messages = _error_messages(code)
+        events = " / ".join(e for e, on in (("before insert", t.get("UsageBeforeInsert")), ("before update", t.get("UsageBeforeUpdate"))) if on)
+        desc = (f"Stops the save ({events or 'after save'})" + (f" when {', '.join(fields[f].get('label') or f for f in found)} is empty" if found else "")
+                + (f"; handler: {', '.join(h for h in handlers if h)}" if any(handlers) else ""))
+        url = ctx.setup_url(f"/lightning/setup/ApexTriggers/page?address=%2F{t['Id']}") if t.get("Id") else None
+        # its messages are judged only when the code spells them out (not a Custom Label or a variable)
+        worst = next((m for m in messages if message_issue(m)), messages[0] if messages else None)
+        row = audit_row(obj, "trigger", t.get("Name") or "trigger", desc, active, worst, bool(messages), url)
+        if len(messages) > 1:
+            row["message"] = " | ".join(messages)
+        check.audit.append(row)
+        if active and before and found:
             out.append(Rule("trigger", t.get("Name") or "trigger", found))
+    return out
+
+
+def _error_messages(code: list[str]) -> list[str]:
+    """The messages the code passes to addError as plain text ('…'), in order, without repeats."""
+    out: list[str] = []
+    for c in code:
+        for m in re.finditer(r"addError\s*\(\s*'((?:[^'\\]|\\.)*)'\s*[),]", c, re.I):
+            text = re.sub(r"\\(.)", r"\1", m.group(1)).strip()
+            if text not in out:
+                out.append(text)
     return out
 
 
@@ -232,12 +314,25 @@ def _reason(rule: Rule, value_empty: bool) -> str:
     return "Empty, but Salesforce requires this field"
 
 
-def check_object(ctx: Ctx, obj: str, base: str | None = None) -> ObjectCheck:
-    """Collect `obj`'s rules and check its records (those matching `base`) against them."""
+def collect(ctx: Ctx, obj: str) -> ObjectCheck:
+    """Every rule on `obj` (read once per health check: the validation rules card and Required field gaps share it)."""
+    memo = getattr(ctx, "memo", None)
+    key = f"required_rules:{obj}"
+    if memo is not None and key in memo:
+        return memo[key]
     check = ObjectCheck(obj)
     fields = ctx.fields(obj)
-    check.rules = (field_rules(ctx, obj, fields) + layout_rules(ctx, obj, fields, check)
+    check.rules = (field_rules(ctx, obj, fields, check) + layout_rules(ctx, obj, fields, check)
                    + validation_rules(ctx, obj, fields, check) + trigger_rules(ctx, obj, fields, check))
+    if memo is not None:
+        memo[key] = check
+    return check
+
+
+def check_object(ctx: Ctx, obj: str, base: str | None = None) -> ObjectCheck:
+    """`obj`'s rules (see collect), and its records (those matching `base`) checked against them."""
+    check = collect(ctx, obj)
+    fields = ctx.fields(obj)
     if not check.rules:
         return check
     simple = sorted({f for r in check.rules if r.kind != "validation" for f in r.fields})

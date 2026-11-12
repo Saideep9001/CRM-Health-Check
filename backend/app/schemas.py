@@ -419,6 +419,19 @@ class RuleListItem(ApiModel):
     entries: list[RuleListEntry] = []
 
 
+class RuleAuditItem(ApiModel):
+    """A rule that stops a save, listed under the validation rules card."""
+    object: str
+    area: str  # Validation Rule, Trigger, Page Layout, System Rule
+    name: str
+    description: str = ""
+    active: bool
+    message: str | None = None  # the rule's own error message; None = N/A (Salesforce's standard message, or not in the code)
+    issue: str | None = None  # why the message is unclear (active rules)
+    assessed: bool = False  # the message's quality can be judged
+    url: str | None = None  # the rule in Salesforce Setup
+
+
 class IndicatorValue(ApiModel):
     label: str
     value: float
@@ -431,6 +444,7 @@ class IndicatorValue(ApiModel):
     field_scores: list[FieldScore] | None = None  # per field: this card's count (duplicated, empty or odd)
     field_list: list[FieldListItem] | None = None  # cards about fields: the fields themselves
     rule_list: list[RuleListItem] | None = None  # cards about Lead Assignment Rules: the rules, with their entries
+    rule_audit: list[RuleAuditItem] | None = None  # the validation rules card: every rule that stops a save
     out_of: int | None = None  # what the number is out of, when not the object's records (e.g. 225 custom fields)
     out_of_label: str | None = None
 

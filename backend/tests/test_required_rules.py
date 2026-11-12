@@ -55,6 +55,9 @@ class FakeCtx:
         self._rows = rows
         self.soql = []
 
+    def setup_url(self, path):
+        return "https://acme.my.salesforce.com" + path
+
     def fields(self, obj):
         f = lambda n, **kw: {"name": n, "label": n, "nillable": True, "createable": True, "updateable": True, **kw}  # noqa: E731
         return {n: f(n) for n in ("Id", "Industry", "Phone", "Type", "Website", "OwnerId", "RecordTypeId")} | {"Name": f("Name", nillable=False)}
@@ -67,7 +70,7 @@ class FakeCtx:
         if "FROM ValidationRule" in soql:
             return [{"ValidationName": "Phone_Format", "Active": True, "ErrorMessage": "Phone needs 10 digits"},
                     {"ValidationName": "Owner_Check", "Active": True, "ErrorMessage": "x"},
-                    {"ValidationName": "Old_Rule", "Active": False}]
+                    {"ValidationName": "Old_Rule", "Active": False, "ErrorMessage": "Please add a Type before saving"}]
         if "FROM ApexTrigger" in soql:
             return [{"Name": "AccountTrigger", "Status": "Active", "UsageBeforeInsert": True, "UsageBeforeUpdate": True, "Body": TRIGGER}]
         if "FROM ApexClass" in soql:
@@ -104,3 +107,32 @@ def test_check_object_against_every_kind_of_rule():
     assert c.kind_notes["validation"] == {"001A": {"Phone": "Breaks validation rule “Phone_Format”: Phone needs 10 digits"}}
     assert set(c.kind_notes["layout"]) == {"001A"} and set(c.kind_notes["trigger"]) == {"001B"}
     assert "Industry" in ctx.soql[0] and "Website" in ctx.soql[0] and "RecordTypeId" in ctx.soql[0]
+
+
+def test_rule_audit_lists_every_rule_with_its_message():
+    c = required_rules.check_object(FakeCtx([]), "Account")
+    rows = {(r["area"], r["name"]): r for r in c.audit}
+    assert set(rows) == {("System Rule", "Name"), ("Page Layout", "Sales Layout"), ("Page Layout", "Unused Layout"),
+                         ("Validation Rule", "Phone_Format"), ("Validation Rule", "Owner_Check"), ("Validation Rule", "Old_Rule"),
+                         ("Trigger", "AccountTrigger")}
+    # validation rules: their own message, judged; inactive ones listed as they are
+    assert rows[("Validation Rule", "Owner_Check")]["issue"] == "Too short to explain the issue"  # “x”
+    assert rows[("Validation Rule", "Phone_Format")]["issue"] is None  # “Phone needs 10 digits” says what to do
+    old = rows[("Validation Rule", "Old_Rule")]
+    assert not old["active"] and old["message"] == "Please add a Type before saving" and old["issue"] is None
+    # page layouts and system rules: Salesforce's standard message (N/A); a layout assigned to nobody is inactive
+    assert rows[("Page Layout", "Sales Layout")]["active"] and rows[("Page Layout", "Sales Layout")]["message"] is None
+    assert not rows[("Page Layout", "Unused Layout")]["active"] and "not assigned" in rows[("Page Layout", "Unused Layout")]["description"]
+    assert rows[("System Rule", "Name")]["assessed"] is False
+    # triggers: the message written in the handler's code, judged
+    trig = rows[("Trigger", "AccountTrigger")]
+    assert trig["active"] and trig["message"] == "Website please" and trig["issue"] == "Too short to explain the issue"
+    assert "Website is empty" in trig["description"] and "handler: AccountHandler" in trig["description"]
+
+
+@pytest.mark.parametrize("message, issue", [
+    ("", "Empty error message"), ("Error", "Only “Error”"), ("invalid.", "Only “invalid.”"), ("Please fix", "Generic: doesn’t say what to fix"),
+    ("Bad value", "Too short to explain the issue"), ("Please enter a 10 digit phone number", None),
+])
+def test_message_issue(message, issue):
+    assert required_rules.message_issue(message) == issue

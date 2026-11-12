@@ -1605,29 +1605,44 @@ def eac_health(ctx: Ctx) -> None:
 # ---------------------------------------------------------------- area 7: layouts, validation rules, required fields
 
 CORE = ("Account", "Contact", "Lead", "Opportunity")
-_VAGUE = re.compile(r"^(error|invalid|not allowed|required|please fix|check (the )?fields?)\.?$", re.I)
 
 
 def validation_rules(ctx: Ctx) -> None:
-    missing, vague = [], []
+    """Missing validation rules: the objects with none active, and every enforcement rule (validation rules, triggers, page layouts,
+    required fields) listed with its status and error message, so unclear messages and inactive rules can be reviewed."""
+    missing: list[str] = []
+    rows: list[dict] = []
+    unread: list[str] = []
     for obj in CORE:
         if not ctx.has_object(obj):
             continue
-        rules = [r for r in ctx.setup(f"SELECT Id, ValidationName, Active, ErrorMessage FROM ValidationRule WHERE EntityDefinition.QualifiedApiName = '{obj}'") if r.get("Active")]
-        if not rules:
+        check = required_rules.collect(ctx, obj)
+        rows += check.audit
+        if "validation rules" in check.notes_read:
+            unread.append(obj)
+            continue
+        if not any(r["area"] == "Validation Rule" and r["active"] for r in check.audit if r["object"] == obj):
             missing.append(obj)
-        vague += [f"{obj}: {r.get('ValidationName')}" for r in rules if len((r.get("ErrorMessage") or "").strip()) < 20 or _VAGUE.match((r.get("ErrorMessage") or "").strip())]
-    ctx.metric(
+    if unread and not missing and not any(r["area"] == "Validation Rule" for r in rows):
+        raise Unavailable("Couldn’t read the validation rules. The connected user may need “View Setup and Configuration”.")
+    unclear = [r for r in rows if r["active"] and r["issue"]]
+    inactive = [r for r in rows if not r["active"]]
+    m = ctx.metric(
         "Missing validation rules", len(missing), "count", "lower-better", 100 - 20 * len(missing),
-        how="Of Accounts, Contacts, Leads and Opportunities, how many have no active validation rules.",
+        how="Of Accounts, Contacts, Leads and Opportunities, how many have no active validation rules. Below, every rule that stops a "
+            "save (validation rules, Apex triggers, page layout and system required fields) is listed with its status and error message.",
         rule="Starts at 100 and drops 20 points for each of these objects with no active validation rules.",
         criteria=[
             ("Objects checked", ", ".join(CORE) + " (those this user can see)"),
             ("Checked", "Active validation rules on each object in Setup"),
             ("What's counted", f"{len(missing)} object(s) with none" + (f": {', '.join(missing)}" if missing else "")),
-            ("Vague messages", f"{len(vague)} active rule(s) have an error message under 20 characters or a generic one like “Error” or “Invalid”. Reported, but not scored"),
+            ("Unclear error messages", f"{len(unclear)} active rule(s): an empty message, only “Error” or “Invalid”, a generic one, or under 20 "
+             "characters. Validation rules, and triggers whose message is written in their code. Reported, but not scored"),
+            ("Inactive rules", f"{len(inactive)} rule(s) switched off (validation rules, triggers) or page layouts assigned to nobody"),
+            ("Page layouts and system rules", "Salesforce shows its own standard message for these, so their message is N/A"),
         ],
     )
+    m.rule_audit = rows
     if missing:
         _setting(
             ctx,
@@ -1636,11 +1651,12 @@ def validation_rules(ctx: Ctx) -> None:
             "Add a few targeted validation rules (e.g. Amount required after Qualification, Lost Reason required on Closed Lost) with clear error messages.",
             severity="low",
         )
-    if vague:
+    if unclear:
         _setting(
             ctx,
             "Unclear validation error messages",
-            f"{len(vague)} validation rule(s) show short or vague errors, so people don’t know how to fix the record: {', '.join(vague[:5])}.",
+            f"{len(unclear)} active rule(s) show short or vague errors, so people don’t know how to fix the record: "
+            + ", ".join(f"{r['object']}: {r['name']}" for r in unclear[:5]) + ".",
             "Rewrite each message to say what to fill in and why, e.g. “Please add an Amount before moving to Proposal.”",
             severity="low",
         )

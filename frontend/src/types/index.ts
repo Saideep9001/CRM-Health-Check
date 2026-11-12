@@ -309,6 +309,24 @@ export interface RuleListItem {
   entries: { order: number; criteria: string; assignedTo: string; matches: number | null }[];
 }
 
+/** A rule that stops a save, listed under the validation rules card. */
+export interface RuleAuditItem {
+  object: string;
+  /** Validation Rule, Trigger, Page Layout or System Rule. */
+  area: string;
+  name: string;
+  description: string;
+  active: boolean;
+  /** The rule's own error message; null = N/A (Salesforce's standard message, or not written in the code). */
+  message: string | null;
+  /** Why the message is unclear (active rules). */
+  issue: string | null;
+  /** The message's quality can be judged. */
+  assessed: boolean;
+  /** The rule in Salesforce Setup. */
+  url: string | null;
+}
+
 export interface FieldListItem {
   name: string;
   label: string;
@@ -341,6 +359,8 @@ export interface IndicatorValue {
   fieldList?: FieldListItem[] | null;
   /** Cards about Lead Assignment Rules: the rules, with their entries and a link to each in Setup. */
   ruleList?: RuleListItem[] | null;
+  /** The validation rules card: every rule that stops a save, with its status and error message judged. */
+  ruleAudit?: RuleAuditItem[] | null;
   /** What the number is out of, when not the object's records (e.g. 225 "custom fields"). */
   outOf?: number | null;
   outOfLabel?: string | null;

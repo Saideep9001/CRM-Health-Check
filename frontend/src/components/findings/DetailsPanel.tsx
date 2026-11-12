@@ -44,6 +44,7 @@ import { ActivityPeriod } from './ActivityPeriod';
 import { QueueDays, QueueFilter, RuleTargetFilter, type PickedQueue, StaleFilters } from './QueueFilter';
 import { FieldPicker } from './FieldPicker';
 import { RecordsTable } from './RecordsTable';
+import { RuleAuditTable } from './RuleAuditTable';
 import { DuplicateResults } from './DuplicateFinder';
 import { ALL } from './FieldCheck';
 import { FlowSteps, fieldFlowFor, fieldFlowForRecordType, flowFor, liveFlowFor, zeroFlow, type FlowStep } from './MeasureFlow';
@@ -969,7 +970,11 @@ export function DetailsPanel({
 
           {extra}
 
-          {v?.fieldList ? (
+          {v?.ruleAudit ? (
+            <Section icon={<Database className="h-3.5 w-3.5" />} title="The rules behind this number">
+              <RuleAuditTable rows={v.ruleAudit} />
+            </Section>
+          ) : v?.fieldList ? (
             <Section icon={<Database className="h-3.5 w-3.5" />} title="The fields behind this number">
               <FieldsBehind indicator={v} object={initialObject ?? objectOfFieldCard(v.label)} flow={fieldFlow} />
             </Section>
