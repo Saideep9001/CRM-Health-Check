@@ -1703,8 +1703,50 @@ _JUNK = set(JUNK_LIST)
 JUNK_MAX_ROWS = 1_000_000  # open Opportunities read for Description (a long text field can't be filtered in a query)
 
 
+_VOWELS = set("aeiouy")
+_KEY_ROWS = ("qwertyuiop", "asdfghjkl", "zxcvbnm")
+_DATE = re.compile(r"^\s*\d{1,4}[/.-]\d{1,2}([/.-]\d{1,4})?\s*$")
+
+
+def _mashed(word: str) -> bool:
+    """A made-up word typed to get past the field (gjhdhe, sdfsdf, kkkk, qwrtp), not a real word or an acronym (RFP, SOW)."""
+    w = word.lower()
+    if len(w) < 4 or (word.isupper() and len(w) <= 5):
+        return False
+    vowels = sum(ch in _VOWELS for ch in w)
+    run = longest = 0
+    for ch in w:
+        run = 0 if ch in _VOWELS else run + 1
+        longest = max(longest, run)
+    return (
+        any(w in row or w in row[::-1] for row in _KEY_ROWS)  # along the keyboard: qwerty, asdfgh, hjkl
+        or vowels == 0  # no vowel at all: kjhg, sdfg
+        or longest >= 5  # five consonants in a row: gjhdhe
+        or (len(w) >= 5 and vowels / len(w) < 0.2)  # hardly a vowel: ghjkla
+        or len(set(w)) <= 2  # one or two letters over and over: aaaa, ababab
+        or any(w == w[:n] * (len(w) // n) for n in (2, 3) if len(w) % n == 0 and len(w) >= 2 * n)  # a chunk repeated: sdfsdf
+    )
+
+
+def _junk_reason(v: object) -> str | None:
+    """Why a Next Step or Description value is junk, or None when it reads as real text."""
+    if not isinstance(v, str) or not v.strip():
+        return None
+    s = v.strip()
+    if s.lower() in _JUNK:
+        return f"Placeholder value “{s}”"
+    if not re.search(r"[A-Za-z]", s):
+        if _DATE.match(s):
+            return None  # a date on its own is a real next step
+        return f"No words, only numbers or symbols “{s[:60]}”"
+    words = re.findall(r"[A-Za-z]+", s)
+    if all(w.lower() in _JUNK or _mashed(w) for w in words):
+        return f"Meaningless text “{s[:60]}”"
+    return None
+
+
 def _is_junk(v: object) -> bool:
-    return isinstance(v, str) and v.strip().lower() in _JUNK
+    return _junk_reason(v) is not None
 
 
 JUNK_SHOWN = 2000  # open Opportunities with a placeholder listed in the records table (picked by Id: Description can't be filtered)
@@ -1729,7 +1771,7 @@ def junk_data(ctx: Ctx) -> None:
             bad_ids = [r["Id"] for r in bad if r.get("Id")]
             for r in bad[:JUNK_SHOWN]:
                 if r.get("Id"):
-                    notes[r["Id"]] = {c: f"Placeholder value “{str(r[c]).strip()}”" for c in cols if _is_junk(r.get(c))}
+                    notes[r["Id"]] = {c: why for c in cols if (why := _junk_reason(r.get(c)))}
             if bad:
                 found.append(f"{len(bad):,} open Opportunities (Next Step / Description)")
     score = rate_score(total_junk / checked, 0.1) if checked else 100
@@ -1738,25 +1780,28 @@ def junk_data(ctx: Ctx) -> None:
     m = ctx.metric(
         "Potential junk data", total_junk, "count", "lower-better", score,
         records=records, recent=False, columns=JUNK_COLUMNS, order="Name",
-        how="Open Opportunities that hold placeholder values instead of real data in Next Step or Description.",
+        how="Open Opportunities that hold placeholders or meaningless text instead of real data in Next Step or Description.",
         rule="100 when no open Opportunity holds a placeholder. It falls evenly to 0 when 10% of them do.",
         criteria=[
             ("Opportunity", "Next Step, Description: all open deals"),
-            ("What counts as junk", "The whole value, ignoring case and spaces, is a placeholder. The list is: " + ", ".join(JUNK_LIST) + "."),
+            ("What counts as junk", "The whole value, ignoring case and spaces, is a placeholder (" + ", ".join(JUNK_LIST) + "); "
+             "or it has no words at all, only numbers or symbols (a date on its own is fine); or every word is made up, typed just to "
+             "fill the field: keys in a row on the keyboard (qwerty, hjkl), no vowel (sdfg), five consonants in a row (gjhdhe), hardly any vowels, or the same letters repeated "
+             "(aaaa, sdfsdf). Short acronyms in capitals (RFP, SOW) count as real words."),
             ("Problem raised", "“Placeholder or junk values”, raised when the score is below 95."),
             ("Why it matters", "Junk usually means a required field is getting in people’s way, and it makes reports and searches unreliable."),
             ("Recommended fix", "Clean the values up. Then ask users which required fields they fill with junk, and fix that rule or layout."),
-            ("What's counted", f"{total_junk:,} of {checked:,} open Opportunities hold a placeholder" + (f": {'; '.join(found)}" if found else "")
+            ("What's counted", f"{total_junk:,} of {checked:,} open Opportunities hold junk" + (f": {'; '.join(found)}" if found else "")
              + (f". The records table lists the first {JUNK_SHOWN:,}" if total_junk > JUNK_SHOWN else "")),
         ],
     )
-    if m.records and notes:  # the junk value itself is marked in red, with why
+    if m.records:  # the junk value itself is marked in red, with why (and the table can be narrowed to one field)
         m.records[0]["notes"] = notes
     ctx.finding(
         name="Placeholder or junk values",
         score=score,
         affected=total_junk,
-        description=f"{total_junk:,} open Opportunities contain placeholder values like “test”, “na”, or “tbd”: " + "; ".join(found) + ".",
+        description=f"{total_junk:,} open Opportunities contain placeholder or meaningless values like “test”, “tbd” or “gjhdhe”: " + "; ".join(found) + ".",
         why="Junk usually means a required field is getting in people’s way, and it makes reports and searches unreliable.",
         impact="Misleading reports and wasted time cleaning up.",
         action="Clean the values up. Then ask users which required fields they fill with junk, and fix that rule or layout.",

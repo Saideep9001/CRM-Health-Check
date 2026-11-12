@@ -57,6 +57,11 @@ const FIELD_CARD_OBJECTS: Record<string, string> = { Accounts: 'Account', Contac
 /** "Unused & Low-Completion Fields (Accounts)" → Account. */
 const objectOfFieldCard = (label: string) => FIELD_CARD_OBJECTS[label.match(/\(([^)]+)\)$/)?.[1] ?? ''] ?? null;
 const OTHER = '__other__';
+/** Potential junk data: the fields checked for junk, picked above its records table. */
+const JUNK_FIELDS = [
+  { field: 'NextStep', label: 'Next Step' },
+  { field: 'Description', label: 'Description' },
+];
 
 /** Area 2: the fields behind a card, with a Record type picker above the flow — a record type's fields are the ones on its
  *  page layout; fields on no record type's layout are under "Other". The flow and the list follow the pick. */
@@ -334,7 +339,11 @@ function Records({
   // Fields ticked in Check fields (null = all, the default). All ticked is the measure's own records; none ticked shows none.
   const every = choices.map((c) => c.field);
   const ticked = shownFields == null ? every : shownFields.filter((f) => every.includes(f));
-  const only = ticked.length === every.length ? [] : ticked;
+  // Potential junk data: the fields picked above the table (both = every junk record)
+  const junk = indicator?.label === 'Potential junk data';
+  const [junkPick, setJunkPick] = useState<string[]>(JUNK_FIELDS.map((f) => f.field));
+  useEffect(() => setJunkPick(JUNK_FIELDS.map((f) => f.field)), [indicator?.label]);
+  const only = junk ? (junkPick.length === JUNK_FIELDS.length ? [] : junkPick) : ticked.length === every.length ? [] : ticked;
   const noneTicked = every.length > 0 && ticked.length === 0;
   // Duplicates: everything ticked (the default) shows the health check's groups; a pick shows those fields' groups
   // from Check fields, in this one table.
@@ -450,7 +459,7 @@ function Records({
           </p>
         )}
         {/* Area 3: the fields shown, and (Stuck Queue-Owned Leads) the days-in-queue threshold and the org's Lead queues, above the records */}
-        <div className={cx((byQueue || pickFields || web) && 'space-y-3')}>
+        <div className={cx((byQueue || pickFields || web || junk) && 'space-y-3')}>
         {web && <WebLeadHealth assessmentId={measureAssessmentId!} areaId={area.id} />}
         {pickFields && (
           <FieldPicker
@@ -460,6 +469,28 @@ function Records({
             picked={shownCols}
             onChange={setShownCols}
           />
+        )}
+        {junk && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-xs font-medium text-ink-muted">Fields:</span>
+            {JUNK_FIELDS.map((f) => {
+              const on = junkPick.includes(f.field);
+              return (
+                <button
+                  key={f.field}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => setJunkPick(JUNK_FIELDS.map((x) => x.field).filter((x) => (x === f.field ? !on : junkPick.includes(x))))}
+                  className={cx('inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition',
+                    on ? 'border-brand bg-brand-soft text-brand-ink' : 'border-line text-ink-muted hover:text-ink')}
+                >
+                  <input type="checkbox" readOnly checked={on} tabIndex={-1} className="pointer-events-none h-3 w-3 accent-[rgb(var(--brand))]" />
+                  {f.label}
+                </button>
+              );
+            })}
+            <span className="text-[11px] text-ink-subtle">Only the open Opportunities with junk in the ticked fields are listed.</span>
+          </div>
         )}
         {stuckQueue && <QueueDays value={queueDays} onChange={setQueueDays} />}
         {stuckQueue && (
@@ -480,11 +511,16 @@ function Records({
           <RuleTargetFilter key={`${object}-${indicator!.label}`} assessmentId={measureAssessmentId!} areaId={area.id} label={indicator!.label} object={object!} value={queue} onChange={setQueue} />
         )}
         <div className="min-w-0 flex-1">
+        {junk && junkPick.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-line px-4 py-8 text-center text-sm text-ink-muted">
+            No fields ticked. Tick Next Step or Description above to see the junk in it.
+          </p>
+        ) : (
         <RecordsTable
           query={measureRecords}
           title={
             only.length
-              ? `${objectLabel(object!)} · ${only.map((f) => choices.find((c) => c.field === f)?.label ?? f).join(', ')}`
+              ? `${objectLabel(object!)} · ${only.map((f) => [...choices, ...JUNK_FIELDS].find((c) => c.field === f)?.label ?? f).join(', ')}`
               : queue || recordType
                 ? [objectLabel(object!), recordType?.name, queue?.name].filter(Boolean).join(' · ')
                 : objectLabel(object!)
@@ -506,6 +542,7 @@ function Records({
             load: (field, others, signal) => indicatorApi.values(measureAssessmentId!, area.id, indicator!.label, object!, field, others, signal, only, period, queue?.id, days, recordType?.id),
           }}
         />
+        )}
         </div>
         </div>
         </>
