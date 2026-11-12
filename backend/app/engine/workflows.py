@@ -1938,7 +1938,8 @@ def _layout_rows(ctx: Ctx, obj: str, check: "required_rules.ObjectCheck") -> lis
             n = sum(users.get(p, 0) for p in mine)
             pct = round(100 * n / everyone, 1) if everyone else (0.0 if not mine else None)
             active = n > 0
-        rows.append({"object": obj, "name": lay["name"], "fields": lay["fields"], "required": lay.get("required"), "active": active,
+        rows.append({"object": obj, "name": lay["name"], "fields": lay["fields"], "required": lay.get("required"),
+                     "related_lists": lay.get("related"), "active": active,
                      "profiles": profs, "users": n, "profile_list": plist,
                      "record_types": sorted({t for x in plist for t in x["recordTypes"]}) if plist is not None else None,
                      "usage": pct, "url": ctx.setup_url(f"/lightning/setup/ObjectManager/{obj}/PageLayouts/{lay['id']}/view") if lay["id"] else None})

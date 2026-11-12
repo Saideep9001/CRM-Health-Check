@@ -69,14 +69,12 @@ export function LayoutTable({ rows }: { rows: LayoutListItem[] }) {
   const ex = useExpand();
   const [object, setObject] = useState('');
   const shown = rows.filter((r) => !object || r.object === object);
-  const inactive = shown.filter((r) => r.active === false).length;
 
   return ex.wrap(
     <section className={cx('overflow-hidden rounded-xl border border-line', ex.boxClass)}>
       <header className="flex flex-wrap items-center gap-2 border-b border-line bg-muted/50 px-3 py-2">
         <span className="text-sm font-semibold">Page layouts</span>
         <span className="rounded-full bg-surface px-2 text-[11px] tabular-nums text-ink-muted">{fmtNumber(shown.length)}</span>
-        {inactive > 0 && <span className="rounded-full bg-muted px-2 text-[11px] font-medium text-ink-muted">{fmtNumber(inactive)} inactive</span>}
         <div className="ml-auto flex items-center gap-2 [&_select]:h-7 [&_select]:py-0 [&_select]:text-xs">
           <Select<string> label="Object" className="w-36" value={object} onChange={setObject}
             options={[{ value: '', label: 'All objects' }, ...OBJECTS.map((o) => ({ value: o, label: o }))]} />
@@ -92,9 +90,9 @@ export function LayoutTable({ rows }: { rows: LayoutListItem[] }) {
               <tr className="text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">
                 <th className="px-3 py-2">Object</th>
                 <th className="px-3 py-2">Layout Name</th>
-                <th className="px-3 py-2">Status</th>
                 <th className="px-3 py-2 text-right">Total Fields</th>
                 <th className="px-3 py-2 text-right">Required Fields</th>
+                <th className="px-3 py-2 text-right">Related Lists</th>
                 <th className="px-3 py-2">Assigned Profiles</th>
                 <th className="px-3 py-2 text-right">Usage Percentage</th>
               </tr>
@@ -113,18 +111,11 @@ export function LayoutTable({ rows }: { rows: LayoutListItem[] }) {
                       <span className="font-medium">{r.name}</span>
                     )}
                   </td>
-                  <td className="whitespace-nowrap px-3 py-2">
-                    {r.active == null ? (
-                      <span className="text-ink-subtle" title="The layout assignments couldn’t be read">Unknown</span>
-                    ) : (
-                      <span className={cx('rounded-full px-2 py-0.5 text-[11px] font-medium', r.active ? 'bg-good-soft text-good' : 'bg-muted text-ink-muted')}
-                        title={r.active ? 'Assigned to a profile with active users' : 'Not assigned to any profile with active users'}>
-                        {r.active ? 'Active' : 'Inactive'}
-                      </span>
-                    )}
-                  </td>
                   <td className="px-3 py-2 text-right tabular-nums">{fmtNumber(r.fields)}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{r.required == null ? <span className="text-ink-subtle">N/A</span> : fmtNumber(r.required)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums" title="Related lists on the layout (Contacts, Opportunities, Activities…)">
+                    {r.relatedLists == null ? <span className="text-ink-subtle">N/A</span> : fmtNumber(r.relatedLists)}
+                  </td>
                   <td className="max-w-[26rem] px-3 py-2"><ProfilesCell row={r} /></td>
                   <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums" title={r.users != null ? `${fmtNumber(r.users)} active user(s)` : undefined}>
                     {r.usage == null ? <span className="text-ink-subtle">N/A</span> : `${r.usage}%`}
@@ -137,8 +128,8 @@ export function LayoutTable({ rows }: { rows: LayoutListItem[] }) {
         </div>
       )}
       <p className="border-t border-line bg-muted/30 px-3 py-1.5 text-[11px] text-ink-muted">
-        Active: assigned to a profile with active users. Record types a profile gets the layout for are in brackets. Usage: the share of active users
-        (in the profiles with this object’s layouts) who get the layout; with record types a user can get several, so totals can pass 100%.
+        Related lists: the lists of related records on the layout; long lists of them make a page slow and hard to scan. Usage: the share of active
+        users (in the profiles with this object’s layouts) who get the layout; with record types a user can get several, so totals can pass 100%.
       </p>
     </section>,
   );
