@@ -368,7 +368,7 @@ def _by_queue(rec: dict) -> bool:
 
 # Required field gaps: the rules each record breaks, one per line, the last column, frozen so it stays in view
 BROKEN_RULES_COLUMN = {"name": "BrokenRules", "label": "Broken rule", "type": "lines", "frozen": True}
-# its rule filter: the kind of rule, and how that kind's rules start in the Broken rule column
+# its rule filter: the kind of rule, and how that kind's rules read in the Broken rule column (“Field: Page layout “X””)
 RULE_KINDS = {"field": "Required on the field", "layout": "Page layout", "validation": "Validation rule", "trigger": "Apex trigger"}
 
 
@@ -571,7 +571,7 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
         ids = [i for i, kinds in rec["rule_kinds"].items() if queue in kinds and re.fullmatch(r"[A-Za-z0-9]{15,18}", i)]
         cond = "Id IN (" + ", ".join(f"'{i}'" for i in ids) + ")" if ids else "Id = null"
         notes = (rec.get("kind_notes") or {}).get(queue) or {}
-        reasons = {i: "\n".join(line for line in (rec.get("reasons") or {}).get(i, "").split("\n") if line.startswith(RULE_KINDS[queue]))
+        reasons = {i: "\n".join(line for line in (rec.get("reasons") or {}).get(i, "").split("\n") if f": {RULE_KINDS[queue]}" in line)
                    for i in ids}
         rec = {**rec, "where": f"{explorer.and_part(rec['where'])} AND {cond}" if rec.get("where") else cond, "notes": notes, "reasons": reasons}
         queue = None

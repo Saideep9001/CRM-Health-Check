@@ -53,7 +53,7 @@ class ObjectCheck:
     notes: dict[str, dict[str, str]] = field(default_factory=dict)  # record id -> field -> why (first SHOWN records)
     # the same, one rule kind at a time (for the rule filter above the table), and each record's broken rules by name
     kind_notes: dict[str, dict[str, dict[str, str]]] = field(default_factory=dict)
-    broken: dict[str, list[tuple[str, str]]] = field(default_factory=dict)  # record id -> [(kind, rule as shown)]
+    broken: dict[str, list[tuple[str, str]]] = field(default_factory=dict)  # record id -> [(kind, "Field: rule")]
 
 
 def _read(ctx: Ctx, kind: str, names: list[str]) -> list[ET.Element]:
@@ -276,8 +276,10 @@ def check_object(ctx: Ctx, obj: str, base: str | None = None) -> ObjectCheck:
             why[f] = "; ".join(filter(None, [why.get(f), reason]))
             k = per_kind.setdefault(r.kind, {})
             k[f] = "; ".join(filter(None, [k.get(f), reason]))
-            if (r.kind, r.describe()) not in hit:
-                hit.append((r.kind, r.describe()))
+            # every rule on every field, one line each: “Company: Page layout “Lead Layout””
+            line = (r.kind, f"{fields.get(f, {}).get('label') or f}: {r.describe()}")
+            if line not in hit:
+                hit.append(line)
         rt = _rt(rec.get("RecordTypeId")) if extra else None
         for r in check.rules:
             if r.kind == "validation":
@@ -301,7 +303,7 @@ def check_object(ctx: Ctx, obj: str, base: str | None = None) -> ObjectCheck:
             check.bad_ids.append(rec["Id"])
             if len(check.notes) < SHOWN:
                 check.notes[rec["Id"]] = why
-                check.broken[rec["Id"]] = hit
+                check.broken[rec["Id"]] = sorted(hit, key=lambda x: x[1].split(": ", 1)[0])  # field by field
                 for k, n in per_kind.items():
                     check.kind_notes.setdefault(k, {})[rec["Id"]] = n
     return check

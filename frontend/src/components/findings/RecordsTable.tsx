@@ -92,7 +92,7 @@ export function RecordsTable({
   // the record's link: on its name when the name isn't the first column (e.g. after a pinned parent)
   const linkAt = Math.max(0, cols.findIndex((c) => c.name === 'Name'));
   const hasFrozen = frozen.length > 0;
-  const stick = 'sticky right-8 z-[1] bg-surface shadow-[-6px_0_8px_-6px_rgb(0_0_0/0.18)]';
+  const stick = 'sticky right-8 z-[1] border-l border-line bg-muted shadow-[-6px_0_8px_-6px_rgb(0_0_0/0.18)]';
   const asField = (c: { name: string; label: string; type: string }) => c as unknown as DataField;
   const openRecord = useOpenRecord();
   // Why each flagged value was flagged, from the check (record id → field → reason), across the loaded pages.
@@ -254,11 +254,11 @@ export function RecordsTable({
                           // several values in one cell (e.g. a Contact's Accounts): one per line, like rows within the row
                           const lines = v === '—' ? [] : v.split('\n');
                           return (
-                            <td key={c.name} className={cx('max-w-[18rem] px-3 py-1 align-top', c.frozen && cx(stick, 'min-w-[16rem] group-hover:bg-muted'))}>
+                            <td key={c.name} className={cx('max-w-[18rem] px-3 py-1 align-top', c.frozen && cx(stick, 'min-w-[18rem]'))}>
                               {lines.length ? (
                                 <ul className="divide-y divide-line">
                                   {lines.map((line, li) => (
-                                    <li key={li} className="truncate py-1" title={line}>{line}</li>
+                                    <li key={li} className={cx('py-1', c.frozen ? 'whitespace-normal break-words' : 'truncate')} title={line}>{line}</li>
                                   ))}
                                 </ul>
                               ) : (
@@ -271,7 +271,7 @@ export function RecordsTable({
                           <td
                             key={c.name}
                             className={cx('max-w-[16rem] truncate px-3 py-2 align-top', c.pinned && cx(pin, 'font-medium group-hover:bg-muted'),
-                              c.frozen && cx(stick, 'group-hover:bg-muted'), c.note && 'min-w-[16rem] max-w-[20rem]', reason ? 'bg-bad-soft/60' : columnFilter(filters, c.name) && 'bg-brand-soft/40')}
+                              c.frozen && stick, c.note && 'min-w-[16rem] max-w-[20rem]', reason ? 'bg-bad-soft/60' : columnFilter(filters, c.name) && 'bg-brand-soft/40')}
                             title={reason ? `${v === '—' ? 'Empty' : v}
 Why it’s flagged: ${reason}` : v}
                           >

@@ -342,7 +342,7 @@ def test_all_workflow_areas(client, sf):
     assert page.status_code == 200 and [r["id"] for r in page.json()["records"]] == ["006000000000007AAA"]
     assert page.json()["cellNotes"] == {"006000000000007AAA": {"Amount": "Breaks validation rule “Amount_Required”: Error"}}
     broken = next(c for c in page.json()["columns"] if c["name"] == "BrokenRules")  # the rule it breaks, frozen on the right
-    assert broken["frozen"] and page.json()["records"][0]["values"]["BrokenRules"] == "Validation rule “Amount_Required”"
+    assert broken["frozen"] and page.json()["records"][0]["values"]["BrokenRules"] == "Amount: Validation rule “Amount_Required”"
     gaps_card = next(i for x in res["areas"] for i in x["indicators"] if i["label"] == "Required field gaps")
     assert gaps_card["recordObjects"] == ["Account", "Contact", "Lead", "Opportunity"]  # every object gets its tab
     # the rule filter: validation rules keep the deal; page layouts (none broken here) list nothing
