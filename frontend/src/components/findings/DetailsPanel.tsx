@@ -607,10 +607,11 @@ function Records({
                 <DateFilters key={`${object}-${queue?.id ?? 'all'}`} periods={CLOSE_PERIODS} onChange={setPeriod} />
               )
               : casesCard ? <CaseDateFilters key={`${object}-${queue?.id ?? 'all'}`} show={queue?.id ?? 'all'} onChange={setPeriod} />
-              : leadsCard && queue?.id !== 'not_converted' ? (
-                // All: Created and Converted Date; Open: Created Date; Converted: Converted Date; Not Converted: none
+              : leadsCard ? (
+                // All: Created and Converted Date; Open and Not Converted: Created Date; Converted: Converted Date
                 <DateFilters key={`${object}-${queue?.id ?? 'all'}`} periods={CLOSE_PERIODS} onChange={setPeriod}
-                  created={queue?.id !== 'converted'} closed={queue?.id !== 'open'} second={{ key: 'converted', label: 'Converted Date' }} />
+                  created={queue?.id !== 'converted'} closed={queue?.id === undefined || queue.id === 'converted'}
+                  second={{ key: 'converted', label: 'Converted Date' }} />
               )
               : ruleGaps ? (
                 <Select<string>

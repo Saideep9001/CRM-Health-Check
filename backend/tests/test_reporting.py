@@ -433,8 +433,12 @@ def test_marketing_leadership(client, sf):
     # the chips, and which dates each one has
     page(queue="open")
     assert "IsConverted = false AND (NOT Status LIKE 'Closed%')" in listing()
-    assert "ConvertedDate" not in shown(page(queue="open")) and "ConvertedDate" not in shown(page(queue="not_converted"))
-    assert "ConvertedDate" in shown(page(queue="converted"))
+    for chip in ("open", "not_converted"):  # no Converted or Converted Date while not converted
+        assert not {"IsConverted", "ConvertedDate"} & set(shown(page(queue=chip)))
+    converted = shown(page(queue="converted"))
+    assert "ConvertedDate" in converted and "IsConverted" not in converted  # every lead here is converted: no Converted column
+    page(queue="not_converted", period="created:this_month")  # Not Converted: by Created Date
+    assert "IsConverted = false" in listing() and "CreatedDate = THIS_MONTH" in listing()
     page(queue="converted", period="converted:this_month")
     assert "IsConverted = true" in listing() and "ConvertedDate = THIS_MONTH" in listing()
     page(period="created:last_quarter|converted:range:2026-01-01:2026-03-31")

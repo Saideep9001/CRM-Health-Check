@@ -509,11 +509,11 @@ def marketing_leads(ctx: Ctx) -> None:
              "Lead Source. Under each owner, a Total row: their leads and how many converted; at the bottom, the totals for everyone."),
             ("Status filter", "Above the table: All; Open (not converted, and not in a closed status: one starting “Closed”, or with "
              "“Unqualified” or “Disqualified” in its name); Converted; Not Converted (every lead not converted)."),
-            ("Date filters", "All: Created Date and Converted Date; Open: Created Date; Converted: Converted Date; Not Converted: none. "
+            ("Date filters", "All: Created Date and Converted Date; Open and Not Converted: Created Date; Converted: Converted Date. "
              "Each: all dates, this or last month, quarter, half year or year, or custom dates."),
             ("Campaign Name", "The campaign the lead most recently joined (from its campaign memberships); “+N more” when it’s in others."),
-            ("Columns", "Salesforce’s own fields: Lead Name, Company, Lead Status, Lead Source, Converted, Created Date and Converted Date "
-             "(shown for All and Converted)."),
+            ("Columns", "Salesforce’s own fields: Lead Name, Company, Lead Status, Lead Source, Converted (shown for All), Created Date "
+             "and Converted Date (shown for All and Converted)."),
         ],
     )
     for spec in m.records or []:

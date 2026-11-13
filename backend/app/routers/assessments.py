@@ -418,8 +418,10 @@ OPEN_LEAD = ("IsConverted = false AND (NOT Status LIKE 'Closed%') AND (NOT Statu
              "AND (NOT Status LIKE '%Disqualified%')")
 STATUS_FILTERS = {"opportunity": OPP_STATUS, "case": {"all": None, "open": "IsClosed = false", "closed": "IsClosed = true"},
                   "lead": {"all": None, "open": OPEN_LEAD, "converted": "IsConverted = true", "not_converted": "IsConverted = false"}}
-# the leads' Converted Date only means something for All and Converted
-HIDE_BY_STATUS = {"lead": {"open": ["ConvertedDate"], "not_converted": ["ConvertedDate"]}}
+# the leads' Converted column only means something for All (in the other views every lead has the same answer); Converted Date for
+# All and Converted
+HIDE_BY_STATUS = {"lead": {"open": ["IsConverted", "ConvertedDate"], "converted": ["IsConverted"],
+                           "not_converted": ["IsConverted", "ConvertedDate"]}}
 LEAD_DATE_FIELDS = {"created": ("CreatedDate", True), "converted": ("ConvertedDate", False)}
 CAMPAIGN_COLUMN = {"name": "CampaignName", "label": "Campaign Name", "type": "string"}  # after Converted
 # Customer support leadership: the Created Date and Closed Date filters (the same choices for both)
