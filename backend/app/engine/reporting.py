@@ -419,8 +419,9 @@ def leadership_opportunities(ctx: Ctx) -> None:
             ("Records checked", f"{total:,} opportunities: {this_q:,} closing this quarter and {last_q:,} last quarter."),
             ("This quarter", f"{this_q:,} opportunities" + (f", Amount {money(totals.get('Amount'))}" if "Amount" in totals else "")
              + (f", Expected Revenue {money(totals.get('ExpectedRevenue'))}" if "ExpectedRevenue" in totals else "") + "."),
-            ("Close Date filter", "For Closed Won and Closed Lost: All dates, this or last month, quarter, half year (January–June, "
-             "July–December) or year, or custom dates. Months, quarters and years follow the org’s fiscal settings."),
+            ("Date filters", "All and Open: Created Date and Closed Date (the Close Date); Closed Won and Closed Lost: Close Date. Each: "
+             "all dates, this or last month, quarter, half year (January–June, July–December) or year, or custom dates. Months, quarters "
+             "and years follow the org’s fiscal settings."),
             ("Grouped by", "Opportunity Owner (A to Z), then Stage within each owner, shown as Stage (how many of that owner’s "
              "opportunities are in it). Under each owner, a Total row: the number of opportunities, total Amount and total Expected Revenue "
              "(for the opportunities shown)."),

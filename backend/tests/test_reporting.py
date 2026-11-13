@@ -325,6 +325,13 @@ def test_sales_leadership_opportunities(client, sf):
     assert re.search(r"CloseDate >= \d{4}-(01|07)-01 AND CloseDate <= \d{4}-(06-30|12-31)", listing())
     page("last_half")
     assert re.search(r"CloseDate >= \d{4}-(01|07)-01 AND CloseDate <= \d{4}-(06-30|12-31)", listing())
+    # All and Open: Created Date and Closed Date together (Created Date is a date-time)
+    page("created:this_month|closed:range:2026-01-01:2026-06-30")
+    assert "CreatedDate = THIS_MONTH AND CloseDate >= 2026-01-01 AND CloseDate <= 2026-06-30" in listing()
+    page("created:range:2026-11-01:2026-11-10")
+    assert "CreatedDate >= 2026-11-01T00:00:00Z AND CreatedDate <= 2026-11-10T23:59:59Z" in listing()
+    page("created:all|closed:all")
+    assert "CloseDate" not in listing().split("FROM Opportunity")[1].split("ORDER BY")[0]
     # the status chips: Open, Closed Won, Closed Lost (with the totals over the same opportunities)
     for chip, cond in (("open", "IsClosed = false"), ("won", "IsClosed = true AND IsWon = true"), ("lost", "IsClosed = true AND IsWon = false")):
         got = client.get(url, params={"label": "Sales leadership opportunities", "object": "Opportunity", "queue": chip})

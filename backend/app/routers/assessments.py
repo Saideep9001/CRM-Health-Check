@@ -367,28 +367,46 @@ def _by_queue(rec: dict) -> bool:
 
 
 # Sales leadership opportunities: the Close Date filter above the table
-CLOSE_PERIODS = {"all": None, "this_month": "CloseDate = THIS_MONTH", "last_month": "CloseDate = LAST_MONTH",
-                 "this_quarter": "CloseDate = THIS_QUARTER", "last_quarter": "CloseDate = LAST_QUARTER",
-                 "this_year": "CloseDate = THIS_YEAR", "last_year": "CloseDate = LAST_YEAR"}
+CLOSE_PERIODS = {"this_month": "THIS_MONTH", "last_month": "LAST_MONTH", "this_quarter": "THIS_QUARTER", "last_quarter": "LAST_QUARTER",
+                 "this_year": "THIS_YEAR", "last_year": "LAST_YEAR"}
+OPP_DATE_FIELDS = {"created": ("CreatedDate", True), "closed": ("CloseDate", False)}  # field, and whether it's a date-time
 
 
-def _close_date_where(period: str) -> str | None:
-    """Sales leadership opportunities' Close Date filter: a Salesforce date literal (month, quarter, year), a half year (January–June
-    or July–December), or "range:YYYY-MM-DD:YYYY-MM-DD"; None for all dates."""
-    if period in CLOSE_PERIODS:
-        return CLOSE_PERIODS[period]
-    if period in ("this_half", "last_half"):
+def _opp_period(field: str, datetime_field: bool, value: str) -> str | None:
+    """One date filter: a Salesforce date literal (month, quarter, year), a half year (January–June or July–December), or
+    "range:YYYY-MM-DD:YYYY-MM-DD"; None for all dates."""
+    if value in ("", "all"):
+        return None
+    if value in CLOSE_PERIODS:
+        return f"{field} = {CLOSE_PERIODS[value]}"
+    start = end = None
+    if value in ("this_half", "last_half"):
         today = datetime.now(timezone.utc).date()
         first_half = today.month <= 6
-        if period == "this_half":
+        if value == "this_half":
             start, end = (date(today.year, 1, 1), date(today.year, 6, 30)) if first_half else (date(today.year, 7, 1), date(today.year, 12, 31))
         else:
             start, end = (date(today.year - 1, 7, 1), date(today.year - 1, 12, 31)) if first_half else (date(today.year, 1, 1), date(today.year, 6, 30))
-        return f"CloseDate >= {start.isoformat()} AND CloseDate <= {end.isoformat()}"
-    rng = re.fullmatch(r"range:(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2})", period)
-    if rng and rng[1] <= rng[2]:
-        return f"CloseDate >= {rng[1]} AND CloseDate <= {rng[2]}"
-    raise HTTPException(422, "Pick a Close Date period: this or last month, quarter, half year or year, or a From date on or before the To date.")
+        start, end = start.isoformat(), end.isoformat()
+    elif (rng := re.fullmatch(r"range:(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2})", value)) and rng[1] <= rng[2]:
+        start, end = rng[1], rng[2]
+    else:
+        raise HTTPException(422, "Pick a date period: this or last month, quarter, half year or year, or a From date on or before the To date.")
+    if datetime_field:
+        return f"{field} >= {start}T00:00:00Z AND {field} <= {end}T23:59:59Z"
+    return f"{field} >= {start} AND {field} <= {end}"
+
+
+def _close_date_where(period: str) -> str | None:
+    """Sales leadership opportunities' date filters, e.g. "created:this_month|closed:last_quarter": the Created Date and/or the
+    Close Date (see _opp_period). A bare period is the Close Date (Closed Won / Closed Lost). None when no date is limited."""
+    conds = []
+    for part in filter(None, period.split("|")):
+        which, _, value = part.partition(":") if part.split(":", 1)[0] in OPP_DATE_FIELDS else ("closed", "", part)
+        field, is_dt = OPP_DATE_FIELDS[which]
+        if cond := _opp_period(field, is_dt, value):
+            conds.append(cond)
+    return " AND ".join(conds) or None
 # …and its status chips, which split All with no overlap: Closed Won must be closed too (a deal still open can carry IsWon = true when
 # its stage's type was changed in Setup after it was saved, and would otherwise count as both Open and Closed Won)
 OPP_STATUS = {"all": None, "open": "IsClosed = false", "won": "IsClosed = true AND IsWon = true", "lost": "IsClosed = true AND IsWon = false"}

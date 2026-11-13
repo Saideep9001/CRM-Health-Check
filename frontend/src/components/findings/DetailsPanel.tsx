@@ -42,7 +42,7 @@ import { ChangeBadge } from './AffectedRecords';
 import { FixPlanPanel } from './FixPlanPanel';
 import { ActivityPeriod } from './ActivityPeriod';
 import { UsageFilter } from './UsageFilter';
-import { CaseDateFilters, CloseDateFilter } from './CloseDateFilter';
+import { CaseDateFilters, CLOSE_PERIODS, CloseDateFilter, DateFilters } from './CloseDateFilter';
 import { QueueDays, QueueFilter, RuleTargetFilter, type PickedQueue, StaleFilters } from './QueueFilter';
 import { FieldPicker } from './FieldPicker';
 import { RecordsTable } from './RecordsTable';
@@ -592,6 +592,10 @@ function Records({
               : usageCard ? <UsageFilter key={`${object}-${indicator!.label}`} onChange={setPeriod} />
               : byQuarter && (queue?.id === 'won' || queue?.id === 'lost') ? (
                 <CloseDateFilter key={`${object}-${queue.id}`} onChange={setPeriod} />
+              )
+              : byQuarter ? (
+                // All and Open: when the deals were created, and their Close Date
+                <DateFilters key={`${object}-${queue?.id ?? 'all'}`} periods={CLOSE_PERIODS} onChange={setPeriod} />
               )
               : casesCard ? <CaseDateFilters key={`${object}-${queue?.id ?? 'all'}`} show={queue?.id ?? 'all'} onChange={setPeriod} />
               : ruleGaps ? (

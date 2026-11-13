@@ -66,23 +66,29 @@ export function CloseDateFilter({ onChange, label = 'Close Date', periods = CLOS
   );
 }
 
-/** Customer support leadership's dates, by status chip: All = Created Date and Closed Date; Open = Created Date; Closed = Closed Date.
- *  `onChange` gets the API's `period`: "created:<period>|closed:<period>" (each part only when picked), or undefined for any date. */
-export function CaseDateFilters({ show, onChange }: { show: string; onChange: (period: string | undefined) => void }) {
-  const [created, setCreated] = useState<string | undefined>();
-  const [closed, setClosed] = useState<string | undefined>();
+/** A leadership table's Created Date and Closed Date filters, side by side (either can be left out). `onChange` gets the API's
+ *  `period`: "created:<period>|closed:<period>" (each part only when picked), or undefined for any date. */
+export function DateFilters({ created = true, closed = true, periods, onChange }: {
+  created?: boolean;
+  closed?: boolean;
+  periods: { value: string; label: string }[];
+  onChange: (period: string | undefined) => void;
+}) {
+  const [createdP, setCreated] = useState<string | undefined>();
+  const [closedP, setClosed] = useState<string | undefined>();
   const send = (c: string | undefined, d: string | undefined) => {
     const parts = [c && `created:${c}`, d && `closed:${d}`].filter(Boolean);
     onChange(parts.length ? parts.join('|') : undefined);
   };
   return (
     <span className="inline-flex flex-wrap items-center gap-3">
-      {show !== 'closed' && (
-        <CloseDateFilter label="Created Date" periods={CREATED_PERIODS} onChange={(p) => { setCreated(p); send(p, closed); }} />
-      )}
-      {show !== 'open' && (
-        <CloseDateFilter label="Closed Date" periods={CREATED_PERIODS} onChange={(p) => { setClosed(p); send(created, p); }} />
-      )}
+      {created && <CloseDateFilter label="Created Date" periods={periods} onChange={(p) => { setCreated(p); send(p, closedP); }} />}
+      {closed && <CloseDateFilter label="Closed Date" periods={periods} onChange={(p) => { setClosed(p); send(createdP, p); }} />}
     </span>
   );
+}
+
+/** Customer support leadership's dates, by status chip: All = Created Date and Closed Date; Open = Created Date; Closed = Closed Date. */
+export function CaseDateFilters({ show, onChange }: { show: string; onChange: (period: string | undefined) => void }) {
+  return <DateFilters created={show !== 'closed'} closed={show !== 'open'} periods={CREATED_PERIODS} onChange={onChange} />;
 }
