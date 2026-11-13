@@ -115,9 +115,17 @@ export function RecordsTable({
     const val = r.values[field];
     return key.has(field) && (val == null || String(val).trim() === '') ? 'Empty — key field' : null;
   };
-  // a sub-group (e.g. Stage within an owner) is named only on its first row, like the group itself
+  // sub-groups (e.g. Stage within an owner; Status, then Lead Source) are named only on their first row, like the group itself;
+  // a block restarts when the group or an earlier sub-group changes
+  const subGroups = first?.subGroups?.length
+    ? first.subGroups
+    : Object.keys(Object.values(first?.groupTotals ?? {}).find((t) => t.counts)?.counts ?? {});
   const startsBlock = (i: number, field: string) =>
-    i === 0 || groupOf[i] !== groupOf[i - 1] || String(rows[i].values[field] ?? '') !== String(rows[i - 1].values[field] ?? '');
+    i === 0 || groupOf[i] !== groupOf[i - 1] ||
+    subGroups.slice(0, Math.max(0, subGroups.indexOf(field)) + 1).some((f) => String(rows[i].values[f] ?? '') !== String(rows[i - 1].values[f] ?? ''));
+  // a Total cell: a sum, or for a yes/no field the number of yes ("1 Converted")
+  const totalCell = (c: { name: string; label: string; type: string }, v: unknown) =>
+    v == null ? '—' : c.type === 'boolean' ? `${fmtNumber(Number(v) || 0)} ${c.label}` : formatValue(asField(c), v);
   const totalsOf = (r: { values: Record<string, unknown> }) => (refCol ? first?.groupTotals?.[String(r.values[refCol] ?? '')] : undefined);
   // every group's totals added up (they cover every record listed, so this is the whole table's total); one group per user (owner)
   const allTotals = refCol && first?.groupTotals ? Object.values(first.groupTotals) : [];
@@ -309,8 +317,8 @@ Why it’s flagged: ${reason}` : v}
                             {ci === linkAt && href ? (
                               <RecordLink object={first!.object} id={r.id!}>{v === '—' ? r.id : v}</RecordLink>
                             ) : (
-                              tot?.counts?.[c.name] && !startsBlock(i, c.name) ? null : (
-                                <span className={cx(v === '—' ? 'text-ink-subtle' : '', tot?.counts?.[c.name] && 'font-semibold text-ink')}>
+                              tot && subGroups.includes(c.name) && !startsBlock(i, c.name) ? null : (
+                                <span className={cx(v === '—' ? 'text-ink-subtle' : '', tot && subGroups.includes(c.name) && 'font-semibold text-ink')}>
                                   {v}
                                   {tot?.counts?.[c.name]?.[String(r.values[c.name] ?? '')] != null && (
                                     <span className="font-normal text-ink-muted"> ({fmtNumber(tot.counts[c.name][String(r.values[c.name] ?? '')])})</span>
@@ -350,7 +358,7 @@ Why it’s flagged: ${reason}` : v}
                         {cols.map((c) => (
                           <td key={c.name} className={cx('whitespace-nowrap px-3 py-2', c.frozen && stick)}>
                             {c.name in tot && c.name !== 'count' && c.name !== 'counts'
-                              ? tot[c.name] == null ? '—' : formatValue(asField(c), tot[c.name])
+                              ? totalCell(c, tot[c.name])
                               : tot.counts && c.name in tot.counts ? `${fmtNumber(tot.count)} ${objectNoun(first!.object, tot.count).replace(/^./, (x) => x.toUpperCase())}` : ''}
                           </td>
                         ))}
@@ -368,7 +376,7 @@ Why it’s flagged: ${reason}` : v}
                     {cols.map((c) => (
                       <td key={c.name} className={cx('whitespace-nowrap bg-muted px-3 py-2', c.frozen && stick)}>
                         {c.name in grand.sums
-                          ? formatValue(asField(c), grand.sums[c.name])
+                          ? totalCell(c, grand.sums[c.name])
                           : grand.countIn === c.name ? `${fmtNumber(grand.count)} ${objectNoun(first!.object, grand.count).replace(/^./, (x) => x.toUpperCase())}` : ''}
                       </td>
                     ))}

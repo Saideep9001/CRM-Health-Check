@@ -577,6 +577,7 @@ class FindingRecordsPage(ApiModel):
     sorted_by: str | None = None  # field the rows are sorted by (e.g. the field duplicates were matched on)
     cell_notes: dict[str, dict[str, str]] = {}  # record id -> field -> why that value was flagged
     group_totals: dict[str, dict] = {}  # per group (e.g. owner id): {"count", <field>: total} over every record listed
+    sub_groups: list[str] = []  # within each group, the fields rows are grouped by (named once per block)
 
 
 class UpdateFindingRequest(ApiModel):

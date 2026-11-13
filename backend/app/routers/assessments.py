@@ -397,13 +397,14 @@ def _opp_period(field: str, datetime_field: bool, value: str) -> str | None:
     return f"{field} >= {start} AND {field} <= {end}"
 
 
-def _close_date_where(period: str) -> str | None:
+def _close_date_where(period: str, fields: dict[str, tuple[str, bool]] | None = None) -> str | None:
     """Sales leadership opportunities' date filters, e.g. "created:this_month|closed:last_quarter": the Created Date and/or the
     Close Date (see _opp_period). A bare period is the Close Date (Closed Won / Closed Lost). None when no date is limited."""
+    fields = fields or OPP_DATE_FIELDS
     conds = []
     for part in filter(None, period.split("|")):
-        which, _, value = part.partition(":") if part.split(":", 1)[0] in OPP_DATE_FIELDS else ("closed", "", part)
-        field, is_dt = OPP_DATE_FIELDS[which]
+        which, _, value = part.partition(":") if part.split(":", 1)[0] in fields else (list(fields)[-1], "", part)
+        field, is_dt = fields[which]
         if cond := _opp_period(field, is_dt, value):
             conds.append(cond)
     return " AND ".join(conds) or None
@@ -411,7 +412,16 @@ def _close_date_where(period: str) -> str | None:
 # its stage's type was changed in Setup after it was saved, and would otherwise count as both Open and Closed Won)
 OPP_STATUS = {"all": None, "open": "IsClosed = false", "won": "IsClosed = true AND IsWon = true", "lost": "IsClosed = true AND IsWon = false"}
 # the status chips of each leadership table (a check saved before cases had just True: the opportunities' chips)
-STATUS_FILTERS = {"opportunity": OPP_STATUS, "case": {"all": None, "open": "IsClosed = false", "closed": "IsClosed = true"}}
+# Leads: Open = not converted and not in a closed status (Salesforce has no closed flag on lead statuses, so by its name:
+# "Closed - Not Converted", "Unqualified", "Disqualified"…); Not Converted = every lead not converted
+OPEN_LEAD = ("IsConverted = false AND (NOT Status LIKE 'Closed%') AND (NOT Status LIKE '%Unqualified%') "
+             "AND (NOT Status LIKE '%Disqualified%')")
+STATUS_FILTERS = {"opportunity": OPP_STATUS, "case": {"all": None, "open": "IsClosed = false", "closed": "IsClosed = true"},
+                  "lead": {"all": None, "open": OPEN_LEAD, "converted": "IsConverted = true", "not_converted": "IsConverted = false"}}
+# the leads' Converted Date only means something for All and Converted
+HIDE_BY_STATUS = {"lead": {"open": ["ConvertedDate"], "not_converted": ["ConvertedDate"]}}
+LEAD_DATE_FIELDS = {"created": ("CreatedDate", True), "converted": ("ConvertedDate", False)}
+CAMPAIGN_COLUMN = {"name": "CampaignName", "label": "Campaign Name", "type": "string"}  # after Converted
 # Customer support leadership: the Created Date and Closed Date filters (the same choices for both)
 CASE_DATE_FIELDS = {"created": "CreatedDate", "closed": "ClosedDate"}
 CASE_DATE_PERIODS = {"today": "TODAY", "last_week": "LAST_WEEK", "last_14": "LAST_N_DAYS:14", "this_month": "THIS_MONTH"}
@@ -546,6 +556,29 @@ def _with_extra(sf, rec: dict, columns: list[dict], records: list[dict]) -> list
                 for c in columns if c["name"] != CASE_AGE_COLUMN["name"]]
         at = next((i + 1 for i, c in enumerate(cols) if c["name"] == "Reason"), len(cols))
         cols.insert(at, CASE_AGE_COLUMN)
+        return cols
+    if rec.get("extra") == "lead_campaign":  # Marketing leadership: each lead's latest campaign, after Converted
+        ids = [r["id"] for r in records if r.get("id") and re.fullmatch(r"[A-Za-z0-9]{15,18}", r["id"])]
+        latest: dict[str, list[str]] = {}
+        if ids:
+            try:
+                rows = sf.query("SELECT LeadId, Campaign.Name FROM CampaignMember WHERE LeadId IN ("
+                                + ", ".join(f"'{i}'" for i in ids) + ") ORDER BY CreatedDate DESC").get("records", [])
+            except SalesforceAuthExpired:
+                raise
+            except SalesforceError:
+                rows = []
+            for m in rows:
+                name = (m.get("Campaign") or {}).get("Name")
+                if name and name not in latest.setdefault(str(m.get("LeadId") or "")[:15], []):
+                    latest[str(m.get("LeadId") or "")[:15]].append(name)
+        for r in records:
+            names = latest.get((r.get("id") or "")[:15], [])
+            r["values"]["CampaignName"] = (names[0] + (f" (+{len(names) - 1} more)" if len(names) > 1 else "")) if names else None
+        hide = set(rec.get("hide_cols") or [])
+        cols = [{**c, "hidden": True} if c["name"] in hide else c for c in columns if c["name"] != CAMPAIGN_COLUMN["name"]]
+        at = next((i + 1 for i, c in enumerate(cols) if c["name"] == "IsConverted"), len(cols))
+        cols.insert(at, CAMPAIGN_COLUMN)
         return cols
     if rec.get("extra") == "opp_dates":  # Sales leadership opportunities: Date Opened (created) and Date Closed (Close Date, once closed)
         for r in records:
@@ -703,8 +736,8 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
         raise HTTPException(404, "This measure isn’t about specific records.")
     if _by_stage(label, rec):  # works on checks saved before the Stage chips too
         rec = {**rec, "by_stage": True}
-    if period and rec.get("close_period"):  # Sales leadership opportunities: all, last quarter's or this quarter's, by Close Date
-        cond = _close_date_where(period)
+    if period and (rec.get("close_period") or rec.get("lead_dates")):  # opportunities (Created / Close Date), leads (Created / Converted)
+        cond = _close_date_where(period, LEAD_DATE_FIELDS if rec.get("lead_dates") else None)
         if cond:
             rec = {**rec, "where": f"{explorer.and_part(rec['where'])} AND {cond}" if rec.get("where") else cond}
         period = None
@@ -761,11 +794,14 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
         rec = {**rec, "where": f"{explorer.and_part(rec['where'])} AND {cond}" if rec.get("where") else cond, "notes": notes, "reasons": reasons}
         queue = None
     if queue and rec.get("status_filter"):  # the leadership tables' status chips: opportunities (All, Open, Won, Lost), cases (All, Open, Closed)
-        chips = STATUS_FILTERS.get(rec["status_filter"] if isinstance(rec["status_filter"], str) else "opportunity", OPP_STATUS)
+        kind = rec["status_filter"] if isinstance(rec["status_filter"], str) else "opportunity"
+        chips = STATUS_FILTERS.get(kind, OPP_STATUS)
         if queue not in chips:
             raise HTTPException(422, "Unknown status.")
         if chips[queue]:
             rec = {**rec, "where": f"{explorer.and_part(rec['where'])} AND {chips[queue]}" if rec.get("where") else chips[queue]}
+        if hide := HIDE_BY_STATUS.get(kind, {}).get(queue):
+            rec = {**rec, "hide_cols": hide}
         queue = None
     if queue:
         if not _by_queue(rec):
@@ -840,7 +876,9 @@ def indicator_records(
     page["cell_notes"] = {r["id"]: notes[r["id"]] for r in page["records"] if r.get("id") in notes}
     if (g := rec.get("group_totals")) and not cursor:  # each group's count and totals (e.g. per owner), over every record listed
         page["group_totals"] = _salesforce(db, http, settings, lambda sf: explorer.group_totals(
-            sf, rec["object"], rec.get("where"), _filters(filters), g["by"], g.get("sums") or [], g.get("count_by")), org_id)
+            sf, rec["object"], rec.get("where"), _filters(filters), g["by"], g.get("sums") or [], g.get("count_by"), g.get("count_where")), org_id)
+    if rec.get("sub_groups"):  # the fields rows are grouped by within each group (each named once per block)
+        page["sub_groups"] = rec["sub_groups"]
     return page
 
 

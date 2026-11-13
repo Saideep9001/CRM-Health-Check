@@ -480,6 +480,50 @@ def support_cases(ctx: Ctx) -> None:
         spec["group_totals"] = {"by": "OwnerId", "sums": [], "count_by": "Status"}  # each owner's count of cases, and per status
 
 
+# Marketing leadership: the leads table, grouped by owner, status and lead source, with each owner's count and conversions
+MARKETING_LEAD_COLUMNS = ["OwnerId", "Name", "Company", "Status", "LeadSource", "IsConverted", "CreatedDate", "ConvertedDate"]
+
+
+def marketing_leads(ctx: Ctx) -> None:
+    """Marketing Leadership (Leads & Campaigns Report): every lead by owner, then status, then lead source, with company, whether it
+    converted, its campaign, and when it was created and converted; each owner's count of leads and conversions. Filters: All / Open /
+    Converted / Not Converted, and the Created and Converted Date. For information."""
+    if not ctx.has_object("Lead"):
+        raise Unavailable("Leads can’t be read with this user.")
+    total = ctx.count("Lead", recent=False)
+    converted = ctx.count("Lead", "IsConverted = true", recent=False) if total else 0
+    m = ctx.metric(
+        "Marketing Leadership (Leads & Campaigns Report)", converted, "count", "higher-better", None,
+        how="Every lead, grouped by its owner, then its status, then its lead source, with the company, whether it converted, its latest "
+            "campaign, and when it was created and converted. Under each owner, a Total row with their number of leads and how many "
+            "converted. The number is the leads converted.",
+        rule="Shown for information, not scored.",
+        records=("Lead",),
+        recent=False,
+        columns=MARKETING_LEAD_COLUMNS,
+        order="Owner.Name,Status,LeadSource",
+        extra="lead_campaign",
+        criteria=[
+            ("Records checked", f"{total:,} leads: {converted:,} converted ({pct(converted, total):.0f}%)."),
+            ("Grouped by", "Lead Owner (a person or a queue, A to Z), then Lead Status (with how many of that owner’s leads have it), then "
+             "Lead Source. Under each owner, a Total row: their leads and how many converted; at the bottom, the totals for everyone."),
+            ("Status filter", "Above the table: All; Open (not converted, and not in a closed status: one starting “Closed”, or with "
+             "“Unqualified” or “Disqualified” in its name); Converted; Not Converted (every lead not converted)."),
+            ("Date filters", "All: Created Date and Converted Date; Open: Created Date; Converted: Converted Date; Not Converted: none. "
+             "Each: all dates, this or last month, quarter, half year or year, or custom dates."),
+            ("Campaign Name", "The campaign the lead most recently joined (from its campaign memberships); “+N more” when it’s in others."),
+            ("Columns", "Salesforce’s own fields: Lead Name, Company, Lead Status, Lead Source, Converted, Created Date and Converted Date "
+             "(shown for All and Converted)."),
+        ],
+    )
+    for spec in m.records or []:
+        spec["exact_columns"] = True  # just these columns, in this order
+        spec["status_filter"] = "lead"  # All / Open / Converted / Not Converted above the table
+        spec["lead_dates"] = True  # the Created and Converted Date filters above the table
+        spec["sub_groups"] = ["Status", "LeadSource"]  # within each owner
+        spec["group_totals"] = {"by": "OwnerId", "sums": [], "count_by": "Status", "count_where": {"IsConverted": "IsConverted = true"}}
+
+
 # ---------------------------------------------------------------- area 9: activity, handoffs, deal progress
 
 LOW_ACTIVITY = 5  # tasks/events per rep in 30 days
@@ -1067,7 +1111,7 @@ def upsell_visibility(ctx: Ctx) -> None:
 
 
 AREAS = {
-    "area-8": [report_usage, dashboard_usage, leadership_opportunities, support_cases],
+    "area-8": [report_usage, dashboard_usage, leadership_opportunities, support_cases, marketing_leads],
     "area-9": [sales_activity_gaps, opps_without_open_tasks, handoff_visibility, pipeline_progression],
     "area-10": [stuck_visibility, overdue_visibility, regional_visibility, closed_lost_trends],
     "area-11": [win_loss_gaps, competitor_tracking, product_visibility, upsell_visibility],
@@ -1078,6 +1122,7 @@ STEP_LABELS = {
     dashboard_usage: "Measuring how much each dashboard is used",
     leadership_opportunities: "Listing opportunities by owner for leadership",
     support_cases: "Listing cases by owner for support leadership",
+    marketing_leads: "Listing leads by owner for marketing leadership",
     sales_activity_gaps: "Checking rep activity over 30 days",
     opps_without_open_tasks: "Finding deals with no open task",
     handoff_visibility: "Checking marketing-to-sales handoffs",

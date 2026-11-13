@@ -479,10 +479,11 @@ def records_matching(sf: SalesforceClient, name: str, where: str | None, cursor:
 
 
 def group_totals(sf: SalesforceClient, name: str, where: str | None, filters: list[dict] | None, by: str, sums: list[str],
-                 count_by: str | None = None) -> dict:
+                 count_by: str | None = None, count_where: dict[str, str] | None = None) -> dict:
     """Per value of `by` (e.g. each owner): how many records, and the total of each of `sums` (e.g. Amount), over the same records the
     table lists (its condition and the person's column filters). With `count_by` (e.g. StageName), also how many records have each of
-    its values in the group: {"counts": {"StageName": {"Proposal": 2}}}. Fields are the engine's, checked against the object."""
+    its values in the group: {"counts": {"StageName": {"Proposal": 2}}}. With `count_where` ({"IsConverted": "IsConverted = true"}),
+    how many of the group's records match each condition, under that name. Fields and conditions are the engine's, never user input."""
     desc = _describe(sf, name)
     fields = _fields(desc)
     if by not in fields:
@@ -500,6 +501,13 @@ def group_totals(sf: SalesforceClient, name: str, where: str | None, filters: li
         for r in sf.query(soql).get("records", []):
             if str(r.get("g") or "") in out:
                 out[str(r["g"])].setdefault("counts", {}).setdefault(count_by, {})[str(r.get("v") or "")] = int(r.get("c") or 0)
+    for key, cond in (count_where or {}).items():
+        soql = f"SELECT {by} g, COUNT(Id) c FROM {name} WHERE " + " AND ".join([*(and_part(c) for c in conds), f"({cond})"]) + f" GROUP BY {by}"
+        for g in out.values():
+            g[key] = 0
+        for r in sf.query(soql).get("records", []):
+            if str(r.get("g") or "") in out:
+                out[str(r["g"])][key] = int(r.get("c") or 0)
     return out
 
 

@@ -513,6 +513,8 @@ export interface FindingRecordsPage {
   cellNotes?: Record<string, Record<string, string>>;
   /** Per group (e.g. owner id): how many records, and each summed field's total, over every record listed. */
   groupTotals?: Record<string, GroupTotals>;
+  /** Within each group, the fields rows are grouped by (e.g. Status, then Lead Source), each named once per block. */
+  subGroups?: string[];
 }
 
 export interface UpdateFindingRequest {

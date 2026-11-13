@@ -68,22 +68,24 @@ export function CloseDateFilter({ onChange, label = 'Close Date', periods = CLOS
 
 /** A leadership table's Created Date and Closed Date filters, side by side (either can be left out). `onChange` gets the API's
  *  `period`: "created:<period>|closed:<period>" (each part only when picked), or undefined for any date. */
-export function DateFilters({ created = true, closed = true, periods, onChange }: {
+export function DateFilters({ created = true, closed = true, periods, onChange, second = { key: 'closed', label: 'Closed Date' } }: {
   created?: boolean;
   closed?: boolean;
   periods: { value: string; label: string }[];
   onChange: (period: string | undefined) => void;
+  /** The second date: Closed Date (opportunities, cases), or Converted Date (leads: { key: 'converted', … }). */
+  second?: { key: string; label: string };
 }) {
   const [createdP, setCreated] = useState<string | undefined>();
   const [closedP, setClosed] = useState<string | undefined>();
   const send = (c: string | undefined, d: string | undefined) => {
-    const parts = [c && `created:${c}`, d && `closed:${d}`].filter(Boolean);
+    const parts = [c && `created:${c}`, d && `${second.key}:${d}`].filter(Boolean);
     onChange(parts.length ? parts.join('|') : undefined);
   };
   return (
     <span className="inline-flex flex-wrap items-center gap-3">
       {created && <CloseDateFilter label="Created Date" periods={periods} onChange={(p) => { setCreated(p); send(p, closedP); }} />}
-      {closed && <CloseDateFilter label="Closed Date" periods={periods} onChange={(p) => { setClosed(p); send(createdP, p); }} />}
+      {closed && <CloseDateFilter label={second.label} periods={periods} onChange={(p) => { setClosed(p); send(createdP, p); }} />}
     </span>
   );
 }

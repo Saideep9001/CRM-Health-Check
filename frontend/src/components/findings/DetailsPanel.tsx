@@ -74,6 +74,13 @@ const CASE_STATUS = [
   { id: 'open', name: 'Open' },
   { id: 'closed', name: 'Closed' },
 ];
+/** Marketing leadership: its status chips. */
+const LEAD_STATUS = [
+  { id: 'all', name: 'All' },
+  { id: 'open', name: 'Open' },
+  { id: 'converted', name: 'Converted' },
+  { id: 'not_converted', name: 'Not Converted' },
+];
 /** Required field gaps: the kinds of rule its records can be narrowed to ('' = all). */
 const RULE_KINDS = [
   { value: '', label: 'All rules' },
@@ -397,7 +404,9 @@ function Records({
   const byQuarter = indicator?.label === 'Sales leadership opportunities';
   // Customer support leadership: All / Open / Closed, and when the cases were created
   const casesCard = indicator?.label === 'Customer Support Leadership (Cases Report)';
-  const statusChips = byQuarter ? OPP_STATUS : casesCard ? CASE_STATUS : null;
+  // Marketing leadership: All / Open / Converted / Not Converted, and when the leads were created or converted
+  const leadsCard = indicator?.label === 'Marketing Leadership (Leads & Campaigns Report)';
+  const statusChips = byQuarter ? OPP_STATUS : casesCard ? CASE_STATUS : leadsCard ? LEAD_STATUS : null;
   const [queueDays, setQueueDays] = useState(3);
   const [queue, setQueue] = useState<PickedQueue | undefined>();
   // Stale Leads: only one record type's Leads (undefined = all)
@@ -598,6 +607,11 @@ function Records({
                 <DateFilters key={`${object}-${queue?.id ?? 'all'}`} periods={CLOSE_PERIODS} onChange={setPeriod} />
               )
               : casesCard ? <CaseDateFilters key={`${object}-${queue?.id ?? 'all'}`} show={queue?.id ?? 'all'} onChange={setPeriod} />
+              : leadsCard && queue?.id !== 'not_converted' ? (
+                // All: Created and Converted Date; Open: Created Date; Converted: Converted Date; Not Converted: none
+                <DateFilters key={`${object}-${queue?.id ?? 'all'}`} periods={CLOSE_PERIODS} onChange={setPeriod}
+                  created={queue?.id !== 'converted'} closed={queue?.id !== 'open'} second={{ key: 'converted', label: 'Converted Date' }} />
+              )
               : ruleGaps ? (
                 <Select<string>
                   label="Rule"
