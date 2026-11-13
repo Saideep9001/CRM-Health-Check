@@ -95,12 +95,13 @@ class FakeReportingOrg(wf.FakeSalesOrg):
             return [{"Id": "0AT000000000001AAA", "LogDate": "2026-11-11T00:00:00.000+0000", "LogFileLength": 400}]
         if q.startswith("SELECT Id, Name FROM User WHERE Id IN"):
             return [{"Id": "005000000000001AAA", "Name": "Ann Lee"}, {"Id": "005000000000002AAA", "Name": "Bob Ray"}]
-        if q.startswith("SELECT Id, DashboardResultRefreshedDate FROM Dashboard"):
-            return [{"Id": "01Z000000000001AAA", "DashboardResultRefreshedDate": None}]
+        if q.startswith("SELECT Id, CreatedDate, LastViewedDate, DashboardResultRefreshedDate FROM Dashboard"):
+            return [{"Id": "01Z000000000001AAA", "CreatedDate": "2025-01-01T00:00:00.000+0000", "DashboardResultRefreshedDate": None},
+                    {"Id": "01Z000000000002AAA", "CreatedDate": "2025-01-01T00:00:00.000+0000", "DashboardResultRefreshedDate": None}]
         if "FROM Dashboard WHERE NamespacePrefix = null ORDER BY FolderName" in q:  # the Dashboards tab
             return [{"Id": "01Z000000000001AAA", "Title": "Sales Leadership", "Type": "SpecifiedUser", "DashboardResultRefreshedDate": None}]
         if "FROM DashboardComponent" in q:
-            assert "DashboardId IN ('01Z000000000001AAA')" in q  # asked for by dashboard
+            assert "DashboardId IN ('01Z000000000001AAA', '01Z000000000002AAA')" in q  # asked for by dashboard
             d = "01Z000000000001AAA"  # two components show Pipeline by Stage (listed once), one the Old Quarterly Report
             return [{"DashboardId": d, "CustomReportId": "00O000000000001AAA"}, {"DashboardId": d, "CustomReportId": "00O000000000001AAA"},
                     {"DashboardId": d, "CustomReportId": "00O000000000003AAA"}]
@@ -141,8 +142,9 @@ def test_all_reporting_areas(client, sf):
     assert all(areas[i]["status"] == "assessed" for i in AREAS), {i: areas[i]["message"] for i in AREAS}
     assert not any("unexpected error" in (x["message"] or "") for x in res["areas"]), [x["message"] for x in res["areas"]]
     ind = {i["label"]: i["value"] for x in res["areas"] for i in x["indicators"]}
-    assert ind["Unused reports"] == 2 and ind["Unused dashboards"] == 1
-    assert ind["Report & dashboard usage"] == 60.0  # 3 of 5 used: 2 reports run in Event Monitoring, the dashboard refreshed yesterday
+    assert "Unused reports" not in ind and "Unused dashboards" not in ind  # one card for both now
+    assert ind["Unused reports & dashboards"] == 3  # 2 reports not run in 180 days, and Old Board never refreshed
+    assert ind["Report & dashboard usage"] == 50.0  # 3 of 6 used: 2 reports run in Event Monitoring, Sales Leadership refreshed yesterday
     assert [i["label"] for i in areas["area-8"]["indicators"]][0] == "Report & dashboard usage"
     card = next(i for i in areas["area-8"]["indicators"] if i["label"] == "Report & dashboard usage")
     assert card["recordObjects"] == ["Report", "Dashboard"]  # reports and dashboards, one tab each
@@ -175,7 +177,7 @@ def test_all_reporting_areas(client, sf):
     assert dash["records"][0]["values"]["DashboardResultRefreshedDate"] == REFRESHED
     assert dash["records"][0]["values"]["SourceReports"] == "Pipeline by Stage\nOld Quarterly Report"
     card = next(i for i in areas["area-8"]["indicators"] if i["label"] == "Report & dashboard usage")
-    assert card["score"] == 60.0  # the average of the 5 scores: 100, 100 (run in Event Monitoring), 100 (dashboard), 0, 0
+    assert card["score"] == 50.0  # the average of the 6 scores: 100, 100 (run in Event Monitoring), 100 (dashboard), 0, 0, 0
     assert ind["Reporting organization issues"] == 1  # the unfiled "Copy of …" report, counted once
     assert ind["Leadership reporting gaps"] == 3  # only pipeline and win/loss-ish names exist
     assert ind["Sales activity gaps"] == 1  # Bob logged 2 in 30 days
@@ -219,3 +221,38 @@ def sf_client_page(client, res):
     got = client.get(f"{API}/assessments/{aid}/areas/area-8/indicator-records", params={"label": "Report & dashboard usage", "object": "Report"})
     assert got.status_code == 200, got.text
     return got.json()
+
+
+def test_unused_reports_and_dashboards_card(client, sf):
+    connect(client)
+    wf.run(client, areaIds=["area-8"], categoryIds=["reporting"])
+    aid = client.get(f"{API}/assessments").json()
+    aid = (aid["items"] if isinstance(aid, dict) else aid)[0]["id"]
+    url = f"{API}/assessments/{aid}/areas/area-8/indicator-records"
+
+    def page(obj, period=None):
+        got = client.get(url, params={"label": "Unused reports & dashboards", "object": obj, **({"period": period} if period else {})})
+        assert got.status_code == 200, got.text
+        return got.json()
+
+    # the usage card's columns, by folder, without Usage %
+    rep = page("Report")
+    assert [c["name"] for c in rep["columns"] if c["type"] != "id" and not c["hidden"]] == [
+        "FolderName", "Name", "ReportType", "CreatedById", "CreatedDate", "LastViewedDate", "LastRunDate", "LastModifiedById", "LastModifiedDate"]
+    # the period picked above the table: the card's own 180 days, then All, 30 days and a date range
+    report_queries = lambda: [q for q in sf.soql if "FROM Report WHERE" in q and "LastModifiedDate" in q]  # noqa: E731
+    assert "LastRunDate < LAST_N_DAYS:180" in report_queries()[-1]
+    page("Report", "all")
+    assert "LastRunDate" not in report_queries()[-1].split("WHERE")[1]
+    page("Report", "30")
+    assert "(LastRunDate < LAST_N_DAYS:30 OR LastRunDate = null)" in report_queries()[-1]
+    page("Report", "range:2026-01-01:2026-03-31")
+    assert "LastRunDate >= 2026-01-01T00:00:00Z AND LastRunDate <= 2026-03-31T23:59:59Z" in report_queries()[-1]
+    assert client.get(url, params={"label": "Unused reports & dashboards", "object": "Report", "period": "45"}).status_code == 422
+    # dashboards by their last refresh (saved by the check): 30 days keeps only the never-refreshed one
+    page("Dashboard", "30")
+    dash_q = [q for q in sf.soql if "FROM Dashboard WHERE" in q and "LastModifiedDate" in q][-1]
+    assert "Id IN ('01Z000000000002')" in dash_q  # 15-character ids, which Salesforce accepts
+    page("Dashboard", "all")
+    dash_q = [q for q in sf.soql if "FROM Dashboard WHERE" in q and "LastModifiedDate" in q][-1]
+    assert "Id IN" not in dash_q

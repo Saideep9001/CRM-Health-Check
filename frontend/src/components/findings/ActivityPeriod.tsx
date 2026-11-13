@@ -8,15 +8,19 @@ const ago = (months: number) => {
   return day(d);
 };
 
-type Choice = '30' | '90' | '180' | 'custom';
+type Choice = 'all' | '30' | '90' | '180' | 'custom';
 
 /** The period a No Activity (or Stale Leads) table covers: nothing in the last 1, 3 or 6 months, or between two picked
  *  dates. `own` is the card's own period (sent as undefined); `onChange` gets the API's `period`: undefined, "30", "90",
  *  "180" or "range:YYYY-MM-DD:YYYY-MM-DD". `what` names the dates ("Last activity", "No status change"). */
-export function ActivityPeriod({ onChange, own = '180', what = 'Last activity' }: {
+export function ActivityPeriod({ onChange, own = '180', what = 'Last activity', all = false, inDays = false }: {
   onChange: (period: string | undefined) => void;
   own?: '30' | '90' | '180';
   what?: string;
+  /** Offer "All" (sent as "all"): no period at all. */
+  all?: boolean;
+  /** Label the periods in days (Last 30 days) rather than months. */
+  inDays?: boolean;
 }) {
   const today = day(new Date());
   const [choice, setChoice] = useState<Choice>(own);
@@ -31,9 +35,10 @@ export function ActivityPeriod({ onChange, own = '180', what = 'Last activity' }
   return (
     <span className="inline-flex flex-wrap items-center gap-1.5 text-xs text-ink-muted">
       <select className="input h-7 w-auto py-0 text-xs" value={choice} onChange={(e) => apply(e.target.value as typeof choice)} aria-label="Period">
-        <option value="30">Last 1 month</option>
-        <option value="90">Last 3 months</option>
-        <option value="180">Last 6 months</option>
+        {all && <option value="all">All</option>}
+        <option value="30">{inDays ? 'Last 30 days' : 'Last 1 month'}</option>
+        <option value="90">{inDays ? 'Last 90 days' : 'Last 3 months'}</option>
+        <option value="180">{inDays ? 'Last 180 days' : 'Last 6 months'}</option>
         <option value="custom">Custom dates…</option>
       </select>
       {choice === 'custom' && (

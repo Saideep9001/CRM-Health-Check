@@ -376,6 +376,8 @@ function Records({
   const web = indicator?.label === 'Web-to-Lead issues';
   // Required field gaps: one kind of rule (sent as the queue; the server narrows to the records breaking that kind)
   const ruleGaps = indicator?.label === 'Required field gaps';
+  // Unused reports & dashboards: All, not used in the last 30 / 90 / 180 days (the card's own), or last used between two dates
+  const unusedRD = indicator?.label === 'Unused reports & dashboards';
   const [queueDays, setQueueDays] = useState(3);
   const [queue, setQueue] = useState<PickedQueue | undefined>();
   // Stale Leads: only one record type's Leads (undefined = all)
@@ -545,6 +547,7 @@ function Records({
             noActivity ? <ActivityPeriod key={`${object}-${indicator!.label}`} onChange={setPeriod} />
               : stale ? <ActivityPeriod key={`${object}-${indicator!.label}`} onChange={setPeriod} own="30" what="No status change" />
               : web ? <CreatedPeriod key={`${object}-${indicator!.label}`} onChange={setPeriod} />
+              : unusedRD ? <ActivityPeriod key={`${object}-${indicator!.label}`} onChange={setPeriod} all inDays what="Last used" />
               : ruleGaps ? (
                 <Select<string>
                   label="Rule"

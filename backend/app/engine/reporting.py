@@ -219,6 +219,45 @@ def days_since(value: object) -> int | None:
         return None
 
 
+def _dashboard_info(ctx: Ctx) -> list[dict]:
+    """Every dashboard (not from a package): {"id", "id15", "created", "date"}, where date = when it was last used: its last refresh
+    (from its status; Salesforce leaves the refreshed-date field empty on Lightning dashboards), else the connected user's last view."""
+    if "dashboard_info" not in ctx.memo:
+        rows: list[dict] = []
+        if ctx.has_object("Dashboard"):
+            try:
+                rows = ctx.rows("SELECT Id, CreatedDate, LastViewedDate, DashboardResultRefreshedDate FROM Dashboard "
+                                "WHERE NamespacePrefix = null LIMIT 5000", 5000)
+            except SalesforceAuthExpired:
+                raise
+            except SalesforceError:
+                rows = _dashboards(ctx)
+        refreshed = _dashboard_refreshed(ctx, [str(d.get("Id") or "") for d in rows]) if rows else {}
+        ctx.memo["dashboard_info"] = [
+            {"id": str(d.get("Id") or ""), "id15": str(d.get("Id") or "")[:15], "created": d.get("CreatedDate"),
+             "date": refreshed.get(str(d.get("Id") or "")[:15]) or d.get("DashboardResultRefreshedDate") or d.get("LastViewedDate")}
+            for d in rows]
+    return ctx.memo["dashboard_info"]
+
+
+def _memo(ctx: Ctx, key: str, make):
+    if key not in ctx.memo:
+        ctx.memo[key] = make()
+    return ctx.memo[key]
+
+
+def _table_details(ctx: Ctx, spec: dict, dashes: list[dict]) -> None:
+    """What the reports and dashboards tables show beyond Salesforce's fields: report type names; each dashboard's source reports
+    and last refresh. Shared by the usage and unused cards."""
+    spec["exact_columns"] = True  # just these columns, in this order
+    spec["columns"] = REPORT_USAGE_COLUMNS if spec["object"] == "Report" else DASHBOARD_USAGE_COLUMNS
+    if spec["object"] == "Report":
+        spec["report_types"] = _memo(ctx, "report_types", lambda: _report_type_names(ctx))  # by its name, not its API name
+    else:
+        spec["sources"] = _memo(ctx, "dashboard_sources", lambda: _dashboard_sources(ctx, [d["id"] for d in dashes]))
+        spec["refreshed"] = {d["id15"]: d["date"] for d in dashes if d["date"]}  # Last Refreshed Date, per dashboard
+
+
 def report_usage(ctx: Ctx) -> None:
     """Report & dashboard usage: every report and dashboard, by folder, with who made and changed it, when it was last viewed and run,
     and its usage: a score from how recently it was used, and its share of all runs (Event Monitoring). The card's score is the
@@ -228,19 +267,9 @@ def report_usage(ctx: Ctx) -> None:
     report_runs, why_not = _runs(ctx, "Report")
     has_dash = ctx.has_object("Dashboard")
     dash_runs, dash_why = _runs(ctx, "Dashboard") if has_dash else ({}, None)
-    dashes: list[dict] = []
-    if has_dash:
-        try:  # when each dashboard's data was last refreshed (when it was last run)
-            dashes = ctx.rows("SELECT Id, DashboardResultRefreshedDate FROM Dashboard WHERE NamespacePrefix = null LIMIT 5000", 5000)
-            dash_date = "DashboardResultRefreshedDate"
-        except SalesforceAuthExpired:
-            raise
-        except SalesforceError:
-            dashes, dash_date = _dashboards(ctx), "LastViewedDate"
+    dashes = _dashboard_info(ctx) if has_dash else []
     scores = [usage_score(days_since(r.get("LastRunDate")), (report_runs.get(str(r.get("Id") or "")[:15]) or {}).get("runs", 0)) for r in reports]
-    refreshed = _dashboard_refreshed(ctx, [str(d.get("Id") or "") for d in dashes]) if dashes else {}
-    scores += [usage_score(days_since(refreshed.get(str(d.get("Id") or "")[:15]) or d.get(dash_date)),
-                           (dash_runs.get(str(d.get("Id") or "")[:15]) or {}).get("runs", 0)) for d in dashes]
+    scores += [usage_score(days_since(d["date"]), (dash_runs.get(d["id15"]) or {}).get("runs", 0)) for d in dashes]
     used = sum(1 for x in scores if x >= 75)  # used in the last 90 days
     score = round(sum(scores) / len(scores), 1) if scores else 100
     records = [("Report", "NamespacePrefix = null")] + ([("Dashboard", "NamespacePrefix = null")] if has_dash else [])
@@ -278,85 +307,83 @@ def report_usage(ctx: Ctx) -> None:
         ],
     )
     for spec in m.records or []:
-        spec["exact_columns"] = True  # just these columns, in this order
-        spec["columns"] = REPORT_USAGE_COLUMNS if spec["object"] == "Report" else DASHBOARD_USAGE_COLUMNS
+        _table_details(ctx, spec, dashes)
         runs = report_runs if spec["object"] == "Report" else dash_runs
         spec["reasons"] = runs
         spec["usage_known"] = bool(runs)
-        spec["date_field"] = "LastRunDate" if spec["object"] == "Report" else "DashboardResultRefreshedDate"
-        if spec["object"] == "Report":
-            spec["report_types"] = _report_type_names(ctx)  # Report Type shown by its name, not its API name
-        else:
-            spec["sources"] = _dashboard_sources(ctx, [str(d.get("Id") or "") for d in dashes])  # Source Reports, per dashboard
-            spec["refreshed"] = refreshed  # Last Refreshed Date, per dashboard
 
 
-def unused_reports(ctx: Ctx) -> None:
+UNUSED_REPORT = f"(LastRunDate < LAST_N_DAYS:{UNUSED_DAYS} OR LastRunDate = null)"
+GRACE = "CreatedDate < LAST_N_DAYS:30"  # newer reports and dashboards aren't counted yet
+
+
+def unused_reports_and_dashboards(ctx: Ctx) -> None:
+    """Unused reports & dashboards: reports not run, and dashboards not refreshed, in 180 days (or ever), with the same columns as the
+    usage card. The table can be narrowed to the last 30, 90 or 180 days, a date range, or every report and dashboard."""
     _reports(ctx)
-    total = ctx.count("Report", "NamespacePrefix = null", "CreatedDate < LAST_N_DAYS:30", recent=False)
-    stale = (f"(LastRunDate < LAST_N_DAYS:{UNUSED_DAYS} OR LastRunDate = null)", "NamespacePrefix = null", "CreatedDate < LAST_N_DAYS:30")
-    n = ctx.count("Report", *stale, recent=False) if total else 0
-    ctx.totals["Report"] = total
+    r_total = ctx.count("Report", "NamespacePrefix = null", GRACE, recent=False)
+    r_unused = ctx.count("Report", UNUSED_REPORT, "NamespacePrefix = null", GRACE, recent=False) if r_total else 0
+    ctx.totals["Report"] = r_total
+    has_dash = ctx.has_object("Dashboard")
+    dashes = _dashboard_info(ctx) if has_dash else []
+    older = [d for d in dashes if (days_since(d["created"]) or 0) > 30]
+    d_unused = [d for d in older if (days_since(d["date"]) if d["date"] else None) is None or days_since(d["date"]) > UNUSED_DAYS]
+    total, n = r_total + len(older), r_unused + len(d_unused)
+    no_dashboards = has_dash and not dashes
     score = rate_score(n / total, 0.8) if total else 100
-    ctx.metric(
-        "Unused reports", n, "count", "lower-better", score,
-        how=f"We count reports that nobody has run in the last {UNUSED_DAYS} days (or ever), out of all reports older than 30 days. Reports from installed packages are left out.",
-        rule="100 when every report has been run recently, falling evenly to 0 when 80% of reports are unused.",
-        records=("Report", *stale),
+    if no_dashboards:
+        score = min(score, 40)
+    records = [("Report", UNUSED_REPORT, "NamespacePrefix = null", GRACE)]
+    if has_dash:
+        records.append(("Dashboard", "NamespacePrefix = null", GRACE, ctx.ids_in([d["id"] for d in d_unused], limit=2000)))
+    m = ctx.metric(
+        "Unused reports & dashboards", n, "count", "lower-better", score,
+        how=f"Reports nobody has run, and dashboards nobody has refreshed, in the last {UNUSED_DAYS} days (or ever), out of those older than "
+            "30 days. Items from installed packages are left out. Pick another period above the table to see more or fewer.",
+        rule="100 when every report and dashboard has been used recently, falling evenly to 0 when 80% are unused. No dashboards at all "
+             "caps the score at 40.",
+        records=records,
         recent=False,
-        columns=["Name", "LastRunDate", "FolderName", "CreatedDate", "OwnerId"],
-        order="LastRunDate",
+        columns=REPORT_USAGE_COLUMNS + [c for c in DASHBOARD_USAGE_COLUMNS if c not in REPORT_USAGE_COLUMNS],
+        order="FolderName",
+        extra="report_usage",
         criteria=[
-            ("Records checked", f"{total:,} reports created more than 30 days ago. Reports from installed packages aren’t counted, and newer reports get a 30-day grace period."),
-            ("Fields checked", "Last Run date and Created date"),
-            ("Unused", f"Not run in the last {UNUSED_DAYS} days, or never run at all, and created more than 30 days ago."),
-            ("What's counted", f"{n:,} of {total:,} reports ({pct(n, total):.0f}%) are unused."),
-            ("Records listed", "Every unused report, oldest last run first (never-run reports at the top)."),
+            ("Records checked", f"{r_total:,} reports and {len(older):,} dashboards created more than 30 days ago (installed packages aren’t "
+             "counted; newer ones get a 30-day grace period)."),
+            ("Unused report", f"Not run in the last {UNUSED_DAYS} days (Last Run date), or never run."),
+            ("Unused dashboard", f"Not refreshed in the last {UNUSED_DAYS} days (when its components were last refreshed), or never."),
+            ("What's counted", f"{n:,} of {total:,} ({pct(n, total):.0f}%) are unused: {r_unused:,} reports and {len(d_unused):,} dashboards."),
+            ("Period", "Above the table: All (every report and dashboard), Last 30 / 90 / 180 days (not used in that time), or custom "
+             "dates (last used between them). The number and score always use 180 days."),
+            ("Columns", "The same as Report & dashboard usage, without Usage %: grouped by folder, with Salesforce’s own fields"),
+            ("No dashboards at all", "There are no dashboards in this org, so the score is at most 40." if no_dashboards else ""),
         ],
     )
-    if n:
-        oldest = ctx.rows(f"SELECT Name, FolderName, LastRunDate FROM Report WHERE {' AND '.join(stale)} ORDER BY LastRunDate ASC NULLS FIRST LIMIT 5", 5)
+    for spec in m.records or []:
+        _table_details(ctx, spec, dashes)
+        spec["no_usage"] = True  # no Usage % column
+        spec["unused_period"] = True  # the period picked above the table narrows it (see the records route)
+        spec["base_where"] = "NamespacePrefix = null"
+        if spec["object"] == "Dashboard":
+            spec["dash_dates"] = {d["id15"]: d["date"] for d in dashes}  # every dashboard's last use, for the period
+    if r_unused:
+        oldest = ctx.rows(f"SELECT Name, FolderName, LastRunDate FROM Report WHERE {UNUSED_REPORT} AND NamespacePrefix = null AND {GRACE} "
+                          "ORDER BY LastRunDate ASC NULLS FIRST LIMIT 5", 5)
         ctx.finding(
             name="Reports nobody runs",
-            records=("Report", *stale),
+            records=("Report", UNUSED_REPORT, "NamespacePrefix = null", GRACE),
             recent=False,
             fix="/lightning/o/Report/home",
             score=score,
-            affected=n,
-            description=f"{n:,} of your {total:,} reports ({pct(n, total):.0f}%) haven’t been run in {UNUSED_DAYS}+ days (reports from installed packages aren’t counted). For example: "
+            affected=r_unused,
+            description=f"{r_unused:,} of your {r_total:,} reports ({pct(r_unused, r_total):.0f}%) haven’t been run in {UNUSED_DAYS}+ days "
+            "(reports from installed packages aren’t counted). For example: "
             + ", ".join(f"“{r.get('Name')}” ({r.get('FolderName') or 'no folder'})" for r in oldest) + ".",
             why="Hundreds of old reports make it hard to find the right one, and people end up building yet another copy.",
             impact="Wasted time, conflicting numbers, and slower reporting.",
             action="Archive or delete unused reports (move them to an “Archive” folder first, then delete after 90 days). Keep one trusted report per question.",
             obj="Report",
         )
-
-
-def unused_dashboards(ctx: Ctx) -> None:
-    if not ctx.has_object("Dashboard"):
-        raise Unavailable("Dashboards can’t be read with this user.")
-    total = ctx.count("Dashboard", "NamespacePrefix = null", "CreatedDate < LAST_N_DAYS:30", recent=False)
-    n = ctx.count("Dashboard", f"(LastViewedDate < LAST_N_DAYS:{UNUSED_DAYS} OR LastViewedDate = null)", "NamespacePrefix = null", "CreatedDate < LAST_N_DAYS:30", recent=False) if total else 0
-    no_dashboards = total == 0 and ctx.count("Dashboard", "NamespacePrefix = null", recent=False) == 0
-    score = 40 if no_dashboards else rate_score(n / total, 0.8) if total else 100
-    ctx.metric(
-        "Unused dashboards", n, "count", "lower-better", score,
-        how=f"We count dashboards that haven’t been opened in the last {UNUSED_DAYS} days (or ever) by the connected user, out of all dashboards older than 30 days. Dashboards from installed packages are left out.",
-        rule="100 when every dashboard has been opened recently, falling evenly to 0 when 80% are unused. If there are no dashboards at all, the score is 40.",
-        records=("Dashboard", f"(LastViewedDate < LAST_N_DAYS:{UNUSED_DAYS} OR LastViewedDate = null)", "NamespacePrefix = null", "CreatedDate < LAST_N_DAYS:30"),
-        recent=False,
-        columns=["Title", "LastViewedDate", "FolderName", "CreatedDate"],
-        order="LastViewedDate",
-        criteria=[
-            ("Records checked", f"{total:,} dashboards created more than 30 days ago. Dashboards from installed packages aren’t counted."),
-            ("Fields checked", "Last Viewed date and Created date"),
-            ("Unused", f"Not opened in the last {UNUSED_DAYS} days, or never opened, and created more than 30 days ago."),
-            ("Whose views", "Salesforce only shares view dates for the connected user, so this reflects that user’s viewing."),
-            ("What's counted", f"{n:,} of {total:,} dashboards ({pct(n, total):.0f}%) are unused." if total else "There are no dashboards older than 30 days to check."),
-            ("No dashboards at all", "There are no dashboards in this org, so the score is set to 40." if no_dashboards else ""),
-            ("Records listed", "Every unused dashboard, least recently viewed first (never-viewed ones at the top)."),
-        ],
-    )
     if no_dashboards:
         _setting(
             ctx,
@@ -365,21 +392,21 @@ def unused_dashboards(ctx: Ctx) -> None:
             "Build a small set of dashboards: a sales leader view (pipeline, forecast, win rate) and a manager view (activity, stuck deals).",
             obj="Dashboard",
         )
-        return
-    ctx.finding(
-        name="Dashboards nobody opens",
-        records=("Dashboard", f"(LastViewedDate < LAST_N_DAYS:{UNUSED_DAYS} OR LastViewedDate = null)", "NamespacePrefix = null", "CreatedDate < LAST_N_DAYS:30"),
-        recent=False,
-        fix="/lightning/o/Dashboard/home",
-        score=score,
-        affected=n,
-        description=f"{n:,} of {total:,} dashboards ({pct(n, total):.0f}%) haven’t been opened in {UNUSED_DAYS}+ days by the connected user. "
-        "Salesforce only shares view dates per user, so connect as a leader who uses dashboards for the most accurate picture.",
-        why="Dashboards nobody opens don’t drive decisions, and they hide the ones that matter.",
-        impact="Leaders miss problems that the right dashboard would show.",
-        action="Retire unused dashboards, and subscribe managers to the few that matter so they arrive by email every week.",
-        obj="Dashboard",
-    )
+    elif d_unused:
+        ctx.finding(
+            name="Dashboards nobody opens",
+            records=("Dashboard", "NamespacePrefix = null", GRACE, ctx.ids_in([d["id"] for d in d_unused], limit=2000)),
+            recent=False,
+            fix="/lightning/o/Dashboard/home",
+            score=score,
+            affected=len(d_unused),
+            description=f"{len(d_unused):,} of {len(older):,} dashboards ({pct(len(d_unused), len(older)):.0f}%) haven’t been refreshed in "
+            f"{UNUSED_DAYS}+ days.",
+            why="Dashboards nobody opens don’t drive decisions, and they hide the ones that matter.",
+            impact="Leaders miss problems that the right dashboard would show.",
+            action="Retire unused dashboards, and subscribe managers to the few that matter so they arrive by email every week.",
+            obj="Dashboard",
+        )
 
 
 _MESSY_NAME = re.compile(r"^(copy of|new .*report|untitled|test\b|report\s*\d+$)|\bcopy\b|\(\d+\)$", re.I)
@@ -1057,7 +1084,7 @@ def upsell_visibility(ctx: Ctx) -> None:
 
 
 AREAS = {
-    "area-8": [report_usage, unused_reports, unused_dashboards, reporting_organization, leadership_reporting],
+    "area-8": [report_usage, unused_reports_and_dashboards, reporting_organization, leadership_reporting],
     "area-9": [sales_activity_gaps, opps_without_open_tasks, handoff_visibility, pipeline_progression],
     "area-10": [stuck_visibility, overdue_visibility, regional_visibility, closed_lost_trends],
     "area-11": [win_loss_gaps, competitor_tracking, product_visibility, upsell_visibility],
@@ -1065,8 +1092,7 @@ AREAS = {
 
 STEP_LABELS = {
     report_usage: "Measuring how much each report and dashboard is used",
-    unused_reports: "Finding reports nobody runs",
-    unused_dashboards: "Finding dashboards nobody opens",
+    unused_reports_and_dashboards: "Finding reports and dashboards nobody uses",
     reporting_organization: "Checking report folders and names",
     leadership_reporting: "Checking leadership reports",
     sales_activity_gaps: "Checking rep activity over 30 days",

@@ -1,6 +1,6 @@
 """Health checks (assessments) and their findings. See docs/API_CONTRACT.md → Assessments."""
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import csv
 import io
@@ -463,7 +463,8 @@ def _with_extra(sf, rec: dict, columns: list[dict], records: list[dict]) -> list
         report = rec.get("object") == "Report"
         for r in records:
             u = saved.get((r.get("id") or "")[:15]) or {}
-            r["values"]["UsagePct"] = f"{u.get('usage', 0)}%" if known else "N/A"
+            if not rec.get("no_usage"):
+                r["values"]["UsagePct"] = f"{u.get('usage', 0)}%" if known else "N/A"
             if report:
                 api = r["values"].get("ReportTypeApiName")
                 r["values"]["ReportType"] = (rec.get("report_types") or {}).get(api) or api
@@ -486,7 +487,7 @@ def _with_extra(sf, rec: dict, columns: list[dict], records: list[dict]) -> list
             cols.insert(at, DASHBOARD_MODE_COLUMN)
             at = next((i + 1 for i, c in enumerate(cols) if c["name"] == "LastModifiedDate"), len(cols))
             cols.insert(at, SOURCE_REPORTS_COLUMN)
-        return [*cols, USAGE_COLUMN]
+        return cols if rec.get("no_usage") else [*cols, USAGE_COLUMN]
     if rec.get("extra") == "broken_rules":  # Required field gaps: the rules each record breaks, frozen on the right
         reasons = rec.get("reasons") or {}
         for r in records:
@@ -550,6 +551,30 @@ def _picked(fields: str | None, rec: dict | None = None) -> list[str] | None:
         names.insert(0, "ParentId")
     return list(dict.fromkeys(names))
 
+def _unused_where(rec: dict, period: str) -> str:
+    """Unused reports & dashboards, for a period: "all" = every one; "30" / "90" / "180" = not used in that many days (or ever);
+    "range:YYYY-MM-DD:YYYY-MM-DD" = last used between the dates. Reports by their Last Run date; dashboards by their last refresh,
+    saved by the check (Salesforce can't filter on it)."""
+    base = rec.get("base_where") or "NamespacePrefix = null"
+    rng = re.fullmatch(r"range:(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2})", period)
+    if period != "all" and period not in ("30", "90", "180") and not (rng and rng[1] <= rng[2]):
+        raise HTTPException(422, "Pick All, the last 30, 90 or 180 days, or a From date on or before the To date.")
+    if period == "all":
+        return base
+    if rec.get("object") == "Report":
+        if rng:
+            return f"{base} AND LastRunDate >= {rng[1]}T00:00:00Z AND LastRunDate <= {rng[2]}T23:59:59Z"
+        return f"{base} AND (LastRunDate < LAST_N_DAYS:{int(period)} OR LastRunDate = null)"
+    dates = rec.get("dash_dates") or {}
+    if rng:
+        ids = [i for i, d in dates.items() if d and rng[1] <= str(d)[:10] <= rng[2]]
+    else:
+        cutoff = (datetime.now(timezone.utc).date() - timedelta(days=int(period))).isoformat()
+        ids = [i for i, d in dates.items() if not d or str(d)[:10] < cutoff]
+    ids = [i for i in ids if re.fullmatch(r"[A-Za-z0-9]{15,18}", i)]
+    return f"{base} AND " + ("Id IN (" + ", ".join(f"'{i}'" for i in ids) + ")" if ids else "Id = null")
+
+
 def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str, obj: str | None,
                        only: str | None = None, period: str | None = None, queue: str | None = None,
                        days: int | None = None, record_type: str | None = None) -> tuple[dict, str, str]:
@@ -568,6 +593,9 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
         raise HTTPException(404, "This measure isn’t about specific records.")
     if _by_stage(label, rec):  # works on checks saved before the Stage chips too
         rec = {**rec, "by_stage": True}
+    if period and rec.get("unused_period"):  # Unused reports & dashboards: the period picked above the table
+        rec = {**rec, "where": _unused_where(rec, period)}
+        period = None
     if label == WEB_LABEL:  # Web-to-Lead: the website Leads created in the period picked (any time by default)
         try:
             rec = {**rec, "where": web_leads.created_in(rec.get("where"), period), "order": "-CreatedDate"}  # newest first
