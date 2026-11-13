@@ -389,8 +389,9 @@ def _close_date_where(period: str) -> str | None:
     if rng and rng[1] <= rng[2]:
         return f"CloseDate >= {rng[1]} AND CloseDate <= {rng[2]}"
     raise HTTPException(422, "Pick a Close Date period: this or last month, quarter, half year or year, or a From date on or before the To date.")
-# …and its status chips
-OPP_STATUS = {"all": None, "open": "IsClosed = false", "won": "IsWon = true", "lost": "IsClosed = true AND IsWon = false"}
+# …and its status chips, which split All with no overlap: Closed Won must be closed too (a deal still open can carry IsWon = true when
+# its stage's type was changed in Setup after it was saved, and would otherwise count as both Open and Closed Won)
+OPP_STATUS = {"all": None, "open": "IsClosed = false", "won": "IsClosed = true AND IsWon = true", "lost": "IsClosed = true AND IsWon = false"}
 # Report usage: how much each report is used, after its own columns
 # the last column, frozen: its share of all runs
 USAGE_COLUMN = {"name": "UsagePct", "label": "Usage %", "type": "string", "frozen": True}

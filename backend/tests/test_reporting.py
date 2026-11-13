@@ -308,7 +308,7 @@ def test_sales_leadership_opportunities(client, sf):
     page("last_half")
     assert re.search(r"CloseDate >= \d{4}-(01|07)-01 AND CloseDate <= \d{4}-(06-30|12-31)", listing())
     # the status chips: Open, Closed Won, Closed Lost (with the totals over the same opportunities)
-    for chip, cond in (("open", "IsClosed = false"), ("won", "IsWon = true"), ("lost", "IsClosed = true AND IsWon = false")):
+    for chip, cond in (("open", "IsClosed = false"), ("won", "IsClosed = true AND IsWon = true"), ("lost", "IsClosed = true AND IsWon = false")):
         got = client.get(url, params={"label": "Sales leadership opportunities", "object": "Opportunity", "queue": chip})
         assert got.status_code == 200 and cond in listing()
         assert cond in [q for q in sf.soql if q.startswith("SELECT OwnerId g")][-1]
