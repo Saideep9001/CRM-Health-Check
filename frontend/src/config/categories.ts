@@ -156,8 +156,8 @@ export const DIAGNOSTIC_AREAS: DiagnosticArea[] = [
     description:
       'See how much each report is used and clear out the reports and dashboards nobody uses. Then check that leaders have the key reports they decide with: pipeline, forecast, win rate, rep activity and lead conversion.',
     indicators: [
-      'Report & dashboard usage',
-      'Unused reports & dashboards',
+      'Report usage',
+      'Dashboard usage',
       'Reporting organization issues',
       'Leadership reporting gaps',
       'Report trust issues',

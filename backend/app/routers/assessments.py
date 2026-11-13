@@ -552,25 +552,35 @@ def _picked(fields: str | None, rec: dict | None = None) -> list[str] | None:
     return list(dict.fromkeys(names))
 
 def _unused_where(rec: dict, period: str) -> str:
-    """Unused reports & dashboards, for a period: "all" = every one; "30" / "90" / "180" = not used in that many days (or ever);
-    "range:YYYY-MM-DD:YYYY-MM-DD" = last used between the dates. Reports by their Last Run date; dashboards by their last refresh,
-    saved by the check (Salesforce can't filter on it)."""
+    """Report usage / Dashboard usage, for the filter above the table: "all" = every one; "used" = used in the card's 180 days;
+    "30" / "90" / "180" = unused: not used in that many days (or ever), past the 30-day grace period; "range:YYYY-MM-DD:YYYY-MM-DD" =
+    unused, last used between the dates. Reports by their Last Run date; dashboards by their last refresh, saved by the check
+    (Salesforce can't filter on it)."""
     base = rec.get("base_where") or "NamespacePrefix = null"
+    used_days = int(rec.get("used_days") or 180)
     rng = re.fullmatch(r"range:(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2})", period)
-    if period != "all" and period not in ("30", "90", "180") and not (rng and rng[1] <= rng[2]):
-        raise HTTPException(422, "Pick All, the last 30, 90 or 180 days, or a From date on or before the To date.")
+    if period not in ("all", "used", "30", "90", "180") and not (rng and rng[1] <= rng[2]):
+        raise HTTPException(422, "Pick All, Used, or Unused for the last 30, 90 or 180 days or a From date on or before the To date.")
     if period == "all":
         return base
     if rec.get("object") == "Report":
+        if period == "used":
+            return f"{base} AND LastRunDate = LAST_N_DAYS:{used_days}"
         if rng:
             return f"{base} AND LastRunDate >= {rng[1]}T00:00:00Z AND LastRunDate <= {rng[2]}T23:59:59Z"
-        return f"{base} AND (LastRunDate < LAST_N_DAYS:{int(period)} OR LastRunDate = null)"
-    dates = rec.get("dash_dates") or {}
-    if rng:
-        ids = [i for i, d in dates.items() if d and rng[1] <= str(d)[:10] <= rng[2]]
+        return f"{base} AND (LastRunDate < LAST_N_DAYS:{int(period)} OR LastRunDate = null) AND CreatedDate < LAST_N_DAYS:30"
+    dashes = rec.get("dash_dates") or {}
+    when = lambda v: str((v.get("date") if isinstance(v, dict) else v) or "")[:10]  # noqa: E731 - older checks saved just the date
+    old = lambda v: v.get("old", True) if isinstance(v, dict) else True  # noqa: E731
+    today = datetime.now(timezone.utc).date()
+    if period == "used":
+        cutoff = (today - timedelta(days=used_days)).isoformat()
+        ids = [i for i, v in dashes.items() if when(v) and when(v) >= cutoff]
+    elif rng:
+        ids = [i for i, v in dashes.items() if when(v) and rng[1] <= when(v) <= rng[2]]
     else:
-        cutoff = (datetime.now(timezone.utc).date() - timedelta(days=int(period))).isoformat()
-        ids = [i for i, d in dates.items() if not d or str(d)[:10] < cutoff]
+        cutoff = (today - timedelta(days=int(period))).isoformat()
+        ids = [i for i, v in dashes.items() if old(v) and (not when(v) or when(v) < cutoff)]
     ids = [i for i in ids if re.fullmatch(r"[A-Za-z0-9]{15,18}", i)]
     return f"{base} AND " + ("Id IN (" + ", ".join(f"'{i}'" for i in ids) + ")" if ids else "Id = null")
 

@@ -142,23 +142,22 @@ def test_all_reporting_areas(client, sf):
     assert all(areas[i]["status"] == "assessed" for i in AREAS), {i: areas[i]["message"] for i in AREAS}
     assert not any("unexpected error" in (x["message"] or "") for x in res["areas"]), [x["message"] for x in res["areas"]]
     ind = {i["label"]: i["value"] for x in res["areas"] for i in x["indicators"]}
-    assert "Unused reports" not in ind and "Unused dashboards" not in ind  # one card for both now
-    assert ind["Unused reports & dashboards"] == 3  # 2 reports not run in 180 days, and Old Board never refreshed
-    assert ind["Report & dashboard usage"] == 50.0  # 3 of 6 used: 2 reports run in Event Monitoring, Sales Leadership refreshed yesterday
-    assert [i["label"] for i in areas["area-8"]["indicators"]][0] == "Report & dashboard usage"
-    card = next(i for i in areas["area-8"]["indicators"] if i["label"] == "Report & dashboard usage")
-    assert card["recordObjects"] == ["Report", "Dashboard"]  # reports and dashboards, one tab each
-    # every report by folder, with Salesforce's own fields, who ran it last, and its share of runs frozen last
+    labels = [i["label"] for i in areas["area-8"]["indicators"]]
+    assert labels[:2] == ["Report usage", "Dashboard usage"]  # usage and unused together, one card each
+    assert not {"Unused reports", "Unused dashboards", "Report & dashboard usage", "Unused reports & dashboards"} & set(labels)
+    assert ind["Report usage"] == 2  # 2 reports not run in 180 days
+    assert ind["Dashboard usage"] == 1  # Old Board never refreshed; Sales Leadership refreshed yesterday
+    cards = {i["label"]: i for i in areas["area-8"]["indicators"]}
+    assert cards["Report usage"]["recordObjects"] == ["Report"] and cards["Dashboard usage"]["recordObjects"] == ["Dashboard"]
+    assert cards["Report usage"]["score"] == 37.5 and cards["Dashboard usage"]["score"] == 37.5  # half unused (0 at 80%)
+    # every report by folder, with Salesforce's own fields and its share of runs frozen last (All, by default)
     page = sf_client_page(client, res)
     assert page["sortedBy"] == "FolderName"
     assert [c["name"] for c in page["columns"] if c["type"] != "id" and not c["hidden"]] == [  # what the table shows
         "FolderName", "Name", "ReportType", "CreatedById", "CreatedDate", "LastViewedDate", "LastRunDate", "LastModifiedById", "LastModifiedDate", "UsagePct"]
     assert page["columns"][-1]["frozen"] and page["columns"][-1]["label"] == "Usage %"
     rows = {r["values"]["Name"]: r["values"] for r in page["records"]}
-    # each with its own score (run in Event Monitoring = 100; never run = 0) and its share of runs
-    assert rows["Pipeline by Stage"]["UsagePct"] == "75.0%"
-    assert rows["Old Quarterly Report"]["UsagePct"] == "0%"
-    assert "LastRunBy" not in rows["Pipeline by Stage"]
+    assert rows["Pipeline by Stage"]["UsagePct"] == "75.0%" and rows["Old Quarterly Report"]["UsagePct"] == "0%"
     # the report type by the name Salesforce shows; a type the Analytics API doesn't name keeps its API name
     assert (rows["Pipeline by Stage"]["ReportType"], rows["Old Quarterly Report"]["ReportType"]) == ("Opportunities", "CustomEntity$Quota__c")
     assert next(c for c in page["columns"] if c["name"] == "ReportTypeApiName")["hidden"]
@@ -166,7 +165,7 @@ def test_all_reporting_areas(client, sf):
     aid = client.get(f"{API}/assessments").json()
     aid = (aid["items"] if isinstance(aid, dict) else aid)[0]["id"]
     dash = client.get(f"{API}/assessments/{aid}/areas/area-8/indicator-records",
-                      params={"label": "Report & dashboard usage", "object": "Dashboard"}).json()
+                      params={"label": "Dashboard usage", "object": "Dashboard"}).json()
     assert [c["name"] for c in dash["columns"] if c["type"] != "id" and not c["hidden"]] == [
         "FolderName", "Title", "DashboardMode", "CreatedById", "CreatedDate", "DashboardResultRefreshedDate", "LastModifiedById", "LastModifiedDate",
         "SourceReports", "UsagePct"]
@@ -176,8 +175,6 @@ def test_all_reporting_areas(client, sf):
     # Salesforce leaves the refreshed date empty: it's the latest component refresh, from the dashboard's status
     assert dash["records"][0]["values"]["DashboardResultRefreshedDate"] == REFRESHED
     assert dash["records"][0]["values"]["SourceReports"] == "Pipeline by Stage\nOld Quarterly Report"
-    card = next(i for i in areas["area-8"]["indicators"] if i["label"] == "Report & dashboard usage")
-    assert card["score"] == 50.0  # the average of the 6 scores: 100, 100 (run in Event Monitoring), 100 (dashboard), 0, 0, 0
     assert ind["Reporting organization issues"] == 1  # the unfiled "Copy of …" report, counted once
     assert ind["Leadership reporting gaps"] == 3  # only pipeline and win/loss-ish names exist
     assert ind["Sales activity gaps"] == 1  # Bob logged 2 in 30 days
@@ -214,45 +211,44 @@ def test_no_reports_access_skips_report_checks(client, sf):
 
 
 def sf_client_page(client, res):
-    """The Report & dashboard usage card's report records, as the page lists them."""
+    """The Report usage card's records, as the page lists them."""
     aid = res["id"] if "id" in res else None
     assessments = client.get(f"{API}/assessments").json()
     aid = aid or (assessments["items"] if isinstance(assessments, dict) else assessments)[0]["id"]
-    got = client.get(f"{API}/assessments/{aid}/areas/area-8/indicator-records", params={"label": "Report & dashboard usage", "object": "Report"})
+    got = client.get(f"{API}/assessments/{aid}/areas/area-8/indicator-records", params={"label": "Report usage", "object": "Report"})
     assert got.status_code == 200, got.text
     return got.json()
 
 
-def test_unused_reports_and_dashboards_card(client, sf):
+def test_usage_filter_all_used_unused(client, sf):
     connect(client)
     wf.run(client, areaIds=["area-8"], categoryIds=["reporting"])
     aid = client.get(f"{API}/assessments").json()
     aid = (aid["items"] if isinstance(aid, dict) else aid)[0]["id"]
     url = f"{API}/assessments/{aid}/areas/area-8/indicator-records"
 
-    def page(obj, period=None):
-        got = client.get(url, params={"label": "Unused reports & dashboards", "object": obj, **({"period": period} if period else {})})
+    def page(label, obj, period=None):
+        got = client.get(url, params={"label": label, "object": obj, **({"period": period} if period else {})})
         assert got.status_code == 200, got.text
         return got.json()
 
-    # the usage card's columns, by folder, without Usage %
-    rep = page("Report")
-    assert [c["name"] for c in rep["columns"] if c["type"] != "id" and not c["hidden"]] == [
-        "FolderName", "Name", "ReportType", "CreatedById", "CreatedDate", "LastViewedDate", "LastRunDate", "LastModifiedById", "LastModifiedDate"]
-    # the period picked above the table: the card's own 180 days, then All, 30 days and a date range
-    report_queries = lambda: [q for q in sf.soql if "FROM Report WHERE" in q and "LastModifiedDate" in q]  # noqa: E731
-    assert "LastRunDate < LAST_N_DAYS:180" in report_queries()[-1]
-    page("Report", "all")
-    assert "LastRunDate" not in report_queries()[-1].split("WHERE")[1]
-    page("Report", "30")
-    assert "(LastRunDate < LAST_N_DAYS:30 OR LastRunDate = null)" in report_queries()[-1]
-    page("Report", "range:2026-01-01:2026-03-31")
-    assert "LastRunDate >= 2026-01-01T00:00:00Z AND LastRunDate <= 2026-03-31T23:59:59Z" in report_queries()[-1]
-    assert client.get(url, params={"label": "Unused reports & dashboards", "object": "Report", "period": "45"}).status_code == 422
-    # dashboards by their last refresh (saved by the check): 30 days keeps only the never-refreshed one
-    page("Dashboard", "30")
-    dash_q = [q for q in sf.soql if "FROM Dashboard WHERE" in q and "LastModifiedDate" in q][-1]
-    assert "Id IN ('01Z000000000002')" in dash_q  # 15-character ids, which Salesforce accepts
-    page("Dashboard", "all")
-    dash_q = [q for q in sf.soql if "FROM Dashboard WHERE" in q and "LastModifiedDate" in q][-1]
-    assert "Id IN" not in dash_q
+    last = lambda obj: [q for q in sf.soql if f"FROM {obj} WHERE" in q and "LastModifiedDate" in q][-1].split("WHERE")[1]  # noqa: E731
+    # reports: All (no period), Used (run in 180 days), Unused for 30 days (past the grace period), Unused between two dates
+    page("Report usage", "Report")
+    assert "LastRunDate" not in last("Report")
+    page("Report usage", "Report", "all")
+    assert "LastRunDate" not in last("Report")
+    page("Report usage", "Report", "used")
+    assert "LastRunDate = LAST_N_DAYS:180" in last("Report")
+    page("Report usage", "Report", "30")
+    assert "(LastRunDate < LAST_N_DAYS:30 OR LastRunDate = null) AND CreatedDate < LAST_N_DAYS:30" in last("Report")
+    page("Report usage", "Report", "range:2026-01-01:2026-03-31")
+    assert "LastRunDate >= 2026-01-01T00:00:00Z AND LastRunDate <= 2026-03-31T23:59:59Z" in last("Report")
+    assert client.get(url, params={"label": "Report usage", "object": "Report", "period": "45"}).status_code == 422
+    # dashboards by their last refresh (saved by the check): Used keeps Sales Leadership, Unused for 30 days keeps Old Board
+    page("Dashboard usage", "Dashboard", "used")
+    assert "Id IN ('01Z000000000001')" in last("Dashboard")
+    page("Dashboard usage", "Dashboard", "30")
+    assert "Id IN ('01Z000000000002')" in last("Dashboard")  # 15-character ids, which Salesforce accepts
+    page("Dashboard usage", "Dashboard")
+    assert "Id IN" not in last("Dashboard")

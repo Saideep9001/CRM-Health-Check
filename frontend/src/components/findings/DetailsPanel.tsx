@@ -41,6 +41,7 @@ import { InlineError } from '../ui/States';
 import { ChangeBadge } from './AffectedRecords';
 import { FixPlanPanel } from './FixPlanPanel';
 import { ActivityPeriod } from './ActivityPeriod';
+import { UsageFilter } from './UsageFilter';
 import { QueueDays, QueueFilter, RuleTargetFilter, type PickedQueue, StaleFilters } from './QueueFilter';
 import { FieldPicker } from './FieldPicker';
 import { RecordsTable } from './RecordsTable';
@@ -376,8 +377,8 @@ function Records({
   const web = indicator?.label === 'Web-to-Lead issues';
   // Required field gaps: one kind of rule (sent as the queue; the server narrows to the records breaking that kind)
   const ruleGaps = indicator?.label === 'Required field gaps';
-  // Unused reports & dashboards: All, not used in the last 30 / 90 / 180 days (the card's own), or last used between two dates
-  const unusedRD = indicator?.label === 'Unused reports & dashboards';
+  // Report usage / Dashboard usage: All, Used, or Unused (then the last 30 / 90 / 180 days, or between two dates)
+  const usageCard = indicator?.label === 'Report usage' || indicator?.label === 'Dashboard usage';
   const [queueDays, setQueueDays] = useState(3);
   const [queue, setQueue] = useState<PickedQueue | undefined>();
   // Stale Leads: only one record type's Leads (undefined = all)
@@ -547,7 +548,7 @@ function Records({
             noActivity ? <ActivityPeriod key={`${object}-${indicator!.label}`} onChange={setPeriod} />
               : stale ? <ActivityPeriod key={`${object}-${indicator!.label}`} onChange={setPeriod} own="30" what="No status change" />
               : web ? <CreatedPeriod key={`${object}-${indicator!.label}`} onChange={setPeriod} />
-              : unusedRD ? <ActivityPeriod key={`${object}-${indicator!.label}`} onChange={setPeriod} all inDays what="Last used" />
+              : usageCard ? <UsageFilter key={`${object}-${indicator!.label}`} onChange={setPeriod} />
               : ruleGaps ? (
                 <Select<string>
                   label="Rule"
