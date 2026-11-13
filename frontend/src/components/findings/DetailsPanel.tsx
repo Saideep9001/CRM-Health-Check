@@ -42,7 +42,7 @@ import { ChangeBadge } from './AffectedRecords';
 import { FixPlanPanel } from './FixPlanPanel';
 import { ActivityPeriod } from './ActivityPeriod';
 import { UsageFilter } from './UsageFilter';
-import { CloseDateFilter, CREATED_PERIODS } from './CloseDateFilter';
+import { CaseDateFilters, CloseDateFilter } from './CloseDateFilter';
 import { QueueDays, QueueFilter, RuleTargetFilter, type PickedQueue, StaleFilters } from './QueueFilter';
 import { FieldPicker } from './FieldPicker';
 import { RecordsTable } from './RecordsTable';
@@ -472,7 +472,7 @@ function Records({
                   aria-pressed={on}
                   onClick={() => {
                     setQueue(st.id === 'all' ? undefined : st);
-                    if (byQuarter) setPeriod(undefined); // opportunities: the Close Date is only for closed ones
+                    setPeriod(undefined); // each status has its own date filters, starting afresh
                   }}
                   className={cx('rounded-full border px-3 py-1 text-xs font-medium transition', on ? 'border-brand bg-brand-soft text-brand-ink' : 'border-line text-ink-muted hover:text-ink')}
                 >
@@ -593,7 +593,7 @@ function Records({
               : byQuarter && (queue?.id === 'won' || queue?.id === 'lost') ? (
                 <CloseDateFilter key={`${object}-${queue.id}`} onChange={setPeriod} />
               )
-              : casesCard ? <CloseDateFilter key={object} label="Created Date" periods={CREATED_PERIODS} onChange={setPeriod} />
+              : casesCard ? <CaseDateFilters key={`${object}-${queue?.id ?? 'all'}`} show={queue?.id ?? 'all'} onChange={setPeriod} />
               : ruleGaps ? (
                 <Select<string>
                   label="Rule"

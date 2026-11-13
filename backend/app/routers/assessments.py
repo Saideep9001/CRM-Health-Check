@@ -394,21 +394,34 @@ def _close_date_where(period: str) -> str | None:
 OPP_STATUS = {"all": None, "open": "IsClosed = false", "won": "IsClosed = true AND IsWon = true", "lost": "IsClosed = true AND IsWon = false"}
 # the status chips of each leadership table (a check saved before cases had just True: the opportunities' chips)
 STATUS_FILTERS = {"opportunity": OPP_STATUS, "case": {"all": None, "open": "IsClosed = false", "closed": "IsClosed = true"}}
-# Customer support leadership: the Created Date filter
-CREATED_PERIODS = {"all": None, "today": "CreatedDate = TODAY", "last_week": "CreatedDate = LAST_WEEK",
-                   "last_14": "CreatedDate = LAST_N_DAYS:14", "this_month": "CreatedDate = THIS_MONTH"}
+# Customer support leadership: the Created Date and Closed Date filters (the same choices for both)
+CASE_DATE_FIELDS = {"created": "CreatedDate", "closed": "ClosedDate"}
+CASE_DATE_PERIODS = {"today": "TODAY", "last_week": "LAST_WEEK", "last_14": "LAST_N_DAYS:14", "this_month": "THIS_MONTH"}
 CASE_AGE_COLUMN = {"name": "CaseAge", "label": "Case Age (Days)", "type": "int"}  # right after Reason
+# Sales leadership opportunities: when the deal was closed (its Close Date, once it's closed), after Date Opened
+DATE_CLOSED_COLUMN = {"name": "DateClosed", "label": "Date Closed", "type": "date"}
 
 
-def _created_where(period: str) -> str | None:
-    """Customer support leadership's Created Date filter: today, last week, the last 14 days, this month, or
-    "range:YYYY-MM-DD:YYYY-MM-DD"; None for all dates."""
-    if period in CREATED_PERIODS:
-        return CREATED_PERIODS[period]
-    rng = re.fullmatch(r"range:(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2})", period)
-    if rng and rng[1] <= rng[2]:
-        return f"CreatedDate >= {rng[1]}T00:00:00Z AND CreatedDate <= {rng[2]}T23:59:59Z"
-    raise HTTPException(422, "Pick a Created Date period: today, last week, the last 14 days, this month, or a From date on or before the To date.")
+def _case_dates_where(period: str) -> str | None:
+    """Customer support leadership's date filters, e.g. "created:today|closed:range:2026-11-01:2026-11-10": per date (created or closed),
+    today, last week, the last 14 days, this month, or "range:YYYY-MM-DD:YYYY-MM-DD"; "all" (or nothing) for any date. A bare
+    period means the Created Date (as before both dates could be picked). None when no date is limited."""
+    conds = []
+    for part in filter(None, period.split("|")):
+        which, _, value = part.partition(":") if part.split(":", 1)[0] in CASE_DATE_FIELDS else ("created", "", part)
+        field = CASE_DATE_FIELDS[which]
+        if value in ("", "all"):
+            continue
+        if value in CASE_DATE_PERIODS:
+            conds.append(f"{field} = {CASE_DATE_PERIODS[value]}")
+            continue
+        rng = re.fullmatch(r"range:(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2})", value)
+        if not (rng and rng[1] <= rng[2]):
+            raise HTTPException(422, "Pick a date period: today, last week, the last 14 days, this month, or a From date on or before the To date.")
+        conds.append(f"{field} >= {rng[1]}T00:00:00Z AND {field} <= {rng[2]}T23:59:59Z")
+    return " AND ".join(conds) or None
+
+
 # Report usage: how much each report is used, after its own columns
 # the last column, frozen: its share of all runs
 USAGE_COLUMN = {"name": "UsagePct", "label": "Usage %", "type": "string", "frozen": True}
@@ -511,9 +524,18 @@ def _with_extra(sf, rec: dict, columns: list[dict], records: list[dict]) -> list
                 r["values"]["CaseAge"] = max(0, (end - start).days)
             except (TypeError, ValueError):
                 r["values"]["CaseAge"] = None
-        cols = [c for c in columns if c["name"] != CASE_AGE_COLUMN["name"]]
+        cols = [{**c, "label": {"CreatedDate": "Date Opened", "ClosedDate": "Date Closed"}.get(c["name"], c["label"])}
+                for c in columns if c["name"] != CASE_AGE_COLUMN["name"]]
         at = next((i + 1 for i, c in enumerate(cols) if c["name"] == "Reason"), len(cols))
         cols.insert(at, CASE_AGE_COLUMN)
+        return cols
+    if rec.get("extra") == "opp_dates":  # Sales leadership opportunities: Date Opened (created) and Date Closed (Close Date, once closed)
+        for r in records:
+            r["values"]["DateClosed"] = r["values"].get("CloseDate") if r["values"].get("IsClosed") else None
+        cols = [{**c, "hidden": True} if c["name"] == "IsClosed" else {**c, "label": "Date Opened"} if c["name"] == "CreatedDate" else c
+                for c in columns if c["name"] != DATE_CLOSED_COLUMN["name"]]
+        at = next((i + 1 for i, c in enumerate(cols) if c["name"] == "CreatedDate"), len(cols))
+        cols.insert(at, DATE_CLOSED_COLUMN)
         return cols
     if rec.get("extra") == "report_usage":  # Report & dashboard usage: its share of all runs, frozen last
         saved, known = rec.get("reasons") or {}, bool(rec.get("usage_known"))
@@ -668,8 +690,8 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
         if cond:
             rec = {**rec, "where": f"{explorer.and_part(rec['where'])} AND {cond}" if rec.get("where") else cond}
         period = None
-    if period and rec.get("created_period"):  # Customer support leadership: cases created in the period picked
-        cond = _created_where(period)
+    if period and rec.get("created_period"):  # Customer support leadership: cases created and/or closed in the periods picked
+        cond = _case_dates_where(period)
         if cond:
             rec = {**rec, "where": f"{explorer.and_part(rec['where'])} AND {cond}" if rec.get("where") else cond}
         period = None
@@ -777,7 +799,7 @@ def indicator_records(
     cursor: str | None = Query(None, max_length=200),
     filters: str | None = Query(None, max_length=12000, description='JSON list of {"field","op","value"} column filters'),
     only: str | None = Query(None, max_length=1200, description="Comma-separated fields: only records with a problem in one of them"),
-    period: str | None = Query(None, max_length=40, description='No Activity only: "90", "180" or "range:YYYY-MM-DD:YYYY-MM-DD"'),
+    period: str | None = Query(None, max_length=120, description='No Activity only: "90", "180" or "range:YYYY-MM-DD:YYYY-MM-DD"'),
     queue: str | None = Query(None, max_length=80, description="A Lead queue's id (Stuck Queue-Owned Leads, Inactive Lead Assignment Rules)"),
     days: int | None = Query(None, ge=0, le=7, description="Stuck Queue-Owned Leads only: in a queue more than 3, 5 or 7 days (0 = all)"),
     fields: str | None = Query(None, max_length=1200, description="Comma-separated fields to show as the columns, instead of the measure's"),
@@ -811,7 +833,7 @@ def indicator_queues(
     label: str = Query(..., max_length=200),
     object: str | None = Query(None, max_length=80),
     days: int | None = Query(None, ge=0, le=7),
-    period: str | None = Query(None, max_length=40, description="Stale Leads: the period picked on the card"),
+    period: str | None = Query(None, max_length=120, description="Stale Leads: the period picked on the card"),
     record_type: str | None = Query(None, max_length=20, description='Stale Leads only: a Lead record type\'s id, or "none" (no record type)'),
     db: Session = Depends(get_db),
     http: httpx.Client = Depends(http_dep),
@@ -878,7 +900,7 @@ def indicator_record_types(
     area_id: str,
     label: str = Query(..., max_length=200),
     object: str | None = Query(None, max_length=80),
-    period: str | None = Query(None, max_length=40, description="Stale Leads: the period picked on the card"),
+    period: str | None = Query(None, max_length=120, description="Stale Leads: the period picked on the card"),
     db: Session = Depends(get_db),
     http: httpx.Client = Depends(http_dep),
     settings: Settings = Depends(settings_dep),
@@ -1023,7 +1045,7 @@ def indicator_values(
     object: str | None = Query(None, max_length=80),
     filters: str | None = Query(None, max_length=12000),
     only: str | None = Query(None, max_length=1200),
-    period: str | None = Query(None, max_length=40, description='No Activity only: "90", "180" or "range:YYYY-MM-DD:YYYY-MM-DD"'),
+    period: str | None = Query(None, max_length=120, description='No Activity only: "90", "180" or "range:YYYY-MM-DD:YYYY-MM-DD"'),
     queue: str | None = Query(None, max_length=80, description="A Lead queue's id (Stuck Queue-Owned Leads, Inactive Lead Assignment Rules)"),
     days: int | None = Query(None, ge=0, le=7, description="Stuck Queue-Owned Leads only: in a queue more than 3, 5 or 7 days (0 = all)"),
     record_type: str | None = Query(None, max_length=20, description='Stale Leads only: a Lead record type\'s id, or "none" (no record type)'),
@@ -1045,7 +1067,7 @@ def indicator_records_csv(
     object: str | None = Query(None, max_length=80),
     filters: str | None = Query(None, max_length=12000),
     only: str | None = Query(None, max_length=1200),
-    period: str | None = Query(None, max_length=40, description='No Activity only: "90", "180" or "range:YYYY-MM-DD:YYYY-MM-DD"'),
+    period: str | None = Query(None, max_length=120, description='No Activity only: "90", "180" or "range:YYYY-MM-DD:YYYY-MM-DD"'),
     queue: str | None = Query(None, max_length=80, description="A Lead queue's id (Stuck Queue-Owned Leads, Inactive Lead Assignment Rules)"),
     days: int | None = Query(None, ge=0, le=7, description="Stuck Queue-Owned Leads only: in a queue more than 3, 5 or 7 days (0 = all)"),
     fields: str | None = Query(None, max_length=1200, description="Comma-separated fields to show as the columns, instead of the measure's"),

@@ -380,7 +380,9 @@ def dashboard_usage(ctx: Ctx) -> None:
 
 
 # Sales leadership opportunities: the table leaders read, grouped by owner with each owner's totals
-LEADERSHIP_OPP_COLUMNS = ["OwnerId", "Name", "StageName", "Amount", "ExpectedRevenue", "Probability", "CloseDate", "AgeInDays", "LeadSource"]
+# CreatedDate shows as Date Opened; IsClosed (hidden) gives Date Closed: the Close Date, once the deal is closed
+LEADERSHIP_OPP_COLUMNS = ["OwnerId", "Name", "StageName", "Amount", "ExpectedRevenue", "Probability", "CloseDate", "AgeInDays", "LeadSource",
+                          "CreatedDate", "IsClosed"]
 
 
 def leadership_opportunities(ctx: Ctx) -> None:
@@ -412,6 +414,7 @@ def leadership_opportunities(ctx: Ctx) -> None:
         recent=False,
         columns=LEADERSHIP_OPP_COLUMNS,
         order="Owner.Name,StageName",
+        extra="opp_dates",
         criteria=[
             ("Records checked", f"{total:,} opportunities: {this_q:,} closing this quarter and {last_q:,} last quarter."),
             ("This quarter", f"{this_q:,} opportunities" + (f", Amount {money(totals.get('Amount'))}" if "Amount" in totals else "")
@@ -423,7 +426,8 @@ def leadership_opportunities(ctx: Ctx) -> None:
              "(for the opportunities shown)."),
             ("Status filter", "Above the table: All, Open, Closed Won or Closed Lost. A Grand Total row stays in view at the bottom."),
             ("Columns", "Salesforce’s own fields: Opportunity Name, Stage, Amount, Expected Revenue (Amount × Probability), Probability, "
-             "Close Date, Age (days since it was created; for closed ones, how long it was open) and Lead Source."),
+             "Close Date, Age (days since it was created; for closed ones, how long it was open) and Lead Source; then Date Opened (when "
+             "it was created) and Date Closed (its Close Date once it’s closed, empty while open)."),
         ],
     )
     for spec in m.records or []:
@@ -461,10 +465,11 @@ def support_cases(ctx: Ctx) -> None:
             ("Grouped by", "Case Owner (a person or a queue, A to Z), then Status within each owner, shown as Status (how many of that "
              "owner’s cases have it). Under each owner, a Total row with their number of cases; at the bottom, the totals for everyone."),
             ("Status filter", "Above the table: All, Open or Closed."),
-            ("Created Date filter", "All dates, today, last week, the last 14 days, this month, or custom dates."),
+            ("Date filters", "All: Created Date and Closed Date; Open: Created Date; Closed: Closed Date. Each: all dates, today, last "
+             "week, the last 14 days, this month, or custom dates."),
             ("Case Age", "Days from when the case was opened to when it was closed, or to today while it’s open."),
-            ("Columns", "Salesforce’s own fields: Case Number, Subject, Status, Priority, Type, Case Reason, Date/Time Opened and "
-             "Date/Time Closed."),
+            ("Columns", "Salesforce’s own fields: Case Number, Subject, Status, Priority, Type, Case Reason, Date Opened and Date Closed "
+             "(empty while open)."),
         ],
     )
     for spec in m.records or []:

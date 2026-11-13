@@ -43,7 +43,8 @@ DESCRIBE = {
     "Opportunity": wf.DESCRIBE["Opportunity"] + [wf._f("OwnerId", type="reference", label="Opportunity Owner ID"), wf._f("Name", label="Opportunity Name"),
                                                  wf._f("ExpectedRevenue", type="currency", label="Expected Revenue"),
                                                  wf._f("Probability", type="percent", label="Probability (%)"), wf._f("CloseDate", type="date", label="Close Date"),
-                                                 wf._f("AgeInDays", type="int", label="Age"),
+                                                 wf._f("AgeInDays", type="int", label="Age"), wf._f("CreatedDate", type="datetime"),
+                                                 wf._f("IsClosed", type="boolean"),
                                                  wf._f("HasOpportunityLineItem", type="boolean"), wf._f("Timezone__c", custom=True, label="Opportunity Timezone"),
                                                  wf._f("Region__c", type="picklist", custom=True, label="Region")],
 }
@@ -116,7 +117,7 @@ class FakeReportingOrg(wf.FakeSalesOrg):
         if "FROM Opportunity" in q and "ORDER BY Owner.Name" in q:  # Sales leadership opportunities, by owner
             return [{"Id": "006000000000011AAA", "OwnerId": "005000000000001AAA", "Owner": {"Name": "John"}, "Name": "ABC Software Deal",
                      "StageName": "Negotiation", "Amount": 50000, "ExpectedRevenue": 40000, "Probability": 80, "CloseDate": "2026-12-15",
-                     "AgeInDays": 45, "LeadSource": "Web"}]
+                     "AgeInDays": 45, "LeadSource": "Web", "CreatedDate": "2026-10-31T09:00:00.000+0000", "IsClosed": True}]
         if q.startswith("SELECT OwnerId g, COUNT(Id) c FROM Case"):  # each case owner's count
             return [{"g": "005000000000001AAA", "c": 2}]
         if q.startswith("SELECT OwnerId g, Status v, COUNT(Id) c FROM Case"):
@@ -301,8 +302,11 @@ def test_sales_leadership_opportunities(client, sf):
     listing = lambda: [q for q in sf.soql if "FROM Opportunity" in q and "ORDER BY Owner.Name" in q][-1]  # noqa: E731
     p = page()
     assert p["sortedBy"] == "OwnerId"  # grouped by owner, A to Z
-    assert [c["name"] for c in p["columns"] if c["type"] != "id"] == [
-        "OwnerId", "Name", "StageName", "Amount", "ExpectedRevenue", "Probability", "CloseDate", "AgeInDays", "LeadSource"]
+    assert [c["name"] for c in p["columns"] if c["type"] != "id" and not c["hidden"]] == [
+        "OwnerId", "Name", "StageName", "Amount", "ExpectedRevenue", "Probability", "CloseDate", "AgeInDays", "LeadSource", "CreatedDate", "DateClosed"]
+    labels = {c["name"]: c["label"] for c in p["columns"]}
+    assert (labels["CreatedDate"], labels["DateClosed"]) == ("Date Opened", "Date Closed")
+    assert p["records"][0]["values"]["DateClosed"] == "2026-12-15"  # closed: its Close Date
     assert p["groupTotals"] == {"005000000000001AAA": {"count": 2, "Amount": 150000, "ExpectedRevenue": 100000,  # John: 2, $150,000, $100,000
                                                        "counts": {"StageName": {"Negotiation": 1, "Proposal": 1}}}}  # Stage (count)
     assert "CloseDate" not in listing().split("FROM Opportunity")[1].split("ORDER BY")[0]  # All
@@ -350,6 +354,8 @@ def test_customer_support_leadership(client, sf):
     assert [c["name"] for c in p["columns"] if c["type"] != "id"] == [
         "OwnerId", "CaseNumber", "Subject", "Status", "Priority", "Type", "Reason", "CaseAge", "CreatedDate", "ClosedDate"]
     assert p["records"][0]["values"]["CaseAge"] == 3  # opened Nov 5, closed Nov 8
+    labels = {c["name"]: c["label"] for c in p["columns"]}
+    assert (labels["CreatedDate"], labels["ClosedDate"]) == ("Date Opened", "Date Closed")
     assert p["groupTotals"] == {"005000000000001AAA": {"count": 2, "counts": {"Status": {"New": 1, "Closed": 1}}}}  # John: 2 cases
     # All / Open / Closed, and when the cases were created
     for chip, cond in (("open", "IsClosed = false"), ("closed", "IsClosed = true")):
@@ -363,3 +369,11 @@ def test_customer_support_leadership(client, sf):
         assert cond in listing()
     page(queue="open", period="today")  # both together
     assert "IsClosed = false" in listing() and "CreatedDate = TODAY" in listing()
+    # Closed: by Closed Date; All: both dates at once
+    page(queue="closed", period="closed:last_week")
+    assert "IsClosed = true" in listing() and "ClosedDate = LAST_WEEK" in listing() and "CreatedDate" not in listing().split("WHERE")[1]
+    page(period="created:this_month|closed:range:2026-11-01:2026-11-10")
+    assert "CreatedDate = THIS_MONTH AND ClosedDate >= 2026-11-01T00:00:00Z AND ClosedDate <= 2026-11-10T23:59:59Z" in listing()
+    page(period="created:all|closed:all")
+    assert "WHERE" not in listing().split("FROM Case")[1].split("ORDER BY")[0]
+    assert client.get(url, params={"label": label, "object": "Case", "period": "closed:yesterday"}).status_code == 422

@@ -14,7 +14,7 @@ export const CLOSE_PERIODS = [
 ];
 const today = () => new Date().toISOString().slice(0, 10);
 
-/** Customer support leadership: when the cases were created. */
+/** Customer support leadership: when the cases were created or closed. */
 export const CREATED_PERIODS = [
   { value: 'all', label: 'All dates' },
   { value: 'today', label: 'Today' },
@@ -61,6 +61,27 @@ export function CloseDateFilter({ onChange, label = 'Close Date', periods = CLOS
             onChange={(e) => { setTo(e.target.value); apply('custom', from, e.target.value); }} />
           {!valid(from, to) && <span className="text-bad">From must be on or before To</span>}
         </>
+      )}
+    </span>
+  );
+}
+
+/** Customer support leadership's dates, by status chip: All = Created Date and Closed Date; Open = Created Date; Closed = Closed Date.
+ *  `onChange` gets the API's `period`: "created:<period>|closed:<period>" (each part only when picked), or undefined for any date. */
+export function CaseDateFilters({ show, onChange }: { show: string; onChange: (period: string | undefined) => void }) {
+  const [created, setCreated] = useState<string | undefined>();
+  const [closed, setClosed] = useState<string | undefined>();
+  const send = (c: string | undefined, d: string | undefined) => {
+    const parts = [c && `created:${c}`, d && `closed:${d}`].filter(Boolean);
+    onChange(parts.length ? parts.join('|') : undefined);
+  };
+  return (
+    <span className="inline-flex flex-wrap items-center gap-3">
+      {show !== 'closed' && (
+        <CloseDateFilter label="Created Date" periods={CREATED_PERIODS} onChange={(p) => { setCreated(p); send(p, closed); }} />
+      )}
+      {show !== 'open' && (
+        <CloseDateFilter label="Closed Date" periods={CREATED_PERIODS} onChange={(p) => { setClosed(p); send(created, p); }} />
       )}
     </span>
   );
