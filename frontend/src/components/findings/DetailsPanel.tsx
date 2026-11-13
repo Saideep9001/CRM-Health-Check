@@ -42,6 +42,7 @@ import { ChangeBadge } from './AffectedRecords';
 import { FixPlanPanel } from './FixPlanPanel';
 import { ActivityPeriod } from './ActivityPeriod';
 import { UsageFilter } from './UsageFilter';
+import { CloseDateFilter } from './CloseDateFilter';
 import { QueueDays, QueueFilter, RuleTargetFilter, type PickedQueue, StaleFilters } from './QueueFilter';
 import { FieldPicker } from './FieldPicker';
 import { RecordsTable } from './RecordsTable';
@@ -460,7 +461,10 @@ function Records({
                   key={st.id}
                   type="button"
                   aria-pressed={on}
-                  onClick={() => setQueue(st.id === 'all' ? undefined : st)}
+                  onClick={() => {
+                    setQueue(st.id === 'all' ? undefined : st);
+                    setPeriod(undefined);
+                  }}
                   className={cx('rounded-full border px-3 py-1 text-xs font-medium transition', on ? 'border-brand bg-brand-soft text-brand-ink' : 'border-line text-ink-muted hover:text-ink')}
                 >
                   {st.name}
@@ -577,16 +581,8 @@ function Records({
               : stale ? <ActivityPeriod key={`${object}-${indicator!.label}`} onChange={setPeriod} own="30" what="No status change" />
               : web ? <CreatedPeriod key={`${object}-${indicator!.label}`} onChange={setPeriod} />
               : usageCard ? <UsageFilter key={`${object}-${indicator!.label}`} onChange={setPeriod} />
-              : byQuarter ? (
-                <label className="inline-flex items-center gap-1.5 text-xs text-ink-muted">
-                  Close Date
-                  <select className="input h-7 w-auto py-0 text-xs" value={period ?? 'all'} aria-label="Close Date"
-                    onChange={(e) => setPeriod(e.target.value === 'all' ? undefined : e.target.value)}>
-                    <option value="all">All</option>
-                    <option value="last_quarter">Last quarter</option>
-                    <option value="this_quarter">This quarter</option>
-                  </select>
-                </label>
+              : byQuarter && (queue?.id === 'won' || queue?.id === 'lost') ? (
+                <CloseDateFilter key={`${object}-${queue.id}`} onChange={setPeriod} />
               )
               : ruleGaps ? (
                 <Select<string>

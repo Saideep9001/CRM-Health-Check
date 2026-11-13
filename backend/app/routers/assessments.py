@@ -367,7 +367,28 @@ def _by_queue(rec: dict) -> bool:
 
 
 # Sales leadership opportunities: the Close Date filter above the table
-CLOSE_PERIODS = {"all": None, "last_quarter": "CloseDate = LAST_QUARTER", "this_quarter": "CloseDate = THIS_QUARTER"}
+CLOSE_PERIODS = {"all": None, "this_month": "CloseDate = THIS_MONTH", "last_month": "CloseDate = LAST_MONTH",
+                 "this_quarter": "CloseDate = THIS_QUARTER", "last_quarter": "CloseDate = LAST_QUARTER",
+                 "this_year": "CloseDate = THIS_YEAR", "last_year": "CloseDate = LAST_YEAR"}
+
+
+def _close_date_where(period: str) -> str | None:
+    """Sales leadership opportunities' Close Date filter: a Salesforce date literal (month, quarter, year), a half year (January–June
+    or July–December), or "range:YYYY-MM-DD:YYYY-MM-DD"; None for all dates."""
+    if period in CLOSE_PERIODS:
+        return CLOSE_PERIODS[period]
+    if period in ("this_half", "last_half"):
+        today = datetime.now(timezone.utc).date()
+        first_half = today.month <= 6
+        if period == "this_half":
+            start, end = (date(today.year, 1, 1), date(today.year, 6, 30)) if first_half else (date(today.year, 7, 1), date(today.year, 12, 31))
+        else:
+            start, end = (date(today.year - 1, 7, 1), date(today.year - 1, 12, 31)) if first_half else (date(today.year, 1, 1), date(today.year, 6, 30))
+        return f"CloseDate >= {start.isoformat()} AND CloseDate <= {end.isoformat()}"
+    rng = re.fullmatch(r"range:(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2})", period)
+    if rng and rng[1] <= rng[2]:
+        return f"CloseDate >= {rng[1]} AND CloseDate <= {rng[2]}"
+    raise HTTPException(422, "Pick a Close Date period: this or last month, quarter, half year or year, or a From date on or before the To date.")
 # …and its status chips
 OPP_STATUS = {"all": None, "open": "IsClosed = false", "won": "IsWon = true", "lost": "IsClosed = true AND IsWon = false"}
 # Report usage: how much each report is used, after its own columns
@@ -611,10 +632,9 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
     if _by_stage(label, rec):  # works on checks saved before the Stage chips too
         rec = {**rec, "by_stage": True}
     if period and rec.get("close_period"):  # Sales leadership opportunities: all, last quarter's or this quarter's, by Close Date
-        if period not in CLOSE_PERIODS:
-            raise HTTPException(422, "Pick All, Last quarter or This quarter.")
-        if CLOSE_PERIODS[period]:
-            rec = {**rec, "where": f"{explorer.and_part(rec['where'])} AND {CLOSE_PERIODS[period]}" if rec.get("where") else CLOSE_PERIODS[period]}
+        cond = _close_date_where(period)
+        if cond:
+            rec = {**rec, "where": f"{explorer.and_part(rec['where'])} AND {cond}" if rec.get("where") else cond}
         period = None
     if period and rec.get("unused_period"):  # Report / Dashboard usage: All, Used or Unused (for a period), picked above the table
         rec = {**rec, "where": _unused_where(rec, period), "no_usage": rec.get("no_usage") or period not in ("all", "used")}  # Unused: no Usage %

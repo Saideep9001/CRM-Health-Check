@@ -505,11 +505,12 @@ def leadership_opportunities(ctx: Ctx) -> None:
             ("Records checked", f"{total:,} opportunities: {this_q:,} closing this quarter and {last_q:,} last quarter."),
             ("This quarter", f"{this_q:,} opportunities" + (f", Amount {money(totals.get('Amount'))}" if "Amount" in totals else "")
              + (f", Expected Revenue {money(totals.get('ExpectedRevenue'))}" if "ExpectedRevenue" in totals else "") + "."),
-            ("Close Date filter", "Above the table: All, Last quarter or This quarter (by Close Date, in the org’s fiscal quarters)."),
+            ("Close Date filter", "For Closed Won and Closed Lost: All dates, this or last month, quarter, half year (January–June, "
+             "July–December) or year, or custom dates. Months, quarters and years follow the org’s fiscal settings."),
             ("Grouped by", "Opportunity Owner (A to Z), then Stage within each owner, shown as Stage (how many of that owner’s "
              "opportunities are in it). Under each owner, a Total row: the number of opportunities, total Amount and total Expected Revenue "
              "(for the opportunities shown)."),
-            ("Status filter", "Above the table: All, Open, Closed Won or Closed Lost."),
+            ("Status filter", "Above the table: All, Open, Closed Won or Closed Lost. A Grand Total row stays in view at the bottom."),
             ("Columns", "Salesforce’s own fields: Opportunity Name, Stage, Amount, Expected Revenue (Amount × Probability), Probability, "
              "Close Date, Age (days since it was created; for closed ones, how long it was open) and Lead Source."),
         ],

@@ -299,6 +299,14 @@ def test_sales_leadership_opportunities(client, sf):
     page("last_quarter")
     assert "CloseDate = LAST_QUARTER" in listing()
     assert client.get(url, params={"label": "Sales leadership opportunities", "object": "Opportunity", "period": "next_year"}).status_code == 422
+    for period, cond in (("this_month", "CloseDate = THIS_MONTH"), ("last_month", "CloseDate = LAST_MONTH"), ("this_year", "CloseDate = THIS_YEAR"),
+                         ("last_year", "CloseDate = LAST_YEAR"), ("range:2026-01-01:2026-03-31", "CloseDate >= 2026-01-01 AND CloseDate <= 2026-03-31")):
+        page(period)
+        assert cond in listing()
+    page("this_half")  # January–June or July–December, worked out from today
+    assert re.search(r"CloseDate >= \d{4}-(01|07)-01 AND CloseDate <= \d{4}-(06-30|12-31)", listing())
+    page("last_half")
+    assert re.search(r"CloseDate >= \d{4}-(01|07)-01 AND CloseDate <= \d{4}-(06-30|12-31)", listing())
     # the status chips: Open, Closed Won, Closed Lost (with the totals over the same opportunities)
     for chip, cond in (("open", "IsClosed = false"), ("won", "IsWon = true"), ("lost", "IsClosed = true AND IsWon = false")):
         got = client.get(url, params={"label": "Sales leadership opportunities", "object": "Opportunity", "queue": chip})

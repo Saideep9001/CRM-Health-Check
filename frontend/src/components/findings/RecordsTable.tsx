@@ -115,7 +115,24 @@ export function RecordsTable({
     const val = r.values[field];
     return key.has(field) && (val == null || String(val).trim() === '') ? 'Empty — key field' : null;
   };
+  // a sub-group (e.g. Stage within an owner) is named only on its first row, like the group itself
+  const startsBlock = (i: number, field: string) =>
+    i === 0 || groupOf[i] !== groupOf[i - 1] || String(rows[i].values[field] ?? '') !== String(rows[i - 1].values[field] ?? '');
   const totalsOf = (r: { values: Record<string, unknown> }) => (refCol ? first?.groupTotals?.[String(r.values[refCol] ?? '')] : undefined);
+  // every group's totals added up (they cover every record listed, so this is the whole table's total)
+  const allTotals = refCol && first?.groupTotals ? Object.values(first.groupTotals) : [];
+  const grand = allTotals.length
+    ? {
+        count: allTotals.reduce((n, t) => n + t.count, 0),
+        countIn: Object.keys(allTotals.find((t) => t.counts)?.counts ?? {})[0] ?? null,
+        sums: Object.fromEntries(
+          [...new Set(allTotals.flatMap((t) => Object.keys(t).filter((k) => k !== 'count' && k !== 'counts')))].map((k) => [
+            k,
+            allTotals.reduce((n, t) => n + (Number(t[k]) || 0), 0),
+          ]),
+        ) as Record<string, number>,
+      }
+    : null;
   const groupOf: number[] = [];
   const groupSize = new Map<number, number>();
   if (groupCol) {
@@ -292,12 +309,14 @@ Why it’s flagged: ${reason}` : v}
                             {ci === linkAt && href ? (
                               <RecordLink object={first!.object} id={r.id!}>{v === '—' ? r.id : v}</RecordLink>
                             ) : (
-                              <span className={v === '—' ? 'text-ink-subtle' : ''}>
-                                {v}
-                                {tot?.counts?.[c.name]?.[String(r.values[c.name] ?? '')] != null && (
-                                  <span className="text-ink-muted"> ({fmtNumber(tot.counts[c.name][String(r.values[c.name] ?? '')])})</span>
-                                )}
-                              </span>
+                              tot?.counts?.[c.name] && !startsBlock(i, c.name) ? null : (
+                                <span className={cx(v === '—' ? 'text-ink-subtle' : '', tot?.counts?.[c.name] && 'font-semibold text-ink')}>
+                                  {v}
+                                  {tot?.counts?.[c.name]?.[String(r.values[c.name] ?? '')] != null && (
+                                    <span className="font-normal text-ink-muted"> ({fmtNumber(tot.counts[c.name][String(r.values[c.name] ?? '')])})</span>
+                                  )}
+                                </span>
+                              )
                             )}
                             {c.note && r.values[c.note] != null && String(r.values[c.note]) !== '' && (
                               // e.g. why this parent was suggested: one clue per line, under the suggestion
@@ -342,6 +361,21 @@ Why it’s flagged: ${reason}` : v}
                   );
                 })}
               </tbody>
+              {grand && (
+                <tfoot className="sticky bottom-0 z-10 shadow-[0_-1px_0_rgb(var(--line))]">
+                  <tr className="bg-surface font-semibold text-ink">
+                    <td className="bg-muted px-3 py-2">Grand Total</td>
+                    {cols.map((c) => (
+                      <td key={c.name} className={cx('whitespace-nowrap bg-muted px-3 py-2', c.frozen && stick)}>
+                        {c.name in grand.sums
+                          ? formatValue(asField(c), grand.sums[c.name])
+                          : grand.countIn === c.name ? `${fmtNumber(grand.count)} ${objectNoun(first!.object, grand.count).replace(/^./, (x) => x.toUpperCase())}` : ''}
+                      </td>
+                    ))}
+                    <td className="bg-muted" />
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
           {flagged && (
