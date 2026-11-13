@@ -146,8 +146,34 @@ def _report_type_names(ctx: Ctx) -> dict[str, str]:
             if t.get("type"):
                 out[t["type"]] = t.get("label") or t["type"]
     return out
-DASHBOARD_USAGE_COLUMNS = ["FolderName", "Title", "CreatedById", "CreatedDate", "LastViewedDate", "DashboardResultRefreshedDate",
-                           "LastModifiedById", "LastModifiedDate"]
+# Dashboards, as the org names the fields: Title, Dashboard Type, Created By/Date, Running User, Last Modified By/Date. The refreshed
+# date (when it was last run) is read for its usage score but not shown; Source Reports and Usage are added when it's listed.
+DASHBOARD_USAGE_COLUMNS = ["FolderName", "Title", "Type", "CreatedById", "CreatedDate", "RunningUserId", "LastModifiedById", "LastModifiedDate",
+                           "DashboardResultRefreshedDate"]
+
+
+def _dashboard_sources(ctx: Ctx, dashboard_ids: list[str]) -> dict[str, list[str]]:
+    """The reports each dashboard's components show (dashboard id 15 -> report names, in order), from its components."""
+    safe = [i for i in dashboard_ids if re.fullmatch(r"[A-Za-z0-9]{15,18}", i or "")]
+    if not safe or not ctx.has_object("DashboardComponent"):
+        return {}
+    names = {str(r.get("Id") or "")[:15]: r.get("Name") or "" for r in _reports(ctx)}
+    out: dict[str, list[str]] = {}
+    for i in range(0, len(safe), 200):  # Salesforce wants components asked for by dashboard
+        try:
+            rows = ctx.rows("SELECT DashboardId, CustomReportId FROM DashboardComponent WHERE DashboardId IN ("
+                            + ", ".join(f"'{x}'" for x in safe[i:i + 200]) + ")", 50000)
+        except SalesforceAuthExpired:
+            raise
+        except SalesforceError:
+            return out
+        for r in rows:
+            rid = str(r.get("CustomReportId") or "")[:15]
+            name = names.get(rid) or (f"Report {rid}" if rid else "")
+            mine = out.setdefault(str(r.get("DashboardId") or "")[:15], [])
+            if name and name not in mine:
+                mine.append(name)
+    return out
 
 
 # Each report's (or dashboard's) usage score: how recently it was used. Run in the last 30 days (or found in Event Monitoring's runs) = 100.
@@ -197,8 +223,8 @@ def report_usage(ctx: Ctx) -> None:
     steps = ", ".join(f"{sc} within {d} days" for d, sc in USAGE_SCORE_STEPS)
     m = ctx.metric(
         "Report & dashboard usage", pct(used, len(scores)) if scores else 0, "%", "higher-better", score,
-        how="Every report and dashboard, grouped by folder, each with its own usage score. The number is the share of them used in the last "
-            "90 days; the score is the average of their usage scores.",
+        how="Every report and dashboard, grouped by folder, with Usage %: its share of all report (or dashboard) runs in the last 30 days, "
+            "from Event Monitoring. The number is the share used in the last 90 days; the score averages how recently each one was used.",
         rule=f"Each report and dashboard scores by how recently it was used: {steps}, 0 older or never. The card’s score is their average.",
         records=records,
         recent=False,
@@ -215,9 +241,11 @@ def report_usage(ctx: Ctx) -> None:
             ("Usage %", f"Each report’s share of all report runs in the last {USAGE_DAYS} days ({sum(v['runs'] for v in report_runs.values()):,} runs)"
              if report_runs else f"N/A: {why_not}"),
             ("Report Type", "The report type each report is built on, by the name Salesforce shows (its API name when the name can’t be read)"),
-            ("Last Viewed Date", "When the report or dashboard was last opened, as Salesforce keeps it. Salesforce records this per user, "
+            ("Dashboard columns", "The org’s own fields: Title, Dashboard Type, Created By, Created Date, Running User, Last Modified By, "
+             "Last Modified Date; and Source Reports, the reports its components show"),
+            ("Last Viewed Date", "When the report was last opened, as Salesforce keeps it. Salesforce records this per user, "
              "so it’s the connected user’s last view"),
-            ("Last Run", "Reports: the Last Run date. Dashboards: when their data was last refreshed (Dashboard Result Refreshed Date)"),
+            ("Last Run", "Reports: the Last Run date. Dashboards: when their data was last refreshed (used for the usage score)"),
             ("Dashboards", (f"Usage % from the Dashboard event log ({sum(v['runs'] for v in dash_runs.values()):,} views)" if dash_runs
                             else f"Usage % N/A: {dash_why}") if has_dash else "Dashboards can’t be read with this user"),
         ],
@@ -231,6 +259,8 @@ def report_usage(ctx: Ctx) -> None:
         spec["date_field"] = "LastRunDate" if spec["object"] == "Report" else "DashboardResultRefreshedDate"
         if spec["object"] == "Report":
             spec["report_types"] = _report_type_names(ctx)  # Report Type shown by its name, not its API name
+        else:
+            spec["sources"] = _dashboard_sources(ctx, [str(d.get("Id") or "") for d in dashes])  # Source Reports, per dashboard
 
 
 def unused_reports(ctx: Ctx) -> None:

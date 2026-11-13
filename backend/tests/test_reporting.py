@@ -26,7 +26,11 @@ DESCRIBE = {
                wf._f("CreatedById", type="reference", label="Created By ID"), wf._f("CreatedDate", type="datetime", label="Created Date"),
                wf._f("LastViewedDate", type="datetime", label="Last Viewed Date"), wf._f("LastRunDate", type="datetime", label="Last Run"), wf._f("LastModifiedById", type="reference", label="Last Modified By ID"),
                wf._f("LastModifiedDate", type="datetime", label="Last Modified Date"), wf._f("OwnerId", type="reference")],
-    "Dashboard": [wf._f("Id", type="id"), wf._f("Title"), wf._f("FolderName", label="Folder", sortable=True)],
+    "Dashboard": [wf._f("Id", type="id"), wf._f("Title"), wf._f("FolderName", label="Folder", sortable=True),
+                  wf._f("Type", type="picklist", label="Dashboard Type"), wf._f("CreatedById", type="reference", label="Created By ID"),
+                  wf._f("CreatedDate", type="datetime"), wf._f("RunningUserId", type="reference", label="Running User ID"),
+                  wf._f("LastModifiedById", type="reference"), wf._f("LastModifiedDate", type="datetime"),
+                  wf._f("DashboardResultRefreshedDate", type="datetime")],
     "EventLogFile": [wf._f("Id", type="id")],
     "DashboardComponent": [wf._f("Id", type="id")],
     "OpportunityLineItem": [wf._f("Id", type="id")],
@@ -85,8 +89,15 @@ class FakeReportingOrg(wf.FakeSalesOrg):
             return [{"Id": "0AT000000000001AAA", "LogDate": "2026-11-11T00:00:00.000+0000", "LogFileLength": 400}]
         if q.startswith("SELECT Id, Name FROM User WHERE Id IN"):
             return [{"Id": "005000000000001AAA", "Name": "Ann Lee"}, {"Id": "005000000000002AAA", "Name": "Bob Ray"}]
+        if q.startswith("SELECT Id, DashboardResultRefreshedDate FROM Dashboard"):
+            return [{"Id": "01Z000000000001AAA", "DashboardResultRefreshedDate": None}]
+        if "FROM Dashboard WHERE NamespacePrefix = null ORDER BY FolderName" in q:  # the Dashboards tab
+            return [{"Id": "01Z000000000001AAA", "Title": "Sales Leadership", "Type": "SpecifiedUser", "DashboardResultRefreshedDate": None}]
         if "FROM DashboardComponent" in q:
-            return [{"CustomReportId": "00O000000000001AAA"}, {"CustomReportId": "00O000000000001AAA"}, {"CustomReportId": "00O000000000003AAA"}]
+            assert "DashboardId IN ('01Z000000000001AAA')" in q  # asked for by dashboard
+            d = "01Z000000000001AAA"  # two components show Pipeline by Stage (listed once), one the Old Quarterly Report
+            return [{"DashboardId": d, "CustomReportId": "00O000000000001AAA"}, {"DashboardId": d, "CustomReportId": "00O000000000001AAA"},
+                    {"DashboardId": d, "CustomReportId": "00O000000000003AAA"}]
         if "FROM Report WHERE NamespacePrefix = null ORDER BY FolderName" in q:  # Report & dashboard usage's records, by folder
             return [{"Id": "00O000000000001AAA", "Name": "Pipeline by Stage", "ReportTypeApiName": "Opportunity", "LastRunDate": None},
                     {"Id": "00O000000000003AAA", "Name": "Old Quarterly Report", "ReportTypeApiName": "CustomEntity$Quota__c", "LastRunDate": None}]
@@ -125,7 +136,7 @@ def test_all_reporting_areas(client, sf):
     assert not any("unexpected error" in (x["message"] or "") for x in res["areas"]), [x["message"] for x in res["areas"]]
     ind = {i["label"]: i["value"] for x in res["areas"] for i in x["indicators"]}
     assert ind["Unused reports"] == 2 and ind["Unused dashboards"] == 1
-    assert ind["Report & dashboard usage"] == 50.0  # 2 of the 4 reports used (run in Event Monitoring)
+    assert ind["Report & dashboard usage"] == 40.0  # 2 of 5 (4 reports, 1 dashboard) used: run in Event Monitoring
     assert [i["label"] for i in areas["area-8"]["indicators"]][0] == "Report & dashboard usage"
     card = next(i for i in areas["area-8"]["indicators"] if i["label"] == "Report & dashboard usage")
     assert card["recordObjects"] == ["Report", "Dashboard"]  # reports and dashboards, one tab each
@@ -134,17 +145,25 @@ def test_all_reporting_areas(client, sf):
     assert page["sortedBy"] == "FolderName"
     assert [c["name"] for c in page["columns"] if c["type"] != "id" and not c["hidden"]] == [  # what the table shows
         "FolderName", "Name", "ReportType", "CreatedById", "CreatedDate", "LastViewedDate", "LastRunDate", "LastModifiedById", "LastModifiedDate", "UsagePct"]
-    assert page["columns"][-1]["frozen"] and page["columns"][-1]["label"] == "Usage"
+    assert page["columns"][-1]["frozen"] and page["columns"][-1]["label"] == "Usage %"
     rows = {r["values"]["Name"]: r["values"] for r in page["records"]}
     # each with its own score (run in Event Monitoring = 100; never run = 0) and its share of runs
-    assert rows["Pipeline by Stage"]["UsagePct"] == "Score 100 / 100\n75.0% of runs"
-    assert rows["Old Quarterly Report"]["UsagePct"] == "Score 0 / 100\n0% of runs"
+    assert rows["Pipeline by Stage"]["UsagePct"] == "75.0%"
+    assert rows["Old Quarterly Report"]["UsagePct"] == "0%"
     assert "LastRunBy" not in rows["Pipeline by Stage"]
     # the report type by the name Salesforce shows; a type the Analytics API doesn't name keeps its API name
     assert (rows["Pipeline by Stage"]["ReportType"], rows["Old Quarterly Report"]["ReportType"]) == ("Opportunities", "CustomEntity$Quota__c")
     assert next(c for c in page["columns"] if c["name"] == "ReportTypeApiName")["hidden"]
+    # dashboards: the org's own fields, the reports each one shows, and its usage
+    aid = client.get(f"{API}/assessments").json()
+    aid = (aid["items"] if isinstance(aid, dict) else aid)[0]["id"]
+    dash = client.get(f"{API}/assessments/{aid}/areas/area-8/indicator-records",
+                      params={"label": "Report & dashboard usage", "object": "Dashboard"}).json()
+    assert [c["name"] for c in dash["columns"] if c["type"] != "id" and not c["hidden"]] == [
+        "FolderName", "Title", "Type", "CreatedById", "CreatedDate", "RunningUserId", "LastModifiedById", "LastModifiedDate", "SourceReports", "UsagePct"]
+    assert dash["records"][0]["values"]["SourceReports"] == "Pipeline by Stage\nOld Quarterly Report"
     card = next(i for i in areas["area-8"]["indicators"] if i["label"] == "Report & dashboard usage")
-    assert card["score"] == 50.0  # the average of the 4 scores: 100, 100 (run in Event Monitoring), 0, 0
+    assert card["score"] == 40.0  # the average of the 5 scores: 100, 100 (run in Event Monitoring), 0, 0, 0
     assert ind["Reporting organization issues"] == 1  # the unfiled "Copy of …" report, counted once
     assert ind["Leadership reporting gaps"] == 3  # only pipeline and win/loss-ish names exist
     assert ind["Sales activity gaps"] == 1  # Bob logged 2 in 30 days

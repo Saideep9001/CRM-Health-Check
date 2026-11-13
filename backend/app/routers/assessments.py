@@ -16,7 +16,7 @@ from ..config import Settings
 from ..db import get_db
 from ..deps import http_dep, settings_dep
 from ..engine.combine import combined_view
-from ..engine import jobs, reporting
+from ..engine import jobs
 from ..engine.core import in_list, soql_str
 from ..engine.runner import EXECUTABLE_AREA_IDS
 from ..models import AssessmentRow, FindingRow
@@ -367,9 +367,10 @@ def _by_queue(rec: dict) -> bool:
 
 
 # Report usage: how much each report is used, after its own columns
-# the last column, frozen: its usage score and its share of runs, one per line
-USAGE_COLUMN = {"name": "UsagePct", "label": "Usage", "type": "lines", "frozen": True}
+# the last column, frozen: its share of all runs
+USAGE_COLUMN = {"name": "UsagePct", "label": "Usage %", "type": "string", "frozen": True}
 REPORT_TYPE_COLUMN = {"name": "ReportType", "label": "Report Type", "type": "string"}  # by its name, right after Report Name
+SOURCE_REPORTS_COLUMN = {"name": "SourceReports", "label": "Source Reports", "type": "lines"}  # dashboards: one report per line
 # Required field gaps: the rules each record breaks, one per line, the last column, frozen so it stays in view
 BROKEN_RULES_COLUMN = {"name": "BrokenRules", "label": "Broken rule", "type": "lines", "frozen": True}
 # its rule filter: the kind of rule, and how that kind's rules read in the Broken rule column (“Field: Page layout “X””)
@@ -454,23 +455,26 @@ def _with_extra(sf, rec: dict, columns: list[dict], records: list[dict]) -> list
         records.sort(key=lambda r: (place(r).get("batch") or 10**9, place(r).get("level") or 0, str(r["values"].get("Name") or "").lower()))
         names = {BATCH_COLUMN["name"], CHILDREN_COLUMN["name"]}
         return [BATCH_COLUMN, *(c for c in columns if c["name"] not in names), CHILDREN_COLUMN]
-    if rec.get("extra") == "report_usage":  # Report & dashboard usage: its usage score and share of all runs, frozen last
+    if rec.get("extra") == "report_usage":  # Report & dashboard usage: its share of all runs, frozen last
         saved, known = rec.get("reasons") or {}, bool(rec.get("usage_known"))
         report = rec.get("object") == "Report"
-        when = rec.get("date_field") or ("LastRunDate" if report else "DashboardResultRefreshedDate")
         for r in records:
             u = saved.get((r.get("id") or "")[:15]) or {}
-            score = reporting.usage_score(reporting.days_since(r["values"].get(when)), u.get("runs", 0))
-            share = f"{u.get('usage', 0)}% of runs" if known else "Usage % N/A"
-            r["values"]["UsagePct"] = f"Score {score} / 100\n{share}"
+            r["values"]["UsagePct"] = f"{u.get('usage', 0)}%" if known else "N/A"
             if report:
                 api = r["values"].get("ReportTypeApiName")
                 r["values"]["ReportType"] = (rec.get("report_types") or {}).get(api) or api
-        cols = [c for c in columns if c["name"] not in (USAGE_COLUMN["name"], REPORT_TYPE_COLUMN["name"])]
+            else:
+                r["values"]["SourceReports"] = "\n".join((rec.get("sources") or {}).get((r.get("id") or "")[:15], [])) or None
+        cols = [c for c in columns if c["name"] not in (USAGE_COLUMN["name"], REPORT_TYPE_COLUMN["name"], SOURCE_REPORTS_COLUMN["name"])]
         if report:  # the type's name right after Report Name; its API name stays hidden
             cols = [{**c, "hidden": True} if c["name"] == "ReportTypeApiName" else c for c in cols]
             at = next((i + 1 for i, c in enumerate(cols) if c["name"] == "Name"), len(cols))
             cols.insert(at, REPORT_TYPE_COLUMN)
+        else:  # dashboards: the refreshed date only feeds the score; Source Reports after Last Modified Date
+            cols = [{**c, "hidden": True} if c["name"] == "DashboardResultRefreshedDate" else c for c in cols]
+            at = next((i + 1 for i, c in enumerate(cols) if c["name"] == "LastModifiedDate"), len(cols))
+            cols.insert(at, SOURCE_REPORTS_COLUMN)
         return [*cols, USAGE_COLUMN]
     if rec.get("extra") == "broken_rules":  # Required field gaps: the rules each record breaks, frozen on the right
         reasons = rec.get("reasons") or {}
