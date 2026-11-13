@@ -1,7 +1,7 @@
 import { RecordLink, useOpenRecord } from '@/components/data/RecordLink';
 import type { InfiniteData, UseInfiniteQueryResult } from '@tanstack/react-query';
 import { AlertTriangle, Download, ExternalLink, Search, X } from 'lucide-react';
-import { useState, type ReactNode } from 'react';
+import { Fragment, useState, type ReactNode } from 'react';
 import { useDataObject } from '@/api/queries';
 import { ColumnFilter, columnFilter, type ValuesSource } from '@/components/data/ColumnFilter';
 import { formatValue } from '@/components/data/format';
@@ -115,6 +115,7 @@ export function RecordsTable({
     const val = r.values[field];
     return key.has(field) && (val == null || String(val).trim() === '') ? 'Empty — key field' : null;
   };
+  const totalsOf = (r: { values: Record<string, unknown> }) => (refCol ? first?.groupTotals?.[String(r.values[refCol] ?? '')] : undefined);
   const groupOf: number[] = [];
   const groupSize = new Map<number, number>();
   if (groupCol) {
@@ -232,9 +233,12 @@ export function RecordsTable({
                 {rows.map((r, i) => {
                   const href = r.id ? `${first!.recordUrlPrefix}${r.id}` : undefined;
                   const row = openRecord(first!.object, r.id);
+                  const tot = totalsOf(r);
+                  // the group's Total row, once all its records are loaded (its totals cover every record, not just this page)
+                  const groupEnds = !!tot && (i === rows.length - 1 || groupOf[i + 1] !== groupOf[i]) && (groupSize.get(groupOf[i]) === tot.count || !query.hasNextPage);
                   return (
+                    <Fragment key={r.id ?? i}>
                     <tr
-                      key={r.id ?? i}
                       onClick={row.onClick}
                       className={cx('group hover:bg-muted/60', row.className, groupCol && groupOf[i] % 2 === 0 && 'bg-brand-soft/30', groupCol && i > 0 && groupOf[i] !== groupOf[i - 1] && 'border-t-2 border-t-brand/20')}
                     >
@@ -246,23 +250,9 @@ export function RecordsTable({
                                 <span className="block truncate font-semibold text-ink" title={r.refNames[refCol!] ?? undefined}>
                                   {r.refNames[refCol!] ?? (r.values[refCol!] ? String(r.values[refCol!]) : `No ${refLabel}`)}
                                 </span>
-                                {(() => {
-                                  const t = first?.groupTotals?.[String(r.values[refCol!] ?? '')];
-                                  if (!t) {
-                                    return <span className="text-[11px] text-ink-muted">{fmtNumber(groupSize.get(groupOf[i]) ?? 0)} record{groupSize.get(groupOf[i]) === 1 ? '' : 's'}</span>;
-                                  }
-                                  // the group's totals over every record listed (not just the loaded page)
-                                  return (
-                                    <span className="block space-y-0.5 text-[11px] text-ink-muted">
-                                      <span className="block font-medium text-ink">{fmtNumber(t.count)} {objectNoun(first!.object, t.count)}</span>
-                                      {first!.columns.filter((c) => c.name in t && c.name !== 'count').map((c) => (
-                                        <span key={c.name} className="block">
-                                          {c.label}: <span className="font-semibold text-ink">{t[c.name] == null ? '—' : formatValue(asField(c), t[c.name])}</span>
-                                        </span>
-                                      ))}
-                                    </span>
-                                  );
-                                })()}
+                                {!totalsOf(r) && (
+                                  <span className="text-[11px] text-ink-muted">{fmtNumber(groupSize.get(groupOf[i]) ?? 0)} record{groupSize.get(groupOf[i]) === 1 ? '' : 's'}</span>
+                                )}
                               </span>
                             ) : (
                               <span className="rounded-full bg-surface px-2 py-0.5 text-[11px] font-semibold text-brand-ink ring-1 ring-brand/20">
@@ -302,7 +292,12 @@ Why it’s flagged: ${reason}` : v}
                             {ci === linkAt && href ? (
                               <RecordLink object={first!.object} id={r.id!}>{v === '—' ? r.id : v}</RecordLink>
                             ) : (
-                              <span className={v === '—' ? 'text-ink-subtle' : ''}>{v}</span>
+                              <span className={v === '—' ? 'text-ink-subtle' : ''}>
+                                {v}
+                                {tot?.counts?.[c.name]?.[String(r.values[c.name] ?? '')] != null && (
+                                  <span className="text-ink-muted"> ({fmtNumber(tot.counts[c.name][String(r.values[c.name] ?? '')])})</span>
+                                )}
+                              </span>
                             )}
                             {c.note && r.values[c.note] != null && String(r.values[c.note]) !== '' && (
                               // e.g. why this parent was suggested: one clue per line, under the suggestion
@@ -330,6 +325,20 @@ Why it’s flagged: ${reason}` : v}
                         )}
                       </td>
                     </tr>
+                    {groupEnds && tot && (
+                      <tr className="border-t border-line bg-muted/50 font-semibold">
+                        <td className="px-3 py-2 text-ink">{(r.refNames[refCol!] ?? String(r.values[refCol!] ?? '')) || `No ${refLabel}`} Total</td>
+                        {cols.map((c) => (
+                          <td key={c.name} className={cx('whitespace-nowrap px-3 py-2', c.frozen && stick)}>
+                            {c.name in tot && c.name !== 'count' && c.name !== 'counts'
+                              ? tot[c.name] == null ? '—' : formatValue(asField(c), tot[c.name])
+                              : tot.counts && c.name in tot.counts ? `${fmtNumber(tot.count)} ${objectNoun(first!.object, tot.count).replace(/^./, (x) => x.toUpperCase())}` : ''}
+                          </td>
+                        ))}
+                        <td className={cx('px-2', hasFrozen && 'sticky right-0 z-[1] w-8 bg-surface')} />
+                      </tr>
+                    )}
+                    </Fragment>
                   );
                 })}
               </tbody>

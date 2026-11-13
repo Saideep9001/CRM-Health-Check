@@ -493,6 +493,10 @@ export interface ResolvedFinding {
   previousAffected: number;
 }
 
+/** A group's totals in a records table: how many records, each summed field's total, and per field how many have each value
+ *  (e.g. counts.StageName.Proposal = 2). */
+export type GroupTotals = { count: number; counts?: Record<string, Record<string, number>> } & Record<string, unknown>;
+
 export interface FindingRecordsPage {
   object: string;
   /** frozen: kept last and in view while the table scrolls sideways. */
@@ -508,7 +512,7 @@ export interface FindingRecordsPage {
   /** Record id → field → why that value was flagged (e.g. "no country code"). */
   cellNotes?: Record<string, Record<string, string>>;
   /** Per group (e.g. owner id): how many records, and each summed field's total, over every record listed. */
-  groupTotals?: Record<string, { count: number } & Record<string, number | null>>;
+  groupTotals?: Record<string, GroupTotals>;
 }
 
 export interface UpdateFindingRequest {

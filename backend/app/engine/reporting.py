@@ -500,14 +500,16 @@ def leadership_opportunities(ctx: Ctx) -> None:
         records=("Opportunity",),
         recent=False,
         columns=LEADERSHIP_OPP_COLUMNS,
-        order="Owner.Name",
+        order="Owner.Name,StageName",
         criteria=[
             ("Records checked", f"{total:,} opportunities: {this_q:,} closing this quarter and {last_q:,} last quarter."),
             ("This quarter", f"{this_q:,} opportunities" + (f", Amount {money(totals.get('Amount'))}" if "Amount" in totals else "")
              + (f", Expected Revenue {money(totals.get('ExpectedRevenue'))}" if "ExpectedRevenue" in totals else "") + "."),
             ("Close Date filter", "Above the table: All, Last quarter or This quarter (by Close Date, in the org’s fiscal quarters)."),
-            ("Grouped by", "Opportunity Owner, A to Z, with each owner’s number of opportunities, total Amount and total Expected Revenue "
+            ("Grouped by", "Opportunity Owner (A to Z), then Stage within each owner, shown as Stage (how many of that owner’s "
+             "opportunities are in it). Under each owner, a Total row: the number of opportunities, total Amount and total Expected Revenue "
              "(for the opportunities shown)."),
+            ("Status filter", "Above the table: All, Open, Closed Won or Closed Lost."),
             ("Columns", "Salesforce’s own fields: Opportunity Name, Stage, Amount, Expected Revenue (Amount × Probability), Probability, "
              "Close Date, Age (days since it was created; for closed ones, how long it was open) and Lead Source."),
         ],
@@ -515,7 +517,8 @@ def leadership_opportunities(ctx: Ctx) -> None:
     for spec in m.records or []:
         spec["exact_columns"] = True  # just these columns, in this order
         spec["close_period"] = True  # the Close Date filter above the table
-        spec["group_totals"] = {"by": "OwnerId", "sums": sums}  # each owner's count and totals
+        spec["group_totals"] = {"by": "OwnerId", "sums": sums, "count_by": "StageName"}  # each owner's count, totals and stages
+        spec["status_filter"] = True  # All / Open / Closed Won / Closed Lost above the table
 
 
 # ---------------------------------------------------------------- area 9: activity, handoffs, deal progress

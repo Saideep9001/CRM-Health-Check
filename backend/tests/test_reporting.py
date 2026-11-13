@@ -106,6 +106,8 @@ class FakeReportingOrg(wf.FakeSalesOrg):
             return [{"Id": "01Z000000000001AAA", "Title": "Sales Leadership", "Type": "SpecifiedUser", "DashboardResultRefreshedDate": None}]
         if q.startswith("SELECT OwnerId g, COUNT(Id) c, SUM(Amount) s0, SUM(ExpectedRevenue) s1 FROM Opportunity"):  # each owner's totals
             return [{"g": "005000000000001AAA", "c": 2, "s0": 150000, "s1": 100000}]
+        if q.startswith("SELECT OwnerId g, StageName v, COUNT(Id) c FROM Opportunity"):  # each owner's stages
+            return [{"g": "005000000000001AAA", "v": "Negotiation", "c": 1}, {"g": "005000000000001AAA", "v": "Proposal", "c": 1}]
         if "FROM Opportunity" in q and "ORDER BY Owner.Name" in q:  # Sales leadership opportunities, by owner
             return [{"Id": "006000000000011AAA", "OwnerId": "005000000000001AAA", "Owner": {"Name": "John"}, "Name": "ABC Software Deal",
                      "StageName": "Negotiation", "Amount": 50000, "ExpectedRevenue": 40000, "Probability": 80, "CloseDate": "2026-12-15",
@@ -287,12 +289,19 @@ def test_sales_leadership_opportunities(client, sf):
     assert p["sortedBy"] == "OwnerId"  # grouped by owner, A to Z
     assert [c["name"] for c in p["columns"] if c["type"] != "id"] == [
         "OwnerId", "Name", "StageName", "Amount", "ExpectedRevenue", "Probability", "CloseDate", "AgeInDays", "LeadSource"]
-    assert p["groupTotals"] == {"005000000000001AAA": {"count": 2, "Amount": 150000, "ExpectedRevenue": 100000}}  # John: 2, $150,000, $100,000
+    assert p["groupTotals"] == {"005000000000001AAA": {"count": 2, "Amount": 150000, "ExpectedRevenue": 100000,  # John: 2, $150,000, $100,000
+                                                       "counts": {"StageName": {"Negotiation": 1, "Proposal": 1}}}}  # Stage (count)
     assert "CloseDate" not in listing().split("FROM Opportunity")[1].split("ORDER BY")[0]  # All
     page("this_quarter")
     assert "CloseDate = THIS_QUARTER" in listing()
-    totals = [q for q in sf.soql if q.startswith("SELECT OwnerId g")][-1]
+    totals = [q for q in sf.soql if q.startswith("SELECT OwnerId g, COUNT(Id)")][-1]
     assert "CloseDate = THIS_QUARTER" in totals and totals.endswith("GROUP BY OwnerId")  # totals over the same opportunities
     page("last_quarter")
     assert "CloseDate = LAST_QUARTER" in listing()
     assert client.get(url, params={"label": "Sales leadership opportunities", "object": "Opportunity", "period": "next_year"}).status_code == 422
+    # the status chips: Open, Closed Won, Closed Lost (with the totals over the same opportunities)
+    for chip, cond in (("open", "IsClosed = false"), ("won", "IsWon = true"), ("lost", "IsClosed = true AND IsWon = false")):
+        got = client.get(url, params={"label": "Sales leadership opportunities", "object": "Opportunity", "queue": chip})
+        assert got.status_code == 200 and cond in listing()
+        assert cond in [q for q in sf.soql if q.startswith("SELECT OwnerId g")][-1]
+    assert client.get(url, params={"label": "Sales leadership opportunities", "object": "Opportunity", "queue": "maybe"}).status_code == 422

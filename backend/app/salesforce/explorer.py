@@ -437,7 +437,9 @@ def records_matching(sf: SalesforceClient, name: str, where: str | None, cursor:
     desc = _describe(sf, name)
     fields = _fields(desc)
     descending = bool(order and order.startswith("-"))  # "-Amount" = biggest first
-    order_field = (order or "").lstrip("-") or None
+    order, *then = (order or "").split(",")  # "Owner.Name,StageName": then by these within each group
+    then = [t.strip() for t in then if t.strip() in fields and fields[t.strip()].get("sortable")]
+    order_field = order.lstrip("-") or None
     by_account = order_field == "Account.Name" and "AccountId" in fields  # rows grouped by their Account (sorted_by AccountId)
     by_parent = order_field == "Parent.Name" and "ParentId" in fields  # Accounts grouped by their Parent Account (sorted_by ParentId)
     by_owner = order_field == "Owner.Name" and "OwnerId" in fields  # records grouped by their owner (sorted_by OwnerId)
@@ -454,7 +456,7 @@ def records_matching(sf: SalesforceClient, name: str, where: str | None, cursor:
     else:
         if by_account or by_parent or by_owner:  # grouped by Account, Parent Account or owner: A→Z by its name, then the records' own
             rel = "Account" if by_account else "Parent" if by_parent else "Owner"
-            sort = f" ORDER BY {rel}.Name ASC NULLS LAST" + (", Name ASC" if "Name" in fields else "")
+            sort = f" ORDER BY {rel}.Name ASC NULLS LAST" + "".join(f", {t} ASC NULLS LAST" for t in then) + (", Name ASC" if "Name" in fields else "")
         elif order_field in fields and fields[order_field].get("sortable"):
             sort = f" ORDER BY {order_field} {'DESC' if descending else 'ASC'} NULLS LAST"
         else:
@@ -476,9 +478,11 @@ def records_matching(sf: SalesforceClient, name: str, where: str | None, cursor:
     }
 
 
-def group_totals(sf: SalesforceClient, name: str, where: str | None, filters: list[dict] | None, by: str, sums: list[str]) -> dict:
+def group_totals(sf: SalesforceClient, name: str, where: str | None, filters: list[dict] | None, by: str, sums: list[str],
+                 count_by: str | None = None) -> dict:
     """Per value of `by` (e.g. each owner): how many records, and the total of each of `sums` (e.g. Amount), over the same records the
-    table lists (its condition and the person's column filters). Fields are the engine's, checked against the object."""
+    table lists (its condition and the person's column filters). With `count_by` (e.g. StageName), also how many records have each of
+    its values in the group: {"counts": {"StageName": {"Proposal": 2}}}. Fields are the engine's, checked against the object."""
     desc = _describe(sf, name)
     fields = _fields(desc)
     if by not in fields:
@@ -489,7 +493,14 @@ def group_totals(sf: SalesforceClient, name: str, where: str | None, filters: li
     cols = ", ".join([f"{by} g", "COUNT(Id) c", *(f"SUM({s}) s{i}" for i, s in enumerate(sums))])
     soql = f"SELECT {cols} FROM {name}" + (f" WHERE {' AND '.join(conds)}" if conds else "") + f" GROUP BY {by}"
     rows = sf.query(soql).get("records", [])
-    return {str(r["g"]): {"count": int(r.get("c") or 0), **{s: r.get(f"s{i}") for i, s in enumerate(sums)}} for r in rows if r.get("g")}
+    out = {str(r["g"]): {"count": int(r.get("c") or 0), **{s: r.get(f"s{i}") for i, s in enumerate(sums)}} for r in rows if r.get("g")}
+    if count_by and count_by in fields:
+        soql = (f"SELECT {by} g, {count_by} v, COUNT(Id) c FROM {name}" + (f" WHERE {' AND '.join(conds)}" if conds else "")
+                + f" GROUP BY {by}, {count_by}")
+        for r in sf.query(soql).get("records", []):
+            if str(r.get("g") or "") in out:
+                out[str(r["g"])].setdefault("counts", {}).setdefault(count_by, {})[str(r.get("v") or "")] = int(r.get("c") or 0)
+    return out
 
 
 def get_record(sf: SalesforceClient, name: str, record_id: str) -> dict:

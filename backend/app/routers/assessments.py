@@ -368,6 +368,8 @@ def _by_queue(rec: dict) -> bool:
 
 # Sales leadership opportunities: the Close Date filter above the table
 CLOSE_PERIODS = {"all": None, "last_quarter": "CloseDate = LAST_QUARTER", "this_quarter": "CloseDate = THIS_QUARTER"}
+# …and its status chips
+OPP_STATUS = {"all": None, "open": "IsClosed = false", "won": "IsWon = true", "lost": "IsClosed = true AND IsWon = false"}
 # Report usage: how much each report is used, after its own columns
 # the last column, frozen: its share of all runs
 USAGE_COLUMN = {"name": "UsagePct", "label": "Usage %", "type": "string", "frozen": True}
@@ -661,6 +663,12 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
                    for i in ids}
         rec = {**rec, "where": f"{explorer.and_part(rec['where'])} AND {cond}" if rec.get("where") else cond, "notes": notes, "reasons": reasons}
         queue = None
+    if queue and rec.get("status_filter"):  # Sales leadership opportunities: All, Open, Closed Won or Closed Lost
+        if queue not in OPP_STATUS:
+            raise HTTPException(422, "Pick All, Open, Closed Won or Closed Lost.")
+        if OPP_STATUS[queue]:
+            rec = {**rec, "where": f"{explorer.and_part(rec['where'])} AND {OPP_STATUS[queue]}" if rec.get("where") else OPP_STATUS[queue]}
+        queue = None
     if queue:
         if not _by_queue(rec):
             raise HTTPException(422, "Only the Stuck Queue-Owned Leads and Inactive Lead Assignment Rules measures take a queue.")
@@ -734,7 +742,7 @@ def indicator_records(
     page["cell_notes"] = {r["id"]: notes[r["id"]] for r in page["records"] if r.get("id") in notes}
     if (g := rec.get("group_totals")) and not cursor:  # each group's count and totals (e.g. per owner), over every record listed
         page["group_totals"] = _salesforce(db, http, settings, lambda sf: explorer.group_totals(
-            sf, rec["object"], rec.get("where"), _filters(filters), g["by"], g.get("sums") or []), org_id)
+            sf, rec["object"], rec.get("where"), _filters(filters), g["by"], g.get("sums") or [], g.get("count_by")), org_id)
     return page
 
 

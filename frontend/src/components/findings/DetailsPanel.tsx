@@ -60,6 +60,13 @@ const FIELD_CARD_OBJECTS: Record<string, string> = { Accounts: 'Account', Contac
 /** "Unused & Low-Completion Fields (Accounts)" → Account. */
 const objectOfFieldCard = (label: string) => FIELD_CARD_OBJECTS[label.match(/\(([^)]+)\)$/)?.[1] ?? ''] ?? null;
 const OTHER = '__other__';
+/** Sales leadership opportunities: the status chips above its records (sent as the queue). */
+const OPP_STATUS = [
+  { id: 'all', name: 'All' },
+  { id: 'open', name: 'Open' },
+  { id: 'won', name: 'Closed Won' },
+  { id: 'lost', name: 'Closed Lost' },
+];
 /** Required field gaps: the kinds of rule its records can be narrowed to ('' = all). */
 const RULE_KINDS = [
   { value: '', label: 'All rules' },
@@ -441,6 +448,25 @@ function Records({
                 {objectLabel(o)}
               </button>
             ))}
+          </div>
+        )}
+        {byQuarter && (
+          // Sales leadership opportunities: All, Open, Closed Won or Closed Lost
+          <div className="mb-3 flex flex-wrap items-center gap-1.5" role="group" aria-label="Opportunity status">
+            {OPP_STATUS.map((st) => {
+              const on = (queue?.id ?? 'all') === st.id;
+              return (
+                <button
+                  key={st.id}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => setQueue(st.id === 'all' ? undefined : st)}
+                  className={cx('rounded-full border px-3 py-1 text-xs font-medium transition', on ? 'border-brand bg-brand-soft text-brand-ink' : 'border-line text-ink-muted hover:text-ink')}
+                >
+                  {st.name}
+                </button>
+              );
+            })}
           </div>
         )}
         <div id="records-table" className="scroll-mt-20">
