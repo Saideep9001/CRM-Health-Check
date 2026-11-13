@@ -247,8 +247,9 @@ def _table_details(ctx: Ctx, spec: dict, dashes: list[dict]) -> None:
 
 UNUSED_REPORT = f"(LastRunDate < LAST_N_DAYS:{UNUSED_DAYS} OR LastRunDate = null)"
 GRACE = "CreatedDate < LAST_N_DAYS:30"  # newer reports and dashboards aren't counted as unused yet
-_FILTER_TEXT = ("Above the table: All; Used (used in the last {d} days); or Unused, then the last 30 / 90 / 180 days (not used in that "
-                "time, or ever) or custom dates (last used between them). The number and score always use {d} days.")
+_FILTER_TEXT = ("Above the table: All; Used (with Event Monitoring, those with a share of runs above 0%; without it, used in the last "
+                "{d} days); or Unused, then the last 30 / 90 / 180 days (not used in that time, or ever) or custom dates (last used between "
+                "them), shown without Usage %. The number and score always use {d} days.")
 
 
 def _usage_spec(ctx: Ctx, m, dashes: list[dict], runs: dict) -> None:

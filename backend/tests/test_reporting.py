@@ -238,15 +238,18 @@ def test_usage_filter_all_used_unused(client, sf):
     assert "LastRunDate" not in last("Report")
     page("Report usage", "Report", "all")
     assert "LastRunDate" not in last("Report")
+    assert page("Report usage", "Report")["columns"][-1]["name"] == "UsagePct"
+    # Used, with Event Monitoring: only the reports with a share of runs (Pipeline by Stage, Lost deals by reason); 0% is Unused
     page("Report usage", "Report", "used")
-    assert "LastRunDate = LAST_N_DAYS:180" in last("Report")
-    page("Report usage", "Report", "30")
+    assert "Id IN ('00O000000000001', '00O000000000004')" in last("Report") or "Id IN ('00O000000000004', '00O000000000001')" in last("Report")
+    unused = page("Report usage", "Report", "30")
     assert "(LastRunDate < LAST_N_DAYS:30 OR LastRunDate = null) AND CreatedDate < LAST_N_DAYS:30" in last("Report")
+    assert "UsagePct" not in [c["name"] for c in unused["columns"]]  # no Usage % under Unused
     page("Report usage", "Report", "range:2026-01-01:2026-03-31")
     assert "LastRunDate >= 2026-01-01T00:00:00Z AND LastRunDate <= 2026-03-31T23:59:59Z" in last("Report")
     assert client.get(url, params={"label": "Report usage", "object": "Report", "period": "45"}).status_code == 422
     # dashboards by their last refresh (saved by the check): Used keeps Sales Leadership, Unused for 30 days keeps Old Board
-    page("Dashboard usage", "Dashboard", "used")
+    page("Dashboard usage", "Dashboard", "used")  # no Dashboard event log here: used = refreshed in the last 180 days
     assert "Id IN ('01Z000000000001')" in last("Dashboard")
     page("Dashboard usage", "Dashboard", "30")
     assert "Id IN ('01Z000000000002')" in last("Dashboard")  # 15-character ids, which Salesforce accepts

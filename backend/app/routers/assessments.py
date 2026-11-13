@@ -563,6 +563,9 @@ def _unused_where(rec: dict, period: str) -> str:
         raise HTTPException(422, "Pick All, Used, or Unused for the last 30, 90 or 180 days or a From date on or before the To date.")
     if period == "all":
         return base
+    if period == "used" and rec.get("usage_known"):  # with Event Monitoring: only those with a share of runs (0% belongs under Unused)
+        ids = [i for i, v in (rec.get("reasons") or {}).items() if (v or {}).get("runs") and re.fullmatch(r"[A-Za-z0-9]{15,18}", i)]
+        return f"{base} AND " + ("Id IN (" + ", ".join(f"'{i}'" for i in ids) + ")" if ids else "Id = null")
     if rec.get("object") == "Report":
         if period == "used":
             return f"{base} AND LastRunDate = LAST_N_DAYS:{used_days}"
@@ -603,8 +606,8 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
         raise HTTPException(404, "This measure isn’t about specific records.")
     if _by_stage(label, rec):  # works on checks saved before the Stage chips too
         rec = {**rec, "by_stage": True}
-    if period and rec.get("unused_period"):  # Unused reports & dashboards: the period picked above the table
-        rec = {**rec, "where": _unused_where(rec, period)}
+    if period and rec.get("unused_period"):  # Report / Dashboard usage: All, Used or Unused (for a period), picked above the table
+        rec = {**rec, "where": _unused_where(rec, period), "no_usage": rec.get("no_usage") or period not in ("all", "used")}  # Unused: no Usage %
         period = None
     if label == WEB_LABEL:  # Web-to-Lead: the website Leads created in the period picked (any time by default)
         try:
