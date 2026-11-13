@@ -187,8 +187,8 @@ def test_all_reporting_areas(client, sf):
     # Salesforce leaves the refreshed date empty: it's the latest component refresh, from the dashboard's status
     assert dash["records"][0]["values"]["DashboardResultRefreshedDate"] == REFRESHED
     assert dash["records"][0]["values"]["SourceReports"] == "Pipeline by Stage\nOld Quarterly Report"
-    assert ind["Reporting organization issues"] == 1  # the unfiled "Copy of …" report, counted once
-    assert ind["Leadership reporting gaps"] == 3  # only pipeline and win/loss-ish names exist
+    assert not {"Reporting organization issues", "Leadership reporting gaps", "Report trust issues"} & set(ind)  # removed from Area 8
+    assert [i["label"] for i in areas["area-8"]["indicators"]] == ["Report usage", "Dashboard usage", "Sales leadership opportunities"]
     assert ind["Sales activity gaps"] == 1  # Bob logged 2 in 30 days
     assert ind["Opportunities without open Tasks"] == 39  # 40 open, 1 with an open task
     assert ind["Marketing-to-sales handoff visibility"] == 20.0  # 12 of 60 new deals have no source
@@ -200,7 +200,7 @@ def test_all_reporting_areas(client, sf):
 
     names = {f["name"]: f for f in findings}
     assert "Reports nobody runs" in names and "Old Quarterly Report" in names["Reports nobody runs"]["description"]
-    assert "Key leadership reports are missing" in names and "Forecast" in names["Key leadership reports are missing"]["description"]
+    assert "Key leadership reports are missing" not in names and "Disorganised reports" not in names
     assert "Lead Status changes aren’t tracked" in names
     assert "Customers who bought only one product line" in names
     assert "No report analyses why deals are lost" not in names  # "Lost deals by reason" exists

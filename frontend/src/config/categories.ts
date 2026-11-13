@@ -154,14 +154,11 @@ export const DIAGNOSTIC_AREAS: DiagnosticArea[] = [
     categoryId: 'reporting',
     name: 'Remove unused reports and develop key leadership insights',
     description:
-      'See how much each report is used and clear out the reports and dashboards nobody uses. Then check that leaders have the key reports they decide with: pipeline, forecast, win rate, rep activity and lead conversion.',
+      'See how much each report and dashboard is used and find the ones nobody uses. Then review every opportunity by owner and stage, with totals, the way sales leaders do.',
     indicators: [
       'Report usage',
       'Dashboard usage',
-      'Reporting organization issues',
-      'Leadership reporting gaps',
       'Sales leadership opportunities',
-      'Report trust issues',
     ],
   },
   {

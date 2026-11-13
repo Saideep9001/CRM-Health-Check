@@ -119,7 +119,7 @@ export function RecordsTable({
   const startsBlock = (i: number, field: string) =>
     i === 0 || groupOf[i] !== groupOf[i - 1] || String(rows[i].values[field] ?? '') !== String(rows[i - 1].values[field] ?? '');
   const totalsOf = (r: { values: Record<string, unknown> }) => (refCol ? first?.groupTotals?.[String(r.values[refCol] ?? '')] : undefined);
-  // every group's totals added up (they cover every record listed, so this is the whole table's total)
+  // every group's totals added up (they cover every record listed, so this is the whole table's total); one group per user (owner)
   const allTotals = refCol && first?.groupTotals ? Object.values(first.groupTotals) : [];
   const grand = allTotals.length
     ? {
@@ -364,7 +364,7 @@ Why it’s flagged: ${reason}` : v}
               {grand && (
                 <tfoot className="sticky bottom-0 z-10 shadow-[0_-1px_0_rgb(var(--line))]">
                   <tr className="bg-surface font-semibold text-ink">
-                    <td className="bg-muted px-3 py-2">Grand Total</td>
+                    <td className="whitespace-nowrap bg-muted px-3 py-2">Total Users Count: {fmtNumber(allTotals.length)}</td>
                     {cols.map((c) => (
                       <td key={c.name} className={cx('whitespace-nowrap bg-muted px-3 py-2', c.frozen && stick)}>
                         {c.name in grand.sums

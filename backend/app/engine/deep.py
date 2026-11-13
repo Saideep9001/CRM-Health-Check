@@ -4,8 +4,6 @@
   reports, flows or code rely on it.
 - Automation health (area 7): legacy Process Builders / Workflow Rules, objects automated by several
   tools at once, and flow interviews stuck for days.
-- Report trust (area 8): reports filtering on retired picklist values or nearly-empty fields, reports that
-  no longer run, and dashboards that run as people who have left.
 - Forecast integrity (area 10): stages mapped to the wrong forecast category, and open deals counted
   as closed in the forecast.
 - Sync health (area 20): integrations that stopped writing data, duplicates created by integrations,
@@ -13,10 +11,8 @@
 
 All read-only. Setup reads are skipped with a note when the user can't view setup.
 """
-import re
 from datetime import datetime, timezone
 
-from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
 from .core import DEFAULT_OBJECTS, Ctx, FindingDraft, Unavailable, pct, rate_score
 from .integrations import INTEGRATION_USER
 
@@ -167,121 +163,6 @@ def automation_health(ctx: Ctx) -> None:
 
 # ---------------------------------------------------------------- area 8: report trust
 
-MAX_REPORTS = 40
-_BROKEN = re.compile(r"column|field|no longer|doesn.t exist|does not exist|deleted|invalid report type|isn.t valid|is not valid", re.I)
-_NO_ACCESS = re.compile(r"privilege|permission|access|not supported|unsupported", re.I)
-
-
-def _report_field(ctx: Ctx, column: str) -> tuple[str, dict] | None:
-    """Map a report filter column like "Opportunity.Region__c" to (object, field describe)."""
-    if "." not in column:
-        return None
-    obj_part, field_part = column.rsplit(".", 1)
-    obj_part = obj_part.split(".")[-1]
-    for obj in (*CORE, "Case", "Campaign"):
-        if obj.lower() == obj_part.lower() and ctx.has_object(obj):
-            fields = ctx.fields(obj)
-            f = next((v for k, v in fields.items() if k.lower() == field_part.lower()), None)
-            return (obj, f) if f else None
-    return None
-
-
-def report_trust(ctx: Ctx) -> None:
-    if not ctx.has_object("Report"):
-        raise Unavailable("Reports can’t be read with this user.")
-    reports = ctx.rows("SELECT Id, Name FROM Report WHERE NamespacePrefix = null AND LastRunDate = LAST_N_DAYS:90 ORDER BY LastRunDate DESC", MAX_REPORTS)
-    ver = ctx.sf.settings.sf_api_version
-    problems: list[str] = []
-    broken: list[str] = []
-    fill_cache: dict[tuple[str, str], float] = {}
-    for r in reports:
-        try:
-            meta = (ctx.sf.get(f"/services/data/{ver}/analytics/reports/{r['Id']}/describe").get("reportMetadata") or {})
-        except SalesforceAuthExpired:
-            raise
-        except SalesforceError as exc:
-            # Only a missing field/column/report type means the report is broken; permission errors just mean we can't look.
-            if _BROKEN.search(str(exc)) and not _NO_ACCESS.search(str(exc)):
-                broken.append(r.get("Name") or r["Id"])
-            continue
-        issues = []
-        for flt in meta.get("reportFilters") or []:
-            mapped = _report_field(ctx, str(flt.get("column") or ""))
-            if not mapped:
-                continue
-            obj, f = mapped
-            if f.get("type") in ("picklist", "multipicklist") and flt.get("value"):
-                active = {str(p.get("value")).lower() for p in f.get("picklistValues") or [] if p.get("active")}
-                retired = [v.strip() for v in str(flt["value"]).split(",") if v.strip() and v.strip().lower() not in active]
-                if active and retired:
-                    issues.append(f"filters {f['name']} on retired value(s) {', '.join(retired[:3])}")
-            if f.get("custom") and f.get("filterable"):
-                key = (obj, f["name"])
-                if key not in fill_cache:
-                    total = ctx.count(obj, recent=False)
-                    filled = ctx.filled_counts(obj, [f["name"]], recent=False).get(f["name"], total)
-                    fill_cache[key] = filled / total if total else 1.0
-                if fill_cache[key] < 0.05:
-                    issues.append(f"filters on {f['name']}, which is filled on {fill_cache[key]:.0%} of {obj} records")
-        if issues:
-            problems.append(f"“{r.get('Name')}” " + "; ".join(issues[:2]))
-
-    dash_bad: list[str] = []
-    if ctx.has_object("Dashboard"):
-        try:
-            dash_bad = [d.get("Title") or d["Id"] for d in ctx.rows(
-                "SELECT Id, Title FROM Dashboard WHERE NamespacePrefix = null AND Type = 'SpecifiedUser' AND RunningUser.IsActive = false", 500)]
-        except SalesforceAuthExpired:
-            raise
-        except SalesforceError:
-            dash_bad = []
-
-    issues_n = len(problems) + len(broken) + len(dash_bad)
-    checked = len(reports) + len(dash_bad)
-    score = rate_score(issues_n / max(checked, 1), 0.3) if checked else 100
-    ctx.metric(
-        "Report trust issues", issues_n, "count", "lower-better", score,
-        how=f"Of the {len(reports)} most recently run reports (run in the last 90 days, up to {MAX_REPORTS}), those that filter on a retired picklist value "
-        "or on a custom field filled on fewer than 5% of records, or that error when opened; plus dashboards that run as a deactivated user.",
-        rule="Scores 100 when nothing is wrong, falling evenly to 0 when 30% of the reports and dashboards checked have a problem.",
-        criteria=[
-            ("Reports checked", f"The {len(reports)} most recently run reports built in your org (run in the last 90 days, up to {MAX_REPORTS}). "
-             "Reports from installed packages are left out."),
-            ("Retired values", "A filter on a picklist uses a value that is no longer active on that field."),
-            ("Empty fields", "A filter uses a custom field that is filled on fewer than 5% of that object’s records."),
-            ("Broken reports", "Opening the report fails because a field, column or report type no longer exists. "
-             "Errors caused by our user’s permissions are not counted."),
-            ("Dashboards", "Dashboards set to run as a specific person who has been deactivated."),
-            ("What's counted", f"{_plural(len(problems), 'report')} with risky filters, {_plural(len(broken), 'broken report')} and "
-             f"{_plural(len(dash_bad), 'dashboard')} running as a leaver = {issues_n}, out of {checked} checked."),
-            ("Flagged when", "Any one of these is found."),
-        ],
-    )
-    if problems:
-        _setting(ctx, "Reports filtering on retired values or empty fields",
-                 f"{_plural(len(problems), 'recently used report')} can’t be trusted as they stand: " + "; ".join(problems[:5]) + (" …" if len(problems) > 5 else "") + ".",
-                 "A filter on a retired picklist value or a field nobody fills in silently drops records, so the totals look plausible but are wrong.",
-                 "Decisions made on numbers that leave out part of the business.",
-                 "Update each filter to current picklist values, or fix the field’s data before relying on the report.",
-                 "medium", affected=len(problems), obj="Report", fix="/lightning/o/Report/home")
-    if broken:
-        _setting(ctx, "Reports that no longer run",
-                 f"{_plural(len(broken), 'recently used report')} returned an error when opened: {', '.join(broken[:6])}.",
-                 "Usually a field or object they use was deleted or permissions changed — the people who rely on them get errors or blank results.",
-                 "Missing information in meetings and lost trust in Salesforce reporting.",
-                 "Open each report, remove or replace the missing fields, and save; delete the ones nobody needs.",
-                 "medium", affected=len(broken), obj="Report", fix="/lightning/o/Report/home")
-    if dash_bad:
-        _setting(ctx, "Dashboards running as people who have left",
-                 f"{_plural(len(dash_bad), 'dashboard')} run as an inactive user: {', '.join(dash_bad[:6])}.",
-                 "A dashboard shows data as its running user sees it; when that user is deactivated it stops refreshing or shows stale numbers.",
-                 "Leaders looking at out-of-date numbers without knowing it.",
-                 "Change each dashboard’s running user to an active person (or ‘the dashboard viewer’), and include this in your leaver checklist.",
-                 "medium", affected=len(dash_bad), obj="Dashboard", fix="/lightning/o/Dashboard/home")
-
-
-# ---------------------------------------------------------------- area 10: forecast integrity
-
 def forecast_setup(ctx: Ctx) -> None:
     stages = ctx.setup("SELECT MasterLabel, IsClosed, IsWon, ForecastCategoryName, DefaultProbability FROM OpportunityStage WHERE IsActive = true", tooling=False)
     wrong = []
@@ -414,7 +295,6 @@ def sync_health(ctx: Ctx) -> None:
 
 STEP_LABELS = {
     automation_health: "Checking automation health",
-    report_trust: "Checking whether key reports can be trusted",
     forecast_setup: "Checking forecast setup",
     sync_health: "Scoring integration sync health",
 }

@@ -23,7 +23,6 @@ log = logging.getLogger("aquarient.engine")
 # Deeper outcome checks added to existing areas (see deep.py). Data Quality's scorecard stays last.
 DEEP = {
     "area-7": [deep.automation_health],
-    "area-8": [deep.report_trust],
     "area-10": [deep.forecast_setup],
     "area-20": [deep.sync_health],
 }

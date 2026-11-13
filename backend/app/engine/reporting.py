@@ -20,7 +20,6 @@ UNUSED_DAYS = 180
 # Where in Salesforce each setup problem is fixed.
 SETTING_FIX = {
     'No dashboards': '/lightning/o/Dashboard/home',
-    'Key leadership reports are missing': '/lightning/o/Report/home',
     'Lead Status changes aren’t tracked': '/lightning/setup/ObjectManager/Lead/FieldsAndRelationships/view',
     'Opportunity changes aren’t tracked': '/lightning/setup/ObjectManager/Opportunity/FieldsAndRelationships/view',
     'No report shows stuck deals': '/lightning/o/Report/home',
@@ -377,94 +376,6 @@ def dashboard_usage(ctx: Ctx) -> None:
             impact="Leaders miss problems that the right dashboard would show.",
             action="Retire unused dashboards, and subscribe managers to the few that matter so they arrive by email every week.",
             obj="Dashboard",
-        )
-
-
-_MESSY_NAME = re.compile(r"^(copy of|new .*report|untitled|test\b|report\s*\d+$)|\bcopy\b|\(\d+\)$", re.I)
-_UNFILED = re.compile(r"unfiled|private|my personal|personal custom", re.I)
-
-
-def reporting_organization(ctx: Ctx) -> None:
-    reports = _reports(ctx)
-    unfiled = [r for r in reports if _UNFILED.search(r.get("FolderName") or "")]
-    messy = [r for r in reports if _MESSY_NAME.search((r.get("Name") or "").strip())]
-    issues = len({r["Id"] for r in unfiled + messy})
-    score = rate_score(issues / len(reports), 0.4) if reports else 100
-    ctx.metric(
-        "Reporting organization issues", issues, "count", "lower-better", score,
-        how="We count reports that sit in unfiled or private folders, or have copy/test-style names like “Copy of…”, “Untitled” or “Test”. Each report is counted once.",
-        rule="100 when no report has these issues, falling evenly to 0 when 40% of reports do. A problem is raised when the score is below 90.",
-        records=("Report", ctx.ids_in([r["Id"] for r in unfiled + messy])),
-        recent=False,
-        columns=["FolderName", "Name", "LastRunDate", "OwnerId"],
-        order="FolderName",
-        criteria=[
-            ("Records checked", f"{len(reports):,} reports (reports from installed packages aren’t counted)."),
-            ("Fields checked", "Report name and folder name"),
-            ("Unfiled or private", "The folder name contains “Unfiled”, “Private”, “My Personal” or “Personal Custom”."),
-            ("Messy name", "The name starts with “Copy of”, “New … report”, “Untitled” or “Test”, is just “Report” plus a number, contains the word “copy”, or ends with a number in brackets like “(2)”. Upper/lower case is ignored."),
-            ("What's counted", f"{issues:,} reports with at least one issue: {len(unfiled):,} in unfiled or private folders and {len(messy):,} with messy names. A report with both is counted once."),
-            ("Flagged when", "The score is below 90."),
-            ("Records listed", "Every report with an issue, sorted by folder (up to 200 reports)."),
-        ],
-    )
-    parts = []
-    if unfiled:
-        parts.append(f"{len(unfiled):,} sit in unfiled or private folders")
-    if messy:
-        examples = ", ".join("“" + str(r.get("Name")) + "”" for r in messy[:3])
-        parts.append(f"{len(messy):,} have copy/test-style names (e.g. {examples})")
-    ctx.finding(
-        name="Disorganised reports",
-        records=("Report", ctx.ids_in([r["Id"] for r in unfiled + messy])),
-        recent=False,
-        fix="/lightning/o/Report/home",
-        score=score,
-        affected=issues,
-        description=f"Of {len(reports):,} reports, " + " and ".join(parts) + ".",
-        why="Without clear folders and names, people can’t find trusted reports and build duplicates.",
-        impact="Conflicting numbers in meetings and wasted time.",
-        action="Set up folders by team or role (e.g. Sales Leadership, Sales Managers, Marketing), agree a naming convention, and move or rename the rest.",
-        obj="Report",
-        min_score=90,
-    )
-
-
-LEADERSHIP_TOPICS = {
-    "Pipeline": r"pipeline|open opp|opportunit(y|ies) by stage",
-    "Forecast": r"forecast|commit|bookings",
-    "Win rate": r"win.?rate|won|lost|win.?loss|closed",
-    "Rep activity": r"activit|calls|tasks|meetings",
-    "Lead conversion": r"lead.*(conver|source|funnel)|conversion|mql|sql",
-}
-
-
-def leadership_reporting(ctx: Ctx) -> None:
-    _reports(ctx)
-    missing = [topic for topic, rx in LEADERSHIP_TOPICS.items() if not _has_report(ctx, rx)]
-    ctx.metric(
-        "Leadership reporting gaps", len(missing), "count", "lower-better", 100 - 20 * len(missing),
-        how="We look at the names of your reports and dashboards to see whether each of 5 key leadership topics is covered: pipeline, forecast, win rate, rep activity and lead conversion. We count the topics with no matching report or dashboard.",
-        rule="Starts at 100 and loses 20 points for each missing topic, so 0 when all 5 are missing.",
-        criteria=[
-            ("Records checked", "The names of all reports and dashboards the connected user can see (excluding installed packages)."),
-            ("Pipeline", "A name containing “pipeline”, “open opp” or “opportunities by stage”."),
-            ("Forecast", "A name containing “forecast”, “commit” or “bookings”."),
-            ("Win rate", "A name containing “win rate”, “won”, “lost”, “win-loss” or “closed”."),
-            ("Rep activity", "A name containing “activit…”, “calls”, “tasks” or “meetings”."),
-            ("Lead conversion", "A name containing “lead” followed by “conver…”, “source” or “funnel”, or containing “conversion”, “MQL” or “SQL”."),
-            ("Matching", "Upper/lower case is ignored. If reports can’t be read at all, every topic is treated as covered."),
-            ("What's counted", f"{len(missing)} of 5 topics have no matching report or dashboard" + (f": {', '.join(missing)}." if missing else ".")),
-        ],
-    )
-    if missing:
-        _setting(
-            ctx,
-            "Key leadership reports are missing",
-            f"No report or dashboard seems to cover: {', '.join(missing)} (based on report and dashboard names).",
-            "Build one trusted report for each missing topic and add them to a leadership dashboard with a weekly subscription.",
-            severity="high" if len(missing) >= 3 else "medium",
-            obj="Report",
         )
 
 
@@ -1109,7 +1020,7 @@ def upsell_visibility(ctx: Ctx) -> None:
 
 
 AREAS = {
-    "area-8": [report_usage, dashboard_usage, reporting_organization, leadership_reporting, leadership_opportunities],
+    "area-8": [report_usage, dashboard_usage, leadership_opportunities],
     "area-9": [sales_activity_gaps, opps_without_open_tasks, handoff_visibility, pipeline_progression],
     "area-10": [stuck_visibility, overdue_visibility, regional_visibility, closed_lost_trends],
     "area-11": [win_loss_gaps, competitor_tracking, product_visibility, upsell_visibility],
@@ -1119,8 +1030,6 @@ STEP_LABELS = {
     report_usage: "Measuring how much each report is used",
     dashboard_usage: "Measuring how much each dashboard is used",
     leadership_opportunities: "Listing opportunities by owner for leadership",
-    reporting_organization: "Checking report folders and names",
-    leadership_reporting: "Checking leadership reports",
     sales_activity_gaps: "Checking rep activity over 30 days",
     opps_without_open_tasks: "Finding deals with no open task",
     handoff_visibility: "Checking marketing-to-sales handoffs",

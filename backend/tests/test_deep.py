@@ -107,7 +107,7 @@ def test_deep_checks(client, sf):
     assert ind[dep_card] == 1  # Region__c: empty, used by a report and a flow (layout ignored)
     assert ind["Legacy automation to migrate"] == 2 and ind["Overlapping automation"] == 1  # Opportunity: PB + flow + trigger
     assert ind["Stuck or failing automations"] == 3
-    assert ind["Report trust issues"] == 3  # retired "North" filter + a report that errors + a dashboard run by a leaver
+    assert "Report trust issues" not in ind  # removed from Area 8
     assert ind["Forecast setup issues"] == 3  # open stage in Closed, lost stage in Pipeline, 2 open deals filed as Closed
     assert ind["Sync health score"] == 43.0  # stalled sync (-40), 2 dupes of 100 created (-2), 10% failed jobs (-15)
 
@@ -116,9 +116,6 @@ def test_deep_checks(client, sf):
     assert "Region (0% filled) — used by 1 report, 1 flow" in dep["description"] and dep["measure"] == dep_card
     assert "Opportunity: 1 Process Builder, 1 record-triggered flow, 1 Apex trigger" in names["Objects automated by several tools at once"]["description"]
     assert "Process Builders and Workflow Rules to move to Flow" in names and "Flows stuck waiting for more than a week" in names
-    assert "retired value(s) North" in names["Reports filtering on retired values or empty fields"]["description"]
-    assert "Old KPI report" in names["Reports that no longer run"]["description"]
-    assert "Exec KPIs" in names["Dashboards running as people who have left"]["description"]
     assert "open stage “Negotiation” is in “Closed”" in names["Sales stages mapped to the wrong forecast category"]["description"]
     assert names["Sales stages mapped to the wrong forecast category"]["severity"] == "high"
     closed = names["Open deals counted as closed in the forecast"]
