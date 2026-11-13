@@ -42,7 +42,7 @@ import { ChangeBadge } from './AffectedRecords';
 import { FixPlanPanel } from './FixPlanPanel';
 import { ActivityPeriod } from './ActivityPeriod';
 import { UsageFilter } from './UsageFilter';
-import { CloseDateFilter } from './CloseDateFilter';
+import { CloseDateFilter, CREATED_PERIODS } from './CloseDateFilter';
 import { QueueDays, QueueFilter, RuleTargetFilter, type PickedQueue, StaleFilters } from './QueueFilter';
 import { FieldPicker } from './FieldPicker';
 import { RecordsTable } from './RecordsTable';
@@ -67,6 +67,12 @@ const OPP_STATUS = [
   { id: 'open', name: 'Open' },
   { id: 'won', name: 'Closed Won' },
   { id: 'lost', name: 'Closed Lost' },
+];
+/** Customer support leadership: its status chips. */
+const CASE_STATUS = [
+  { id: 'all', name: 'All' },
+  { id: 'open', name: 'Open' },
+  { id: 'closed', name: 'Closed' },
 ];
 /** Required field gaps: the kinds of rule its records can be narrowed to ('' = all). */
 const RULE_KINDS = [
@@ -389,6 +395,9 @@ function Records({
   const usageCard = indicator?.label === 'Report usage' || indicator?.label === 'Dashboard usage';
   // Sales leadership opportunities: by Close Date, all, last quarter's or this quarter's
   const byQuarter = indicator?.label === 'Sales leadership opportunities';
+  // Customer support leadership: All / Open / Closed, and when the cases were created
+  const casesCard = indicator?.label === 'Customer Support Leadership (Cases Report)';
+  const statusChips = byQuarter ? OPP_STATUS : casesCard ? CASE_STATUS : null;
   const [queueDays, setQueueDays] = useState(3);
   const [queue, setQueue] = useState<PickedQueue | undefined>();
   // Stale Leads: only one record type's Leads (undefined = all)
@@ -451,10 +460,10 @@ function Records({
             ))}
           </div>
         )}
-        {byQuarter && (
-          // Sales leadership opportunities: All, Open, Closed Won or Closed Lost
-          <div className="mb-3 flex flex-wrap items-center gap-1.5" role="group" aria-label="Opportunity status">
-            {OPP_STATUS.map((st) => {
+        {statusChips && (
+          // the leadership tables: All, Open, Closed Won or Closed Lost (opportunities); All, Open or Closed (cases)
+          <div className="mb-3 flex flex-wrap items-center gap-1.5" role="group" aria-label="Status">
+            {statusChips.map((st) => {
               const on = (queue?.id ?? 'all') === st.id;
               return (
                 <button
@@ -463,7 +472,7 @@ function Records({
                   aria-pressed={on}
                   onClick={() => {
                     setQueue(st.id === 'all' ? undefined : st);
-                    setPeriod(undefined);
+                    if (byQuarter) setPeriod(undefined); // opportunities: the Close Date is only for closed ones
                   }}
                   className={cx('rounded-full border px-3 py-1 text-xs font-medium transition', on ? 'border-brand bg-brand-soft text-brand-ink' : 'border-line text-ink-muted hover:text-ink')}
                 >
@@ -584,6 +593,7 @@ function Records({
               : byQuarter && (queue?.id === 'won' || queue?.id === 'lost') ? (
                 <CloseDateFilter key={`${object}-${queue.id}`} onChange={setPeriod} />
               )
+              : casesCard ? <CloseDateFilter key={object} label="Created Date" periods={CREATED_PERIODS} onChange={setPeriod} />
               : ruleGaps ? (
                 <Select<string>
                   label="Rule"

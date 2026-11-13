@@ -433,6 +433,47 @@ def leadership_opportunities(ctx: Ctx) -> None:
         spec["status_filter"] = True  # All / Open / Closed Won / Closed Lost above the table
 
 
+# Customer support leadership: the cases table, grouped by owner and status, with each owner's count
+SUPPORT_CASE_COLUMNS = ["OwnerId", "CaseNumber", "Subject", "Status", "Priority", "Type", "Reason", "CreatedDate", "ClosedDate"]
+
+
+def support_cases(ctx: Ctx) -> None:
+    """Customer Support Leadership (Cases Report): every case by owner, then status, with case number, subject, priority, type, reason,
+    age, and when it was opened and closed; each owner's count of cases. Filters: All / Open / Closed, and the Created Date. For information."""
+    if not ctx.has_object("Case"):
+        raise Unavailable("Cases can’t be read with this user.")
+    total = ctx.count("Case", recent=False)
+    open_n = ctx.count("Case", "IsClosed = false", recent=False) if total else 0
+    month = ctx.count("Case", "CreatedDate = THIS_MONTH", recent=False) if total else 0
+    m = ctx.metric(
+        "Customer Support Leadership (Cases Report)", open_n, "count", "lower-better", None,
+        how="Every case, grouped by its owner and then its status, with the figures support leaders review: case number, subject, "
+            "priority, type, reason, age, and when it was opened and closed. Under each owner, a Total row with their number of cases. "
+            "The number is the cases still open.",
+        rule="Shown for information, not scored.",
+        records=("Case",),
+        recent=False,
+        columns=SUPPORT_CASE_COLUMNS,
+        order="Owner.Name,Status",
+        extra="case_age",
+        criteria=[
+            ("Records checked", f"{total:,} cases: {open_n:,} open and {total - open_n:,} closed; {month:,} created this month."),
+            ("Grouped by", "Case Owner (a person or a queue, A to Z), then Status within each owner, shown as Status (how many of that "
+             "owner’s cases have it). Under each owner, a Total row with their number of cases; at the bottom, the totals for everyone."),
+            ("Status filter", "Above the table: All, Open or Closed."),
+            ("Created Date filter", "All dates, today, last week, the last 14 days, this month, or custom dates."),
+            ("Case Age", "Days from when the case was opened to when it was closed, or to today while it’s open."),
+            ("Columns", "Salesforce’s own fields: Case Number, Subject, Status, Priority, Type, Case Reason, Date/Time Opened and "
+             "Date/Time Closed."),
+        ],
+    )
+    for spec in m.records or []:
+        spec["exact_columns"] = True  # just these columns, in this order
+        spec["status_filter"] = "case"  # All / Open / Closed above the table
+        spec["created_period"] = True  # the Created Date filter above the table
+        spec["group_totals"] = {"by": "OwnerId", "sums": [], "count_by": "Status"}  # each owner's count of cases, and per status
+
+
 # ---------------------------------------------------------------- area 9: activity, handoffs, deal progress
 
 LOW_ACTIVITY = 5  # tasks/events per rep in 30 days
@@ -1020,7 +1061,7 @@ def upsell_visibility(ctx: Ctx) -> None:
 
 
 AREAS = {
-    "area-8": [report_usage, dashboard_usage, leadership_opportunities],
+    "area-8": [report_usage, dashboard_usage, leadership_opportunities, support_cases],
     "area-9": [sales_activity_gaps, opps_without_open_tasks, handoff_visibility, pipeline_progression],
     "area-10": [stuck_visibility, overdue_visibility, regional_visibility, closed_lost_trends],
     "area-11": [win_loss_gaps, competitor_tracking, product_visibility, upsell_visibility],
@@ -1030,6 +1071,7 @@ STEP_LABELS = {
     report_usage: "Measuring how much each report is used",
     dashboard_usage: "Measuring how much each dashboard is used",
     leadership_opportunities: "Listing opportunities by owner for leadership",
+    support_cases: "Listing cases by owner for support leadership",
     sales_activity_gaps: "Checking rep activity over 30 days",
     opps_without_open_tasks: "Finding deals with no open task",
     handoff_visibility: "Checking marketing-to-sales handoffs",

@@ -159,6 +159,7 @@ export const DIAGNOSTIC_AREAS: DiagnosticArea[] = [
       'Report usage',
       'Dashboard usage',
       'Sales leadership opportunities',
+      'Customer Support Leadership (Cases Report)',
     ],
   },
   {

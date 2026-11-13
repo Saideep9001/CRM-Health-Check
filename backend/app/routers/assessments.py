@@ -392,6 +392,23 @@ def _close_date_where(period: str) -> str | None:
 # …and its status chips, which split All with no overlap: Closed Won must be closed too (a deal still open can carry IsWon = true when
 # its stage's type was changed in Setup after it was saved, and would otherwise count as both Open and Closed Won)
 OPP_STATUS = {"all": None, "open": "IsClosed = false", "won": "IsClosed = true AND IsWon = true", "lost": "IsClosed = true AND IsWon = false"}
+# the status chips of each leadership table (a check saved before cases had just True: the opportunities' chips)
+STATUS_FILTERS = {"opportunity": OPP_STATUS, "case": {"all": None, "open": "IsClosed = false", "closed": "IsClosed = true"}}
+# Customer support leadership: the Created Date filter
+CREATED_PERIODS = {"all": None, "today": "CreatedDate = TODAY", "last_week": "CreatedDate = LAST_WEEK",
+                   "last_14": "CreatedDate = LAST_N_DAYS:14", "this_month": "CreatedDate = THIS_MONTH"}
+CASE_AGE_COLUMN = {"name": "CaseAge", "label": "Case Age (Days)", "type": "int"}  # right after Reason
+
+
+def _created_where(period: str) -> str | None:
+    """Customer support leadership's Created Date filter: today, last week, the last 14 days, this month, or
+    "range:YYYY-MM-DD:YYYY-MM-DD"; None for all dates."""
+    if period in CREATED_PERIODS:
+        return CREATED_PERIODS[period]
+    rng = re.fullmatch(r"range:(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2})", period)
+    if rng and rng[1] <= rng[2]:
+        return f"CreatedDate >= {rng[1]}T00:00:00Z AND CreatedDate <= {rng[2]}T23:59:59Z"
+    raise HTTPException(422, "Pick a Created Date period: today, last week, the last 14 days, this month, or a From date on or before the To date.")
 # Report usage: how much each report is used, after its own columns
 # the last column, frozen: its share of all runs
 USAGE_COLUMN = {"name": "UsagePct", "label": "Usage %", "type": "string", "frozen": True}
@@ -484,6 +501,20 @@ def _with_extra(sf, rec: dict, columns: list[dict], records: list[dict]) -> list
         records.sort(key=lambda r: (place(r).get("batch") or 10**9, place(r).get("level") or 0, str(r["values"].get("Name") or "").lower()))
         names = {BATCH_COLUMN["name"], CHILDREN_COLUMN["name"]}
         return [BATCH_COLUMN, *(c for c in columns if c["name"] not in names), CHILDREN_COLUMN]
+    if rec.get("extra") == "case_age":  # Customer support leadership: days from opened to closed (or to today, while open)
+        now = datetime.now(timezone.utc)
+        for r in records:
+            opened, closed = r["values"].get("CreatedDate"), r["values"].get("ClosedDate")
+            try:
+                start = datetime.fromisoformat(str(opened).replace("Z", "+00:00").replace("+0000", "+00:00"))
+                end = datetime.fromisoformat(str(closed).replace("Z", "+00:00").replace("+0000", "+00:00")) if closed else now
+                r["values"]["CaseAge"] = max(0, (end - start).days)
+            except (TypeError, ValueError):
+                r["values"]["CaseAge"] = None
+        cols = [c for c in columns if c["name"] != CASE_AGE_COLUMN["name"]]
+        at = next((i + 1 for i, c in enumerate(cols) if c["name"] == "Reason"), len(cols))
+        cols.insert(at, CASE_AGE_COLUMN)
+        return cols
     if rec.get("extra") == "report_usage":  # Report & dashboard usage: its share of all runs, frozen last
         saved, known = rec.get("reasons") or {}, bool(rec.get("usage_known"))
         report = rec.get("object") == "Report"
@@ -637,6 +668,11 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
         if cond:
             rec = {**rec, "where": f"{explorer.and_part(rec['where'])} AND {cond}" if rec.get("where") else cond}
         period = None
+    if period and rec.get("created_period"):  # Customer support leadership: cases created in the period picked
+        cond = _created_where(period)
+        if cond:
+            rec = {**rec, "where": f"{explorer.and_part(rec['where'])} AND {cond}" if rec.get("where") else cond}
+        period = None
     if period and rec.get("unused_period"):  # Report / Dashboard usage: All, Used or Unused (for a period), picked above the table
         rec = {**rec, "where": _unused_where(rec, period), "no_usage": rec.get("no_usage") or period not in ("all", "used")}  # Unused: no Usage %
         period = None
@@ -684,11 +720,12 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
                    for i in ids}
         rec = {**rec, "where": f"{explorer.and_part(rec['where'])} AND {cond}" if rec.get("where") else cond, "notes": notes, "reasons": reasons}
         queue = None
-    if queue and rec.get("status_filter"):  # Sales leadership opportunities: All, Open, Closed Won or Closed Lost
-        if queue not in OPP_STATUS:
-            raise HTTPException(422, "Pick All, Open, Closed Won or Closed Lost.")
-        if OPP_STATUS[queue]:
-            rec = {**rec, "where": f"{explorer.and_part(rec['where'])} AND {OPP_STATUS[queue]}" if rec.get("where") else OPP_STATUS[queue]}
+    if queue and rec.get("status_filter"):  # the leadership tables' status chips: opportunities (All, Open, Won, Lost), cases (All, Open, Closed)
+        chips = STATUS_FILTERS.get(rec["status_filter"] if isinstance(rec["status_filter"], str) else "opportunity", OPP_STATUS)
+        if queue not in chips:
+            raise HTTPException(422, "Unknown status.")
+        if chips[queue]:
+            rec = {**rec, "where": f"{explorer.and_part(rec['where'])} AND {chips[queue]}" if rec.get("where") else chips[queue]}
         queue = None
     if queue:
         if not _by_queue(rec):

@@ -33,6 +33,10 @@ DESCRIBE = {
                   wf._f("LastModifiedById", type="reference"), wf._f("LastModifiedDate", type="datetime"),
                   wf._f("DashboardResultRefreshedDate", type="datetime")],
     "EventLogFile": [wf._f("Id", type="id")],
+    "Case": [wf._f("Id", type="id"), wf._f("OwnerId", type="reference", label="Case Owner ID"), wf._f("CaseNumber", label="Case Number"),
+             wf._f("Subject"), wf._f("Status", type="picklist"), wf._f("Priority", type="picklist"), wf._f("Type", type="picklist"),
+             wf._f("Reason", type="picklist", label="Case Reason"), wf._f("CreatedDate", type="datetime", label="Date/Time Opened"),
+             wf._f("ClosedDate", type="datetime", label="Date/Time Closed"), wf._f("IsClosed", type="boolean")],
     "DashboardComponent": [wf._f("Id", type="id")],
     "OpportunityLineItem": [wf._f("Id", type="id")],
     "OpportunityCompetitor": [wf._f("Id", type="id")],
@@ -50,6 +54,7 @@ REPORT_LOG = ("EVENT_TYPE,TIMESTAMP_DERIVED,USER_ID_DERIVED,REPORT_ID_DERIVED\n"
 # the dashboard was last refreshed yesterday (its newest component)
 REFRESHED = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%dT09:30:00.000Z")
 COUNTS = [
+    (("FROM Case", "IsClosed = false"), 3), (("FROM Case", "CreatedDate = THIS_MONTH"), 2), (("FROM Case",), 4),
     (("FROM Report", "LastRunDate = LAST_N_DAYS:30"), 1),
     (("FROM Report", "LastRunDate"), 2),
     (("FROM Report",), 4),
@@ -112,6 +117,14 @@ class FakeReportingOrg(wf.FakeSalesOrg):
             return [{"Id": "006000000000011AAA", "OwnerId": "005000000000001AAA", "Owner": {"Name": "John"}, "Name": "ABC Software Deal",
                      "StageName": "Negotiation", "Amount": 50000, "ExpectedRevenue": 40000, "Probability": 80, "CloseDate": "2026-12-15",
                      "AgeInDays": 45, "LeadSource": "Web"}]
+        if q.startswith("SELECT OwnerId g, COUNT(Id) c FROM Case"):  # each case owner's count
+            return [{"g": "005000000000001AAA", "c": 2}]
+        if q.startswith("SELECT OwnerId g, Status v, COUNT(Id) c FROM Case"):
+            return [{"g": "005000000000001AAA", "v": "New", "c": 1}, {"g": "005000000000001AAA", "v": "Closed", "c": 1}]
+        if "FROM Case" in q and "ORDER BY Owner.Name" in q:  # Customer support leadership, by owner then status
+            return [{"Id": "500000000000001AAA", "OwnerId": "005000000000001AAA", "Owner": {"Name": "John"}, "CaseNumber": "1003",
+                     "Subject": "Product Inquiry", "Status": "Closed", "CreatedDate": "2026-11-05T09:00:00.000+0000",
+                     "ClosedDate": "2026-11-08T10:00:00.000+0000"}]
         if "FROM DashboardComponent" in q:
             assert "DashboardId IN ('01Z000000000001AAA', '01Z000000000002AAA')" in q  # asked for by dashboard
             d = "01Z000000000001AAA"  # two components show Pipeline by Stage (listed once), one the Old Quarterly Report
@@ -188,7 +201,8 @@ def test_all_reporting_areas(client, sf):
     assert dash["records"][0]["values"]["DashboardResultRefreshedDate"] == REFRESHED
     assert dash["records"][0]["values"]["SourceReports"] == "Pipeline by Stage\nOld Quarterly Report"
     assert not {"Reporting organization issues", "Leadership reporting gaps", "Report trust issues"} & set(ind)  # removed from Area 8
-    assert [i["label"] for i in areas["area-8"]["indicators"]] == ["Report usage", "Dashboard usage", "Sales leadership opportunities"]
+    assert [i["label"] for i in areas["area-8"]["indicators"]] == ["Report usage", "Dashboard usage", "Sales leadership opportunities",
+                                                                   "Customer Support Leadership (Cases Report)"]
     assert ind["Sales activity gaps"] == 1  # Bob logged 2 in 30 days
     assert ind["Opportunities without open Tasks"] == 39  # 40 open, 1 with an open task
     assert ind["Marketing-to-sales handoff visibility"] == 20.0  # 12 of 60 new deals have no source
@@ -313,3 +327,39 @@ def test_sales_leadership_opportunities(client, sf):
         assert got.status_code == 200 and cond in listing()
         assert cond in [q for q in sf.soql if q.startswith("SELECT OwnerId g")][-1]
     assert client.get(url, params={"label": "Sales leadership opportunities", "object": "Opportunity", "queue": "maybe"}).status_code == 422
+
+
+def test_customer_support_leadership(client, sf):
+    connect(client)
+    _, res, _ = wf.run(client, areaIds=["area-8"], categoryIds=["reporting"])
+    cards = {i["label"]: i for x in res["areas"] for i in x["indicators"]}
+    label = "Customer Support Leadership (Cases Report)"
+    assert [i["label"] for i in res["areas"][0]["indicators"]][-1] == label and cards[label]["score"] is None
+    aid = client.get(f"{API}/assessments").json()
+    aid = (aid["items"] if isinstance(aid, dict) else aid)[0]["id"]
+    url = f"{API}/assessments/{aid}/areas/area-8/indicator-records"
+
+    def page(**params):
+        got = client.get(url, params={"label": label, "object": "Case", **params})
+        assert got.status_code == 200, got.text
+        return got.json()
+
+    listing = lambda: [q for q in sf.soql if "FROM Case" in q and "ORDER BY Owner.Name" in q][-1]  # noqa: E731
+    p = page()
+    assert p["sortedBy"] == "OwnerId"  # grouped by owner, then status
+    assert [c["name"] for c in p["columns"] if c["type"] != "id"] == [
+        "OwnerId", "CaseNumber", "Subject", "Status", "Priority", "Type", "Reason", "CaseAge", "CreatedDate", "ClosedDate"]
+    assert p["records"][0]["values"]["CaseAge"] == 3  # opened Nov 5, closed Nov 8
+    assert p["groupTotals"] == {"005000000000001AAA": {"count": 2, "counts": {"Status": {"New": 1, "Closed": 1}}}}  # John: 2 cases
+    # All / Open / Closed, and when the cases were created
+    for chip, cond in (("open", "IsClosed = false"), ("closed", "IsClosed = true")):
+        page(queue=chip)
+        assert cond in listing()
+    assert client.get(url, params={"label": label, "object": "Case", "queue": "won"}).status_code == 422  # opportunities' chips only
+    for period, cond in (("today", "CreatedDate = TODAY"), ("last_week", "CreatedDate = LAST_WEEK"), ("last_14", "CreatedDate = LAST_N_DAYS:14"),
+                         ("this_month", "CreatedDate = THIS_MONTH"),
+                         ("range:2026-11-01:2026-11-10", "CreatedDate >= 2026-11-01T00:00:00Z AND CreatedDate <= 2026-11-10T23:59:59Z")):
+        page(period=period)
+        assert cond in listing()
+    page(queue="open", period="today")  # both together
+    assert "IsClosed = false" in listing() and "CreatedDate = TODAY" in listing()

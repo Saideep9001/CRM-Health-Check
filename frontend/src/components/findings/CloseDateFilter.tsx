@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-const PERIODS = [
+export const CLOSE_PERIODS = [
   { value: 'all', label: 'All dates' },
   { value: 'this_month', label: 'This month' },
   { value: 'last_month', label: 'Last month' },
@@ -14,9 +14,23 @@ const PERIODS = [
 ];
 const today = () => new Date().toISOString().slice(0, 10);
 
-/** Sales leadership opportunities (Closed Won / Closed Lost): when they closed. `onChange` gets the API's `period`: undefined (all
- *  dates), a period name ("this_month" … "last_year", "this_half", "last_half") or "range:YYYY-MM-DD:YYYY-MM-DD". */
-export function CloseDateFilter({ onChange }: { onChange: (period: string | undefined) => void }) {
+/** Customer support leadership: when the cases were created. */
+export const CREATED_PERIODS = [
+  { value: 'all', label: 'All dates' },
+  { value: 'today', label: 'Today' },
+  { value: 'last_week', label: 'Last week' },
+  { value: 'last_14', label: 'Last 14 days' },
+  { value: 'this_month', label: 'This month' },
+  { value: 'custom', label: 'Custom dates…' },
+];
+
+/** A date filter above a leadership table: Close Date for opportunities (Closed Won / Closed Lost), Created Date for cases.
+ *  `onChange` gets the API's `period`: undefined (all dates), a period name, or "range:YYYY-MM-DD:YYYY-MM-DD". */
+export function CloseDateFilter({ onChange, label = 'Close Date', periods = CLOSE_PERIODS }: {
+  onChange: (period: string | undefined) => void;
+  label?: string;
+  periods?: { value: string; label: string }[];
+}) {
   const [choice, setChoice] = useState('all');
   const [from, setFrom] = useState(`${new Date().getFullYear()}-01-01`);
   const [to, setTo] = useState(today());
@@ -31,19 +45,19 @@ export function CloseDateFilter({ onChange }: { onChange: (period: string | unde
   };
   return (
     <span className="inline-flex flex-wrap items-center gap-1.5 text-xs text-ink-muted">
-      Close Date
-      <select className="input h-7 w-auto py-0 text-xs" value={choice} onChange={(e) => apply(e.target.value)} aria-label="Close Date">
-        {PERIODS.map((p) => (
+      {label}
+      <select className="input h-7 w-auto py-0 text-xs" value={choice} onChange={(e) => apply(e.target.value)} aria-label={label}>
+        {periods.map((p) => (
           <option key={p.value} value={p.value}>{p.label}</option>
         ))}
       </select>
       {choice === 'custom' && (
         <>
           <span>from</span>
-          <input type="date" className="input h-7 w-auto py-0 text-xs" value={from} max={to || undefined} aria-label="Close Date from"
+          <input type="date" className="input h-7 w-auto py-0 text-xs" value={from} max={to || undefined} aria-label={`${label} from`}
             onChange={(e) => { setFrom(e.target.value); apply('custom', e.target.value, to); }} />
           <span>to</span>
-          <input type="date" className="input h-7 w-auto py-0 text-xs" value={to} min={from || undefined} aria-label="Close Date to"
+          <input type="date" className="input h-7 w-auto py-0 text-xs" value={to} min={from || undefined} aria-label={`${label} to`}
             onChange={(e) => { setTo(e.target.value); apply('custom', from, e.target.value); }} />
           {!valid(from, to) && <span className="text-bad">From must be on or before To</span>}
         </>
