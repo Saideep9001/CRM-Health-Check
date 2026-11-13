@@ -75,7 +75,12 @@ const AREA_GROUPS: Record<string, Record<string, string>> = {
   'area-5': { 'Stuck Opportunities': 'Opportunities', 'Missing Next Steps': 'Opportunities', 'Sales stage guidance gaps': 'Opportunities' },
 };
 
+// Cards whose name ends in brackets that aren't an object: they stay with the area's other cards, under their full name
+// (otherwise "Customer Support Leadership (Cases Report)" would get its own "Cases Report" box).
+const NOT_GROUPED = new Set(['Customer Support Leadership (Cases Report)', 'Marketing Leadership (Leads & Campaigns Report)']);
+
 function objectOf(label: string, areaId?: string): { group: string; title: string } | null {
+  if (NOT_GROUPED.has(label)) return null;
   const own = areaId ? AREA_GROUPS[areaId]?.[label] : undefined;
   if (own) return { group: own, title: label };
   if (GROUPS[label]) return { group: GROUPS[label], title: label };
