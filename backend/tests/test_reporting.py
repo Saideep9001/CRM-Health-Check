@@ -36,7 +36,11 @@ DESCRIBE = {
     "DashboardComponent": [wf._f("Id", type="id")],
     "OpportunityLineItem": [wf._f("Id", type="id")],
     "OpportunityCompetitor": [wf._f("Id", type="id")],
-    "Opportunity": wf.DESCRIBE["Opportunity"] + [wf._f("HasOpportunityLineItem", type="boolean"), wf._f("Timezone__c", custom=True, label="Opportunity Timezone"),
+    "Opportunity": wf.DESCRIBE["Opportunity"] + [wf._f("OwnerId", type="reference", label="Opportunity Owner ID"), wf._f("Name", label="Opportunity Name"),
+                                                 wf._f("ExpectedRevenue", type="currency", label="Expected Revenue"),
+                                                 wf._f("Probability", type="percent", label="Probability (%)"), wf._f("CloseDate", type="date", label="Close Date"),
+                                                 wf._f("AgeInDays", type="int", label="Age"),
+                                                 wf._f("HasOpportunityLineItem", type="boolean"), wf._f("Timezone__c", custom=True, label="Opportunity Timezone"),
                                                  wf._f("Region__c", type="picklist", custom=True, label="Region")],
 }
 # Event Monitoring's Report event log: Pipeline by Stage run 3 times by 2 people, Lost deals by reason once
@@ -100,6 +104,12 @@ class FakeReportingOrg(wf.FakeSalesOrg):
                     {"Id": "01Z000000000002AAA", "CreatedDate": "2025-01-01T00:00:00.000+0000", "DashboardResultRefreshedDate": None}]
         if "FROM Dashboard WHERE NamespacePrefix = null ORDER BY FolderName" in q:  # the Dashboards tab
             return [{"Id": "01Z000000000001AAA", "Title": "Sales Leadership", "Type": "SpecifiedUser", "DashboardResultRefreshedDate": None}]
+        if q.startswith("SELECT OwnerId g, COUNT(Id) c, SUM(Amount) s0, SUM(ExpectedRevenue) s1 FROM Opportunity"):  # each owner's totals
+            return [{"g": "005000000000001AAA", "c": 2, "s0": 150000, "s1": 100000}]
+        if "FROM Opportunity" in q and "ORDER BY Owner.Name" in q:  # Sales leadership opportunities, by owner
+            return [{"Id": "006000000000011AAA", "OwnerId": "005000000000001AAA", "Owner": {"Name": "John"}, "Name": "ABC Software Deal",
+                     "StageName": "Negotiation", "Amount": 50000, "ExpectedRevenue": 40000, "Probability": 80, "CloseDate": "2026-12-15",
+                     "AgeInDays": 45, "LeadSource": "Web"}]
         if "FROM DashboardComponent" in q:
             assert "DashboardId IN ('01Z000000000001AAA', '01Z000000000002AAA')" in q  # asked for by dashboard
             d = "01Z000000000001AAA"  # two components show Pipeline by Stage (listed once), one the Old Quarterly Report
@@ -255,3 +265,34 @@ def test_usage_filter_all_used_unused(client, sf):
     assert "Id IN ('01Z000000000002')" in last("Dashboard")  # 15-character ids, which Salesforce accepts
     page("Dashboard usage", "Dashboard")
     assert "Id IN" not in last("Dashboard")
+
+
+def test_sales_leadership_opportunities(client, sf):
+    connect(client)
+    _, res, _ = wf.run(client, areaIds=["area-8"], categoryIds=["reporting"])
+    cards = {i["label"]: i for x in res["areas"] for i in x["indicators"]}
+    card = cards["Sales leadership opportunities"]
+    assert card["score"] is None and card["recordObjects"] == ["Opportunity"]  # for information
+    aid = client.get(f"{API}/assessments").json()
+    aid = (aid["items"] if isinstance(aid, dict) else aid)[0]["id"]
+    url = f"{API}/assessments/{aid}/areas/area-8/indicator-records"
+
+    def page(period=None):
+        got = client.get(url, params={"label": "Sales leadership opportunities", "object": "Opportunity", **({"period": period} if period else {})})
+        assert got.status_code == 200, got.text
+        return got.json()
+
+    listing = lambda: [q for q in sf.soql if "FROM Opportunity" in q and "ORDER BY Owner.Name" in q][-1]  # noqa: E731
+    p = page()
+    assert p["sortedBy"] == "OwnerId"  # grouped by owner, A to Z
+    assert [c["name"] for c in p["columns"] if c["type"] != "id"] == [
+        "OwnerId", "Name", "StageName", "Amount", "ExpectedRevenue", "Probability", "CloseDate", "AgeInDays", "LeadSource"]
+    assert p["groupTotals"] == {"005000000000001AAA": {"count": 2, "Amount": 150000, "ExpectedRevenue": 100000}}  # John: 2, $150,000, $100,000
+    assert "CloseDate" not in listing().split("FROM Opportunity")[1].split("ORDER BY")[0]  # All
+    page("this_quarter")
+    assert "CloseDate = THIS_QUARTER" in listing()
+    totals = [q for q in sf.soql if q.startswith("SELECT OwnerId g")][-1]
+    assert "CloseDate = THIS_QUARTER" in totals and totals.endswith("GROUP BY OwnerId")  # totals over the same opportunities
+    page("last_quarter")
+    assert "CloseDate = LAST_QUARTER" in listing()
+    assert client.get(url, params={"label": "Sales leadership opportunities", "object": "Opportunity", "period": "next_year"}).status_code == 422

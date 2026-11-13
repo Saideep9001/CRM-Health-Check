@@ -440,6 +440,7 @@ def records_matching(sf: SalesforceClient, name: str, where: str | None, cursor:
     order_field = (order or "").lstrip("-") or None
     by_account = order_field == "Account.Name" and "AccountId" in fields  # rows grouped by their Account (sorted_by AccountId)
     by_parent = order_field == "Parent.Name" and "ParentId" in fields  # Accounts grouped by their Parent Account (sorted_by ParentId)
+    by_owner = order_field == "Owner.Name" and "OwnerId" in fields  # records grouped by their owner (sorted_by OwnerId)
     first = list(dict.fromkeys(c for c in (columns or []) if c in fields))  # each once: Salesforce refuses a field selected twice
     first = [c for c in first if fields[c]["type"] not in _NO_COLUMN] if exact else first
     cols = (["Id", *[c for c in first if c != "Id"]] if exact
@@ -451,8 +452,9 @@ def records_matching(sf: SalesforceClient, name: str, where: str | None, cursor:
             raise ValueError("Invalid page cursor.")
         body = sf.query_more(cursor, size)
     else:
-        if by_account or by_parent:  # grouped by Account (or Parent Account): A→Z by its name, then the records' own names
-            sort = f" ORDER BY {'Account' if by_account else 'Parent'}.Name ASC NULLS LAST" + (", Name ASC" if "Name" in fields else "")
+        if by_account or by_parent or by_owner:  # grouped by Account, Parent Account or owner: A→Z by its name, then the records' own
+            rel = "Account" if by_account else "Parent" if by_parent else "Owner"
+            sort = f" ORDER BY {rel}.Name ASC NULLS LAST" + (", Name ASC" if "Name" in fields else "")
         elif order_field in fields and fields[order_field].get("sortable"):
             sort = f" ORDER BY {order_field} {'DESC' if descending else 'ASC'} NULLS LAST"
         else:
@@ -470,8 +472,24 @@ def records_matching(sf: SalesforceClient, name: str, where: str | None, cursor:
         "total_size": body.get("totalSize"),
         "next_cursor": next_url if next_url and _CURSOR_RE.match(next_url) else None,
         "record_url_prefix": f"{sf.base}/",
-        "sorted_by": "AccountId" if by_account else "ParentId" if by_parent else order_field if order_field in fields and fields[order_field].get("sortable") else None,
+        "sorted_by": "AccountId" if by_account else "ParentId" if by_parent else "OwnerId" if by_owner else order_field if order_field in fields and fields[order_field].get("sortable") else None,
     }
+
+
+def group_totals(sf: SalesforceClient, name: str, where: str | None, filters: list[dict] | None, by: str, sums: list[str]) -> dict:
+    """Per value of `by` (e.g. each owner): how many records, and the total of each of `sums` (e.g. Amount), over the same records the
+    table lists (its condition and the person's column filters). Fields are the engine's, checked against the object."""
+    desc = _describe(sf, name)
+    fields = _fields(desc)
+    if by not in fields:
+        return {}
+    sums = [s for s in sums if s in fields and fields[s]["type"] in ("currency", "double", "int", "percent")]
+    extra = _record_conditions(sf, name, desc, None, filters)
+    conds = ([and_part(where) if extra else where] if where else []) + extra
+    cols = ", ".join([f"{by} g", "COUNT(Id) c", *(f"SUM({s}) s{i}" for i, s in enumerate(sums))])
+    soql = f"SELECT {cols} FROM {name}" + (f" WHERE {' AND '.join(conds)}" if conds else "") + f" GROUP BY {by}"
+    rows = sf.query(soql).get("records", [])
+    return {str(r["g"]): {"count": int(r.get("c") or 0), **{s: r.get(f"s{i}") for i, s in enumerate(sums)}} for r in rows if r.get("g")}
 
 
 def get_record(sf: SalesforceClient, name: str, record_id: str) -> dict:

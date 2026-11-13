@@ -366,6 +366,8 @@ def _by_queue(rec: dict) -> bool:
             or bool(rec.get("by_status")) or bool(rec.get("by_stage")))
 
 
+# Sales leadership opportunities: the Close Date filter above the table
+CLOSE_PERIODS = {"all": None, "last_quarter": "CloseDate = LAST_QUARTER", "this_quarter": "CloseDate = THIS_QUARTER"}
 # Report usage: how much each report is used, after its own columns
 # the last column, frozen: its share of all runs
 USAGE_COLUMN = {"name": "UsagePct", "label": "Usage %", "type": "string", "frozen": True}
@@ -606,6 +608,12 @@ def _indicator_records(db: Session, assessment_id: str, area_id: str, label: str
         raise HTTPException(404, "This measure isn’t about specific records.")
     if _by_stage(label, rec):  # works on checks saved before the Stage chips too
         rec = {**rec, "by_stage": True}
+    if period and rec.get("close_period"):  # Sales leadership opportunities: all, last quarter's or this quarter's, by Close Date
+        if period not in CLOSE_PERIODS:
+            raise HTTPException(422, "Pick All, Last quarter or This quarter.")
+        if CLOSE_PERIODS[period]:
+            rec = {**rec, "where": f"{explorer.and_part(rec['where'])} AND {CLOSE_PERIODS[period]}" if rec.get("where") else CLOSE_PERIODS[period]}
+        period = None
     if period and rec.get("unused_period"):  # Report / Dashboard usage: All, Used or Unused (for a period), picked above the table
         rec = {**rec, "where": _unused_where(rec, period), "no_usage": rec.get("no_usage") or period not in ("all", "used")}  # Unused: no Usage %
         period = None
@@ -724,6 +732,9 @@ def indicator_records(
         page["sorted_by"] = BATCH_COLUMN["name"]  # the table groups the rows by batch
     notes = rec.get("notes") or {}  # why each value was flagged, saved by the check (e.g. Data Standardization)
     page["cell_notes"] = {r["id"]: notes[r["id"]] for r in page["records"] if r.get("id") in notes}
+    if (g := rec.get("group_totals")) and not cursor:  # each group's count and totals (e.g. per owner), over every record listed
+        page["group_totals"] = _salesforce(db, http, settings, lambda sf: explorer.group_totals(
+            sf, rec["object"], rec.get("where"), _filters(filters), g["by"], g.get("sums") or []), org_id)
     return page
 
 

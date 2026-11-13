@@ -507,6 +507,8 @@ export interface FindingRecordsPage {
   sortedBy?: string | null;
   /** Record id → field → why that value was flagged (e.g. "no country code"). */
   cellNotes?: Record<string, Record<string, string>>;
+  /** Per group (e.g. owner id): how many records, and each summed field's total, over every record listed. */
+  groupTotals?: Record<string, { count: number } & Record<string, number | null>>;
 }
 
 export interface UpdateFindingRequest {

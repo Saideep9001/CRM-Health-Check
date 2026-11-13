@@ -576,6 +576,7 @@ class FindingRecordsPage(ApiModel):
     record_url_prefix: str  # + record id = link to the record in Salesforce
     sorted_by: str | None = None  # field the rows are sorted by (e.g. the field duplicates were matched on)
     cell_notes: dict[str, dict[str, str]] = {}  # record id -> field -> why that value was flagged
+    group_totals: dict[str, dict] = {}  # per group (e.g. owner id): {"count", <field>: total} over every record listed
 
 
 class UpdateFindingRequest(ApiModel):

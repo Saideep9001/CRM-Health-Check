@@ -468,6 +468,56 @@ def leadership_reporting(ctx: Ctx) -> None:
         )
 
 
+# Sales leadership opportunities: the table leaders read, grouped by owner with each owner's totals
+LEADERSHIP_OPP_COLUMNS = ["OwnerId", "Name", "StageName", "Amount", "ExpectedRevenue", "Probability", "CloseDate", "AgeInDays", "LeadSource"]
+
+
+def leadership_opportunities(ctx: Ctx) -> None:
+    """Sales leadership opportunities: every opportunity by owner (name, stage, amount, expected revenue, probability, close date, age,
+    lead source), with each owner's count and totals. The Close Date filter shows all, last quarter's or this quarter's. For information."""
+    if not ctx.has_object("Opportunity"):
+        raise Unavailable("Opportunities can’t be read with this user.")
+    fields = ctx.fields("Opportunity")
+    total = ctx.count("Opportunity", recent=False)
+    this_q = ctx.count("Opportunity", "CloseDate = THIS_QUARTER", recent=False) if total else 0
+    last_q = ctx.count("Opportunity", "CloseDate = LAST_QUARTER", recent=False) if total else 0
+    sums = [f for f in ("Amount", "ExpectedRevenue") if f in fields]
+    totals: dict = {}
+    if sums and this_q:
+        try:
+            totals = (ctx.rows("SELECT " + ", ".join(f"SUM({f}) {f}" for f in sums) + " FROM Opportunity WHERE CloseDate = THIS_QUARTER", 1)
+                      or [{}])[0]
+        except SalesforceAuthExpired:
+            raise
+        except SalesforceError:
+            totals = {}
+    money = lambda v: f"{float(v):,.0f}" if v is not None else "—"  # noqa: E731
+    m = ctx.metric(
+        "Sales leadership opportunities", this_q, "count", "higher-better", None,
+        how="Every opportunity, grouped by its owner, with the figures leaders review: stage, amount, expected revenue, probability, close "
+            "date, age and lead source, and each owner’s totals. The number is the opportunities closing this quarter.",
+        rule="Shown for information, not scored.",
+        records=("Opportunity",),
+        recent=False,
+        columns=LEADERSHIP_OPP_COLUMNS,
+        order="Owner.Name",
+        criteria=[
+            ("Records checked", f"{total:,} opportunities: {this_q:,} closing this quarter and {last_q:,} last quarter."),
+            ("This quarter", f"{this_q:,} opportunities" + (f", Amount {money(totals.get('Amount'))}" if "Amount" in totals else "")
+             + (f", Expected Revenue {money(totals.get('ExpectedRevenue'))}" if "ExpectedRevenue" in totals else "") + "."),
+            ("Close Date filter", "Above the table: All, Last quarter or This quarter (by Close Date, in the org’s fiscal quarters)."),
+            ("Grouped by", "Opportunity Owner, A to Z, with each owner’s number of opportunities, total Amount and total Expected Revenue "
+             "(for the opportunities shown)."),
+            ("Columns", "Salesforce’s own fields: Opportunity Name, Stage, Amount, Expected Revenue (Amount × Probability), Probability, "
+             "Close Date, Age (days since it was created; for closed ones, how long it was open) and Lead Source."),
+        ],
+    )
+    for spec in m.records or []:
+        spec["exact_columns"] = True  # just these columns, in this order
+        spec["close_period"] = True  # the Close Date filter above the table
+        spec["group_totals"] = {"by": "OwnerId", "sums": sums}  # each owner's count and totals
+
+
 # ---------------------------------------------------------------- area 9: activity, handoffs, deal progress
 
 LOW_ACTIVITY = 5  # tasks/events per rep in 30 days
@@ -1055,7 +1105,7 @@ def upsell_visibility(ctx: Ctx) -> None:
 
 
 AREAS = {
-    "area-8": [report_usage, dashboard_usage, reporting_organization, leadership_reporting],
+    "area-8": [report_usage, dashboard_usage, reporting_organization, leadership_reporting, leadership_opportunities],
     "area-9": [sales_activity_gaps, opps_without_open_tasks, handoff_visibility, pipeline_progression],
     "area-10": [stuck_visibility, overdue_visibility, regional_visibility, closed_lost_trends],
     "area-11": [win_loss_gaps, competitor_tracking, product_visibility, upsell_visibility],
@@ -1064,6 +1114,7 @@ AREAS = {
 STEP_LABELS = {
     report_usage: "Measuring how much each report is used",
     dashboard_usage: "Measuring how much each dashboard is used",
+    leadership_opportunities: "Listing opportunities by owner for leadership",
     reporting_organization: "Checking report folders and names",
     leadership_reporting: "Checking leadership reports",
     sales_activity_gaps: "Checking rep activity over 30 days",

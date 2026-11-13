@@ -379,6 +379,8 @@ function Records({
   const ruleGaps = indicator?.label === 'Required field gaps';
   // Report usage / Dashboard usage: All, Used, or Unused (then the last 30 / 90 / 180 days, or between two dates)
   const usageCard = indicator?.label === 'Report usage' || indicator?.label === 'Dashboard usage';
+  // Sales leadership opportunities: by Close Date, all, last quarter's or this quarter's
+  const byQuarter = indicator?.label === 'Sales leadership opportunities';
   const [queueDays, setQueueDays] = useState(3);
   const [queue, setQueue] = useState<PickedQueue | undefined>();
   // Stale Leads: only one record type's Leads (undefined = all)
@@ -549,6 +551,17 @@ function Records({
               : stale ? <ActivityPeriod key={`${object}-${indicator!.label}`} onChange={setPeriod} own="30" what="No status change" />
               : web ? <CreatedPeriod key={`${object}-${indicator!.label}`} onChange={setPeriod} />
               : usageCard ? <UsageFilter key={`${object}-${indicator!.label}`} onChange={setPeriod} />
+              : byQuarter ? (
+                <label className="inline-flex items-center gap-1.5 text-xs text-ink-muted">
+                  Close Date
+                  <select className="input h-7 w-auto py-0 text-xs" value={period ?? 'all'} aria-label="Close Date"
+                    onChange={(e) => setPeriod(e.target.value === 'all' ? undefined : e.target.value)}>
+                    <option value="all">All</option>
+                    <option value="last_quarter">Last quarter</option>
+                    <option value="this_quarter">This quarter</option>
+                  </select>
+                </label>
+              )
               : ruleGaps ? (
                 <Select<string>
                   label="Rule"

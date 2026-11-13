@@ -21,6 +21,12 @@ function matchKey(v: unknown, field: string): string {
   return s.replace(/&/g, ' and ').replace(/[^a-z0-9 ]/g, ' ').replace(COMPANY_WORDS, ' ').replace(/\s+/g, ' ').trim();
 }
 
+/** "opportunity" / "opportunities" for a group's count. */
+const objectNoun = (object: string, n: number) => {
+  const word = object.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
+  return n === 1 ? word : word.endsWith('y') ? `${word.slice(0, -1)}ies` : `${word}s`;
+};
+
 /** Records live from Salesforce as a real table; the columns that explain the result come first; rows open in Salesforce.
  *  `grouped` bands rows that share the sorted-by value (duplicate groups) and numbers each group. */
 export function RecordsTable({
@@ -67,7 +73,8 @@ export function RecordsTable({
   // Account (the server sorts them by Account name), with the Account named first in each block.
   // Grouped by a parent record the server sorted by: the Account (Contacts, deals) or the Parent Account (child Accounts)
   // …or by folder (reports and dashboards, which the server sorts by Folder Name), with the folder named first in each block
-  const refCol = first?.sortedBy === 'AccountId' || first?.sortedBy === 'ParentId' || first?.sortedBy === 'FolderName' ? first.sortedBy : null;
+  // …or by owner (the server sorts them by owner name), with each owner's count and totals when the server sends them
+  const refCol = ['AccountId', 'ParentId', 'FolderName', 'OwnerId'].includes(first?.sortedBy ?? '') ? first!.sortedBy! : null;
   const byAccount = !!refCol;
   const refLabel = refCol === 'FolderName' ? 'Folder' : (first?.columns.find((c) => c.name === refCol)?.label ?? 'Account').replace(/ ID$/, '');
   // Account Hierarchy Chains: rows already in batch order from the server, each batch banded and numbered
@@ -239,7 +246,23 @@ export function RecordsTable({
                                 <span className="block truncate font-semibold text-ink" title={r.refNames[refCol!] ?? undefined}>
                                   {r.refNames[refCol!] ?? (r.values[refCol!] ? String(r.values[refCol!]) : `No ${refLabel}`)}
                                 </span>
-                                <span className="text-[11px] text-ink-muted">{fmtNumber(groupSize.get(groupOf[i]) ?? 0)} record{groupSize.get(groupOf[i]) === 1 ? '' : 's'}</span>
+                                {(() => {
+                                  const t = first?.groupTotals?.[String(r.values[refCol!] ?? '')];
+                                  if (!t) {
+                                    return <span className="text-[11px] text-ink-muted">{fmtNumber(groupSize.get(groupOf[i]) ?? 0)} record{groupSize.get(groupOf[i]) === 1 ? '' : 's'}</span>;
+                                  }
+                                  // the group's totals over every record listed (not just the loaded page)
+                                  return (
+                                    <span className="block space-y-0.5 text-[11px] text-ink-muted">
+                                      <span className="block font-medium text-ink">{fmtNumber(t.count)} {objectNoun(first!.object, t.count)}</span>
+                                      {first!.columns.filter((c) => c.name in t && c.name !== 'count').map((c) => (
+                                        <span key={c.name} className="block">
+                                          {c.label}: <span className="font-semibold text-ink">{t[c.name] == null ? '—' : formatValue(asField(c), t[c.name])}</span>
+                                        </span>
+                                      ))}
+                                    </span>
+                                  );
+                                })()}
                               </span>
                             ) : (
                               <span className="rounded-full bg-surface px-2 py-0.5 text-[11px] font-semibold text-brand-ink ring-1 ring-brand/20">
