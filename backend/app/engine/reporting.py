@@ -8,6 +8,7 @@ import csv
 import io
 import re
 from collections import Counter
+from datetime import date, datetime, timezone
 
 from ..salesforce.errors import SalesforceAuthExpired, SalesforceError
 from .core import Ctx, FindingDraft, Unavailable, pct, rate_score
@@ -87,7 +88,7 @@ _EVENT_ID = {"Report": ("REPORT_ID_DERIVED", "REPORT_ID"), "Dashboard": ("DASHBO
 
 def _runs(ctx: Ctx, kind: str) -> tuple[dict[str, dict], str | None]:
     """Per report or dashboard (15-character id) in the last 30 days, from Event Monitoring's Report / Dashboard event log: its share
-    of all runs (usage %), runs, and who ran it last. ({}, why) when it isn't available: Salesforce records runs only with Event
+    of all runs (usage %) and its runs. ({}, why) when it isn't available: Salesforce records runs only with Event
     Monitoring (Shield or the add-on)."""
     if not ctx.has_object("EventLogFile"):
         return {}, "This org doesn’t have Event Monitoring (or the connected user can’t read event logs), so how often each one is used isn’t recorded"
@@ -106,7 +107,6 @@ def _runs(ctx: Ctx, kind: str) -> tuple[dict[str, dict], str | None]:
     if not logs:
         return {}, f"Event Monitoring has no {kind} event logs for the last {USAGE_DAYS} days (that event type may not be in this org’s licence)"
     runs: Counter = Counter()
-    last: dict[str, tuple[str, str]] = {}  # id -> (when, user id)
     version = ctx.sf.settings.sf_api_version
     for log in logs:
         if (log.get("LogFileLength") or 0) > USAGE_MAX_LOG_BYTES or not log.get("Id"):
@@ -122,67 +122,102 @@ def _runs(ctx: Ctx, kind: str) -> tuple[dict[str, dict], str | None]:
             if not rid:
                 continue
             runs[rid] += 1
-            when = row.get("TIMESTAMP_DERIVED") or row.get("TIMESTAMP") or ""
-            user = row.get("USER_ID_DERIVED") or row.get("USER_ID") or ""
-            if user and when >= last.get(rid, ("", ""))[0]:
-                last[rid] = (when, user)
-    names = _user_names(ctx, sorted({u[:15] for _, u in last.values()}))
     total = sum(runs.values())
-    return {rid: {"runs": n, "usage": round(100 * n / total, 1), "last_user": names.get(last.get(rid, ("", ""))[1][:15])}
+    return {rid: {"runs": n, "usage": round(100 * n / total, 1)}
             for rid, n in runs.items()}, None
 
 
-def _user_names(ctx: Ctx, ids: list[str]) -> dict[str, str]:
+# The table, as Salesforce names the fields: grouped by folder; Usage is added (frozen, last) when it's listed.
+REPORT_USAGE_COLUMNS = ["FolderName", "Name", "ReportTypeApiName", "CreatedById", "CreatedDate", "LastViewedDate", "LastRunDate",
+                        "LastModifiedById", "LastModifiedDate"]
+
+
+def _report_type_names(ctx: Ctx) -> dict[str, str]:
+    """Report type API name -> the name people see in Salesforce (e.g. Opportunity -> “Opportunities”), from the Analytics API."""
+    try:
+        body = ctx.sf.get(f"/services/data/{ctx.sf.settings.sf_api_version}/analytics/reportTypes")
+    except SalesforceAuthExpired:
+        raise
+    except SalesforceError:
+        return {}
     out: dict[str, str] = {}
-    safe = [i for i in ids if re.fullmatch(r"[A-Za-z0-9]{15}", i)]
-    for i in range(0, len(safe), 200):
-        try:
-            out.update({str(u.get("Id") or "")[:15]: u.get("Name") or "" for u in ctx.rows(
-                "SELECT Id, Name FROM User WHERE Id IN (" + ", ".join(f"'{x}'" for x in safe[i:i + 200]) + ")", 200)})
-        except SalesforceAuthExpired:
-            raise
-        except SalesforceError:
-            break
+    for group in body if isinstance(body, list) else []:
+        for t in group.get("reportTypes") or []:
+            if t.get("type"):
+                out[t["type"]] = t.get("label") or t["type"]
     return out
-
-
-# The table, as Salesforce names the fields: grouped by folder; Usage % (and, for reports, Last Run By) are added when it's listed.
-REPORT_USAGE_COLUMNS = ["FolderName", "Name", "CreatedById", "CreatedDate", "LastRunDate", "LastModifiedById", "LastModifiedDate"]
-DASHBOARD_USAGE_COLUMNS = ["FolderName", "Title", "CreatedById", "CreatedDate", "DashboardResultRunningUser", "DashboardResultRefreshedDate",
+DASHBOARD_USAGE_COLUMNS = ["FolderName", "Title", "CreatedById", "CreatedDate", "LastViewedDate", "DashboardResultRefreshedDate",
                            "LastModifiedById", "LastModifiedDate"]
 
 
+# Each report's (or dashboard's) usage score: how recently it was used. Run in the last 30 days (or found in Event Monitoring's runs) = 100.
+USAGE_SCORE_STEPS = ((30, 100), (90, 75), (180, 50), (365, 25))
+
+
+def usage_score(days: int | None, runs: int = 0) -> int:
+    """100 used in the last 30 days, 75 within 90, 50 within 180, 25 within a year, 0 older or never."""
+    if runs:
+        return 100
+    if days is None:
+        return 0
+    return next((score for limit, score in USAGE_SCORE_STEPS if days <= limit), 0)
+
+
+def days_since(value: object) -> int | None:
+    text = str(value or "")[:10]
+    try:
+        return (datetime.now(timezone.utc).date() - date.fromisoformat(text)).days if text else None
+    except ValueError:
+        return None
+
+
 def report_usage(ctx: Ctx) -> None:
-    """Report & dashboard usage: every report and dashboard, by folder, with who made and changed it, when it last ran and by whom,
-    and its share of all runs (Event Monitoring). Shown for information; Unused reports and dashboards score the clean-up."""
-    _reports(ctx)
-    total = ctx.count("Report", "NamespacePrefix = null", recent=False)
-    recent = ctx.count("Report", "NamespacePrefix = null", f"LastRunDate = LAST_N_DAYS:{USAGE_DAYS}", recent=False) if total else 0
+    """Report & dashboard usage: every report and dashboard, by folder, with who made and changed it, when it was last viewed and run,
+    and its usage: a score from how recently it was used, and its share of all runs (Event Monitoring). The card's score is the
+    average of those scores."""
+    reports = _reports(ctx)
+    total = len(reports)
     report_runs, why_not = _runs(ctx, "Report")
     has_dash = ctx.has_object("Dashboard")
     dash_runs, dash_why = _runs(ctx, "Dashboard") if has_dash else ({}, None)
-    dashboards = ctx.count("Dashboard", "NamespacePrefix = null", recent=False) if has_dash else 0
+    dashes: list[dict] = []
+    if has_dash:
+        try:  # when each dashboard's data was last refreshed (when it was last run)
+            dashes = ctx.rows("SELECT Id, DashboardResultRefreshedDate FROM Dashboard WHERE NamespacePrefix = null LIMIT 5000", 5000)
+            dash_date = "DashboardResultRefreshedDate"
+        except SalesforceAuthExpired:
+            raise
+        except SalesforceError:
+            dashes, dash_date = _dashboards(ctx), "LastViewedDate"
+    scores = [usage_score(days_since(r.get("LastRunDate")), (report_runs.get(str(r.get("Id") or "")[:15]) or {}).get("runs", 0)) for r in reports]
+    scores += [usage_score(days_since(d.get(dash_date)), (dash_runs.get(str(d.get("Id") or "")[:15]) or {}).get("runs", 0)) for d in dashes]
+    used = sum(1 for x in scores if x >= 75)  # used in the last 90 days
+    score = round(sum(scores) / len(scores), 1) if scores else 100
     records = [("Report", "NamespacePrefix = null")] + ([("Dashboard", "NamespacePrefix = null")] if has_dash else [])
+    steps = ", ".join(f"{sc} within {d} days" for d, sc in USAGE_SCORE_STEPS)
     m = ctx.metric(
-        "Report & dashboard usage", pct(recent, total) if total else 0, "%", "higher-better", None,
-        how=f"Every report and dashboard, grouped by folder. The number is the share of reports run in the last {USAGE_DAYS} days. In the "
-            f"tables, Usage % is each one’s share of all report (or dashboard) runs in the last {USAGE_DAYS} days, from Event Monitoring.",
-        rule="Shown for information, not scored: the Unused reports and Unused dashboards cards score the clean-up.",
+        "Report & dashboard usage", pct(used, len(scores)) if scores else 0, "%", "higher-better", score,
+        how="Every report and dashboard, grouped by folder, each with its own usage score. The number is the share of them used in the last "
+            "90 days; the score is the average of their usage scores.",
+        rule=f"Each report and dashboard scores by how recently it was used: {steps}, 0 older or never. The card’s score is their average.",
         records=records,
         recent=False,
         columns=REPORT_USAGE_COLUMNS + [c for c in DASHBOARD_USAGE_COLUMNS if c not in REPORT_USAGE_COLUMNS],
         order="FolderName",
         extra="report_usage",
         criteria=[
-            ("Records checked", f"{total:,} reports" + (f" and {dashboards:,} dashboards" if has_dash else "")
+            ("Records checked", f"{total:,} reports" + (f" and {len(dashes):,} dashboards" if has_dash else "")
              + " (from installed packages aren’t counted)."),
-            ("What's counted", f"{recent:,} of {total:,} reports ({pct(recent, total):.0f}%) were run in the last {USAGE_DAYS} days."),
+            ("Usage score", f"Per report or dashboard: {steps}, and 0 when older or never used. Reports by their Last Run date, dashboards "
+             "by when their data was last refreshed. Run in the last 30 days in Event Monitoring = 100"),
+            ("What's counted", f"{used:,} of {len(scores):,} reports and dashboards ({pct(used, len(scores)):.0f}%) were used in the last 90 days "
+             f"(score 75 or more). Average usage score: {score:.0f}."),
             ("Usage %", f"Each report’s share of all report runs in the last {USAGE_DAYS} days ({sum(v['runs'] for v in report_runs.values()):,} runs)"
              if report_runs else f"N/A: {why_not}"),
-            ("Last Run By", "Reports: who ran it last, from Event Monitoring (N/A without it). Dashboards: the dashboard’s running user "
-             "and when its data was last refreshed, as Salesforce keeps them"),
-            ("Columns", "Salesforce’s own fields: Folder, Report Name / Title, Created By, Created Date, Last Run, Last Modified By, "
-             "Last Modified Date"),
+            ("Report Type", "The report type each report is built on, by the name Salesforce shows (its API name when the name can’t be read)"),
+            ("Last Viewed Date", "When the report or dashboard was last opened, as Salesforce keeps it. Salesforce records this per user, "
+             "so it’s the connected user’s last view"),
+            ("Last Run", "Reports: the Last Run date. Dashboards: when their data was last refreshed (Dashboard Result Refreshed Date)"),
             ("Dashboards", (f"Usage % from the Dashboard event log ({sum(v['runs'] for v in dash_runs.values()):,} views)" if dash_runs
                             else f"Usage % N/A: {dash_why}") if has_dash else "Dashboards can’t be read with this user"),
         ],
@@ -193,6 +228,9 @@ def report_usage(ctx: Ctx) -> None:
         runs = report_runs if spec["object"] == "Report" else dash_runs
         spec["reasons"] = runs
         spec["usage_known"] = bool(runs)
+        spec["date_field"] = "LastRunDate" if spec["object"] == "Report" else "DashboardResultRefreshedDate"
+        if spec["object"] == "Report":
+            spec["report_types"] = _report_type_names(ctx)  # Report Type shown by its name, not its API name
 
 
 def unused_reports(ctx: Ctx) -> None:

@@ -22,8 +22,9 @@ REPORTS = [
 DESCRIBE = {
     **wf.DESCRIBE,
     "Report": [wf._f("Id", type="id"), wf._f("Name", label="Report Name"), wf._f("FolderName", label="Folder", sortable=True),
+               wf._f("ReportTypeApiName", label="Report Type API Name"),
                wf._f("CreatedById", type="reference", label="Created By ID"), wf._f("CreatedDate", type="datetime", label="Created Date"),
-               wf._f("LastRunDate", type="datetime", label="Last Run"), wf._f("LastModifiedById", type="reference", label="Last Modified By ID"),
+               wf._f("LastViewedDate", type="datetime", label="Last Viewed Date"), wf._f("LastRunDate", type="datetime", label="Last Run"), wf._f("LastModifiedById", type="reference", label="Last Modified By ID"),
                wf._f("LastModifiedDate", type="datetime", label="Last Modified Date"), wf._f("OwnerId", type="reference")],
     "Dashboard": [wf._f("Id", type="id"), wf._f("Title"), wf._f("FolderName", label="Folder", sortable=True)],
     "EventLogFile": [wf._f("Id", type="id")],
@@ -62,6 +63,8 @@ class FakeReportingOrg(wf.FakeSalesOrg):
         authed = request.headers.get("authorization", "").removeprefix("Bearer ") in self.valid_access
         if authed and url.path.endswith("/sobjects"):
             return httpx.Response(200, json={"sobjects": [{"name": n, "label": n, "labelPlural": n + "s", "queryable": True, "retrieveable": True} for n in DESCRIBE]})
+        if authed and url.path.endswith("/analytics/reportTypes"):  # report type names, by category
+            return httpx.Response(200, json=[{"label": "Opportunities", "reportTypes": [{"label": "Opportunities", "type": "Opportunity"}]}])
         if authed and url.path.endswith("/sobjects/EventLogFile/0AT000000000001AAA/LogFile"):
             return httpx.Response(200, text=REPORT_LOG, headers={"Content-Type": "text/csv"})
         if authed and (m := re.search(r"/sobjects/(\w+)/describe$", url.path)):
@@ -85,8 +88,8 @@ class FakeReportingOrg(wf.FakeSalesOrg):
         if "FROM DashboardComponent" in q:
             return [{"CustomReportId": "00O000000000001AAA"}, {"CustomReportId": "00O000000000001AAA"}, {"CustomReportId": "00O000000000003AAA"}]
         if "FROM Report WHERE NamespacePrefix = null ORDER BY FolderName" in q:  # Report & dashboard usage's records, by folder
-            return [{"Id": "00O000000000001AAA", "Name": "Pipeline by Stage", "LastRunDate": None},
-                    {"Id": "00O000000000003AAA", "Name": "Old Quarterly Report", "LastRunDate": None}]
+            return [{"Id": "00O000000000001AAA", "Name": "Pipeline by Stage", "ReportTypeApiName": "Opportunity", "LastRunDate": None},
+                    {"Id": "00O000000000003AAA", "Name": "Old Quarterly Report", "ReportTypeApiName": "CustomEntity$Quota__c", "LastRunDate": None}]
         if "FROM Report WHERE NamespacePrefix = null ORDER BY Name" in q:
             return REPORTS
         if q.startswith("SELECT Name, FolderName, LastRunDate FROM Report"):
@@ -122,19 +125,26 @@ def test_all_reporting_areas(client, sf):
     assert not any("unexpected error" in (x["message"] or "") for x in res["areas"]), [x["message"] for x in res["areas"]]
     ind = {i["label"]: i["value"] for x in res["areas"] for i in x["indicators"]}
     assert ind["Unused reports"] == 2 and ind["Unused dashboards"] == 1
-    assert ind["Report & dashboard usage"] == 25.0  # 1 of 4 reports run in the last 30 days
+    assert ind["Report & dashboard usage"] == 50.0  # 2 of the 4 reports used (run in Event Monitoring)
     assert [i["label"] for i in areas["area-8"]["indicators"]][0] == "Report & dashboard usage"
     card = next(i for i in areas["area-8"]["indicators"] if i["label"] == "Report & dashboard usage")
     assert card["recordObjects"] == ["Report", "Dashboard"]  # reports and dashboards, one tab each
     # every report by folder, with Salesforce's own fields, who ran it last, and its share of runs frozen last
     page = sf_client_page(client, res)
     assert page["sortedBy"] == "FolderName"
-    assert [c["name"] for c in page["columns"] if c["type"] != "id"] == [  # the record id is hidden in the table
-        "FolderName", "Name", "CreatedById", "CreatedDate", "LastRunBy", "LastRunDate", "LastModifiedById", "LastModifiedDate", "UsagePct"]
-    assert page["columns"][-1]["frozen"] and page["columns"][-1]["label"] == "Usage %"
+    assert [c["name"] for c in page["columns"] if c["type"] != "id" and not c["hidden"]] == [  # what the table shows
+        "FolderName", "Name", "ReportType", "CreatedById", "CreatedDate", "LastViewedDate", "LastRunDate", "LastModifiedById", "LastModifiedDate", "UsagePct"]
+    assert page["columns"][-1]["frozen"] and page["columns"][-1]["label"] == "Usage"
     rows = {r["values"]["Name"]: r["values"] for r in page["records"]}
-    assert (rows["Pipeline by Stage"]["UsagePct"], rows["Pipeline by Stage"]["LastRunBy"]) == ("75.0%", "Bob Ray")  # 3 of 4 runs; Bob ran it last
-    assert (rows["Old Quarterly Report"]["UsagePct"], rows["Old Quarterly Report"]["LastRunBy"]) == ("0%", "—")
+    # each with its own score (run in Event Monitoring = 100; never run = 0) and its share of runs
+    assert rows["Pipeline by Stage"]["UsagePct"] == "Score 100 / 100\n75.0% of runs"
+    assert rows["Old Quarterly Report"]["UsagePct"] == "Score 0 / 100\n0% of runs"
+    assert "LastRunBy" not in rows["Pipeline by Stage"]
+    # the report type by the name Salesforce shows; a type the Analytics API doesn't name keeps its API name
+    assert (rows["Pipeline by Stage"]["ReportType"], rows["Old Quarterly Report"]["ReportType"]) == ("Opportunities", "CustomEntity$Quota__c")
+    assert next(c for c in page["columns"] if c["name"] == "ReportTypeApiName")["hidden"]
+    card = next(i for i in areas["area-8"]["indicators"] if i["label"] == "Report & dashboard usage")
+    assert card["score"] == 50.0  # the average of the 4 scores: 100, 100 (run in Event Monitoring), 0, 0
     assert ind["Reporting organization issues"] == 1  # the unfiled "Copy of …" report, counted once
     assert ind["Leadership reporting gaps"] == 3  # only pipeline and win/loss-ish names exist
     assert ind["Sales activity gaps"] == 1  # Bob logged 2 in 30 days
