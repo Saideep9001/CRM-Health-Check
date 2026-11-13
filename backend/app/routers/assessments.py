@@ -469,6 +469,8 @@ def _with_extra(sf, rec: dict, columns: list[dict], records: list[dict]) -> list
                 r["values"]["ReportType"] = (rec.get("report_types") or {}).get(api) or api
             else:
                 r["values"]["SourceReports"] = "\n".join((rec.get("sources") or {}).get((r.get("id") or "")[:15], [])) or None
+                if not r["values"].get("DashboardResultRefreshedDate"):  # Salesforce leaves it empty: the check read it from the status
+                    r["values"]["DashboardResultRefreshedDate"] = (rec.get("refreshed") or {}).get((r.get("id") or "")[:15])
                 kind = r["values"].get("Type")
                 r["values"]["DashboardMode"] = DASHBOARD_MODES.get(kind, kind)
         cols = [c for c in columns if c["name"] not in (USAGE_COLUMN["name"], REPORT_TYPE_COLUMN["name"], SOURCE_REPORTS_COLUMN["name"],

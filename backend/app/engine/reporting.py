@@ -152,6 +152,28 @@ DASHBOARD_USAGE_COLUMNS = ["FolderName", "Title", "Type", "CreatedById", "Create
                            "LastModifiedDate"]
 
 
+DASHBOARD_STATUS_MAX = 300  # dashboards whose refresh time is read (one call each)
+
+
+def _dashboard_refreshed(ctx: Ctx, dashboard_ids: list[str]) -> dict[str, str]:
+    """When each dashboard (id 15) was last refreshed: the latest refresh of its components, from the Analytics API's dashboard status.
+    Salesforce leaves the Dashboard Result Refreshed Date field empty for Lightning dashboards, so it isn't read from there.
+    Reading the status doesn't refresh anything."""
+    out: dict[str, str] = {}
+    version = ctx.sf.settings.sf_api_version
+    for did in [i for i in dashboard_ids if re.fullmatch(r"[A-Za-z0-9]{15,18}", i or "")][:DASHBOARD_STATUS_MAX]:
+        try:
+            body = ctx.sf.get(f"/services/data/{version}/analytics/dashboards/{did}/status")
+        except SalesforceAuthExpired:
+            raise
+        except SalesforceError:
+            continue
+        dates = [c.get("refreshDate") for c in (body.get("componentStatus") or []) if isinstance(c, dict) and c.get("refreshDate")]
+        if dates:
+            out[did[:15]] = max(dates)
+    return out
+
+
 def _dashboard_sources(ctx: Ctx, dashboard_ids: list[str]) -> dict[str, list[str]]:
     """The reports each dashboard's components show (dashboard id 15 -> report names, in order), from its components."""
     safe = [i for i in dashboard_ids if re.fullmatch(r"[A-Za-z0-9]{15,18}", i or "")]
@@ -216,7 +238,9 @@ def report_usage(ctx: Ctx) -> None:
         except SalesforceError:
             dashes, dash_date = _dashboards(ctx), "LastViewedDate"
     scores = [usage_score(days_since(r.get("LastRunDate")), (report_runs.get(str(r.get("Id") or "")[:15]) or {}).get("runs", 0)) for r in reports]
-    scores += [usage_score(days_since(d.get(dash_date)), (dash_runs.get(str(d.get("Id") or "")[:15]) or {}).get("runs", 0)) for d in dashes]
+    refreshed = _dashboard_refreshed(ctx, [str(d.get("Id") or "") for d in dashes]) if dashes else {}
+    scores += [usage_score(days_since(refreshed.get(str(d.get("Id") or "")[:15]) or d.get(dash_date)),
+                           (dash_runs.get(str(d.get("Id") or "")[:15]) or {}).get("runs", 0)) for d in dashes]
     used = sum(1 for x in scores if x >= 75)  # used in the last 90 days
     score = round(sum(scores) / len(scores), 1) if scores else 100
     records = [("Report", "NamespacePrefix = null")] + ([("Dashboard", "NamespacePrefix = null")] if has_dash else [])
@@ -241,8 +265,9 @@ def report_usage(ctx: Ctx) -> None:
             ("Usage %", f"Each report’s share of all report runs in the last {USAGE_DAYS} days ({sum(v['runs'] for v in report_runs.values()):,} runs)"
              if report_runs else f"N/A: {why_not}"),
             ("Report Type", "The report type each report is built on, by the name Salesforce shows (its API name when the name can’t be read)"),
-            ("Dashboard columns", "The org’s own fields: Title, Created By, Created Date, Last Refreshed Date (when its data was last "
-             "refreshed), Last Modified By, Last Modified Date; and Source Reports, the reports its components show"),
+            ("Dashboard columns", "The org’s own fields: Title, Created By, Created Date, Last Modified By, Last Modified Date; Last Refreshed "
+             "Date, when its components were last refreshed (from the dashboard’s status, since Salesforce leaves that field empty on "
+             "Lightning dashboards); and Source Reports, the reports its components show"),
             ("Dashboard Running User", "From Dashboard Type: Static = runs as one specified user, so everyone sees the same data; Dynamic = "
              "runs as the logged-in user, so each viewer sees their own data; Dynamic (team) = a manager can also view it as anyone on their team"),
             ("Last Viewed Date", "When the report was last opened, as Salesforce keeps it. Salesforce records this per user, "
@@ -263,6 +288,7 @@ def report_usage(ctx: Ctx) -> None:
             spec["report_types"] = _report_type_names(ctx)  # Report Type shown by its name, not its API name
         else:
             spec["sources"] = _dashboard_sources(ctx, [str(d.get("Id") or "") for d in dashes])  # Source Reports, per dashboard
+            spec["refreshed"] = refreshed  # Last Refreshed Date, per dashboard
 
 
 def unused_reports(ctx: Ctx) -> None:

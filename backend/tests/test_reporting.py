@@ -1,5 +1,6 @@
 """Reporting & Dashboards checks (areas 8–11), run against a fake org with known reports and deals."""
 import re
+from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -42,6 +43,8 @@ DESCRIBE = {
 REPORT_LOG = ("EVENT_TYPE,TIMESTAMP_DERIVED,USER_ID_DERIVED,REPORT_ID_DERIVED\n"
               "Report,2026-11-10T09:00:00Z,005000000000001AAA,00O000000000001AAA\nReport,2026-11-11T09:00:00Z,005000000000002AAA,00O000000000001AAA\n"
               "Report,2026-11-10T10:00:00Z,005000000000001AAA,00O000000000001AAA\nReport,2026-11-09T09:00:00Z,005000000000002AAA,00O000000000004AAA\n")
+# the dashboard was last refreshed yesterday (its newest component)
+REFRESHED = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%dT09:30:00.000Z")
 COUNTS = [
     (("FROM Report", "LastRunDate = LAST_N_DAYS:30"), 1),
     (("FROM Report", "LastRunDate"), 2),
@@ -67,6 +70,9 @@ class FakeReportingOrg(wf.FakeSalesOrg):
         authed = request.headers.get("authorization", "").removeprefix("Bearer ") in self.valid_access
         if authed and url.path.endswith("/sobjects"):
             return httpx.Response(200, json={"sobjects": [{"name": n, "label": n, "labelPlural": n + "s", "queryable": True, "retrieveable": True} for n in DESCRIBE]})
+        if authed and url.path.endswith("/analytics/dashboards/01Z000000000001AAA/status"):  # when its components were last refreshed
+            return httpx.Response(200, json={"componentStatus": [{"componentId": "01a1", "refreshDate": "2026-11-01T08:00:00.000Z"},
+                                                                 {"componentId": "01a2", "refreshDate": REFRESHED}]})
         if authed and url.path.endswith("/analytics/reportTypes"):  # report type names, by category
             return httpx.Response(200, json=[{"label": "Opportunities", "reportTypes": [{"label": "Opportunities", "type": "Opportunity"}]}])
         if authed and url.path.endswith("/sobjects/EventLogFile/0AT000000000001AAA/LogFile"):
@@ -136,7 +142,7 @@ def test_all_reporting_areas(client, sf):
     assert not any("unexpected error" in (x["message"] or "") for x in res["areas"]), [x["message"] for x in res["areas"]]
     ind = {i["label"]: i["value"] for x in res["areas"] for i in x["indicators"]}
     assert ind["Unused reports"] == 2 and ind["Unused dashboards"] == 1
-    assert ind["Report & dashboard usage"] == 40.0  # 2 of 5 (4 reports, 1 dashboard) used: run in Event Monitoring
+    assert ind["Report & dashboard usage"] == 60.0  # 3 of 5 used: 2 reports run in Event Monitoring, the dashboard refreshed yesterday
     assert [i["label"] for i in areas["area-8"]["indicators"]][0] == "Report & dashboard usage"
     card = next(i for i in areas["area-8"]["indicators"] if i["label"] == "Report & dashboard usage")
     assert card["recordObjects"] == ["Report", "Dashboard"]  # reports and dashboards, one tab each
@@ -165,9 +171,11 @@ def test_all_reporting_areas(client, sf):
     assert next(c for c in dash["columns"] if c["name"] == "DashboardResultRefreshedDate")["label"] == "Last Refreshed Date"
     assert next(c for c in dash["columns"] if c["name"] == "DashboardMode")["label"] == "Dashboard Running User"
     assert dash["records"][0]["values"]["DashboardMode"] == "Static"  # runs as one specified user
+    # Salesforce leaves the refreshed date empty: it's the latest component refresh, from the dashboard's status
+    assert dash["records"][0]["values"]["DashboardResultRefreshedDate"] == REFRESHED
     assert dash["records"][0]["values"]["SourceReports"] == "Pipeline by Stage\nOld Quarterly Report"
     card = next(i for i in areas["area-8"]["indicators"] if i["label"] == "Report & dashboard usage")
-    assert card["score"] == 40.0  # the average of the 5 scores: 100, 100 (run in Event Monitoring), 0, 0, 0
+    assert card["score"] == 60.0  # the average of the 5 scores: 100, 100 (run in Event Monitoring), 100 (dashboard), 0, 0
     assert ind["Reporting organization issues"] == 1  # the unfiled "Copy of …" report, counted once
     assert ind["Leadership reporting gaps"] == 3  # only pipeline and win/loss-ish names exist
     assert ind["Sales activity gaps"] == 1  # Bob logged 2 in 30 days
