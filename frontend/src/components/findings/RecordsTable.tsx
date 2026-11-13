@@ -66,9 +66,10 @@ export function RecordsTable({
   // Rows kept together: duplicate groups (the same cleaned value of the matched field), or records grouped by their
   // Account (the server sorts them by Account name), with the Account named first in each block.
   // Grouped by a parent record the server sorted by: the Account (Contacts, deals) or the Parent Account (child Accounts)
-  const refCol = first?.sortedBy === 'AccountId' || first?.sortedBy === 'ParentId' ? first.sortedBy : null;
+  // …or by folder (reports and dashboards, which the server sorts by Folder Name), with the folder named first in each block
+  const refCol = first?.sortedBy === 'AccountId' || first?.sortedBy === 'ParentId' || first?.sortedBy === 'FolderName' ? first.sortedBy : null;
   const byAccount = !!refCol;
-  const refLabel = (first?.columns.find((c) => c.name === refCol)?.label ?? 'Account').replace(/ ID$/, '');
+  const refLabel = refCol === 'FolderName' ? 'Folder' : (first?.columns.find((c) => c.name === refCol)?.label ?? 'Account').replace(/ ID$/, '');
   // Account Hierarchy Chains: rows already in batch order from the server, each batch banded and numbered
   const byBatch = first?.sortedBy === 'HierarchyBatch';
   const groupCol = byAccount ? refCol : byBatch ? 'HierarchyBatch' : grouped ? first?.sortedBy ?? null : null;

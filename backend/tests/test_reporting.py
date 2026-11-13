@@ -21,9 +21,11 @@ REPORTS = [
 ]
 DESCRIBE = {
     **wf.DESCRIBE,
-    "Report": [wf._f("Id", type="id"), wf._f("Name"), wf._f("FolderName"), wf._f("LastRunDate", type="datetime"), wf._f("CreatedDate", type="datetime"),
-               wf._f("OwnerId", type="reference")],
-    "Dashboard": [wf._f("Id", type="id")],
+    "Report": [wf._f("Id", type="id"), wf._f("Name", label="Report Name"), wf._f("FolderName", label="Folder", sortable=True),
+               wf._f("CreatedById", type="reference", label="Created By ID"), wf._f("CreatedDate", type="datetime", label="Created Date"),
+               wf._f("LastRunDate", type="datetime", label="Last Run"), wf._f("LastModifiedById", type="reference", label="Last Modified By ID"),
+               wf._f("LastModifiedDate", type="datetime", label="Last Modified Date"), wf._f("OwnerId", type="reference")],
+    "Dashboard": [wf._f("Id", type="id"), wf._f("Title"), wf._f("FolderName", label="Folder", sortable=True)],
     "EventLogFile": [wf._f("Id", type="id")],
     "DashboardComponent": [wf._f("Id", type="id")],
     "OpportunityLineItem": [wf._f("Id", type="id")],
@@ -32,9 +34,9 @@ DESCRIBE = {
                                                  wf._f("Region__c", type="picklist", custom=True, label="Region")],
 }
 # Event Monitoring's Report event log: Pipeline by Stage run 3 times by 2 people, Lost deals by reason once
-REPORT_LOG = ("EVENT_TYPE,USER_ID_DERIVED,REPORT_ID_DERIVED\n"
-              "Report,005A,00O000000000001AAA\nReport,005A,00O000000000001AAA\nReport,005B,00O000000000001AAA\n"
-              "Report,005B,00O000000000004AAA\n")
+REPORT_LOG = ("EVENT_TYPE,TIMESTAMP_DERIVED,USER_ID_DERIVED,REPORT_ID_DERIVED\n"
+              "Report,2026-11-10T09:00:00Z,005000000000001AAA,00O000000000001AAA\nReport,2026-11-11T09:00:00Z,005000000000002AAA,00O000000000001AAA\n"
+              "Report,2026-11-10T10:00:00Z,005000000000001AAA,00O000000000001AAA\nReport,2026-11-09T09:00:00Z,005000000000002AAA,00O000000000004AAA\n")
 COUNTS = [
     (("FROM Report", "LastRunDate = LAST_N_DAYS:30"), 1),
     (("FROM Report", "LastRunDate"), 2),
@@ -78,9 +80,11 @@ class FakeReportingOrg(wf.FakeSalesOrg):
     def records(q: str) -> list[dict]:
         if "FROM EventLogFile WHERE EventType = 'Report'" in q:
             return [{"Id": "0AT000000000001AAA", "LogDate": "2026-11-11T00:00:00.000+0000", "LogFileLength": 400}]
+        if q.startswith("SELECT Id, Name FROM User WHERE Id IN"):
+            return [{"Id": "005000000000001AAA", "Name": "Ann Lee"}, {"Id": "005000000000002AAA", "Name": "Bob Ray"}]
         if "FROM DashboardComponent" in q:
             return [{"CustomReportId": "00O000000000001AAA"}, {"CustomReportId": "00O000000000001AAA"}, {"CustomReportId": "00O000000000003AAA"}]
-        if q.startswith("SELECT Name, FolderName, LastRunDate, CreatedDate, OwnerId, Id FROM Report WHERE NamespacePrefix = null"):  # Report usage's records
+        if "FROM Report WHERE NamespacePrefix = null ORDER BY FolderName" in q:  # Report & dashboard usage's records, by folder
             return [{"Id": "00O000000000001AAA", "Name": "Pipeline by Stage", "LastRunDate": None},
                     {"Id": "00O000000000003AAA", "Name": "Old Quarterly Report", "LastRunDate": None}]
         if "FROM Report WHERE NamespacePrefix = null ORDER BY Name" in q:
@@ -118,16 +122,19 @@ def test_all_reporting_areas(client, sf):
     assert not any("unexpected error" in (x["message"] or "") for x in res["areas"]), [x["message"] for x in res["areas"]]
     ind = {i["label"]: i["value"] for x in res["areas"] for i in x["indicators"]}
     assert ind["Unused reports"] == 2 and ind["Unused dashboards"] == 1
-    assert ind["Report usage"] == 25.0  # 1 of 4 reports run in the last 30 days
-    assert [i["label"] for i in areas["area-8"]["indicators"]][0] == "Report usage"
-    # every report, with its share of the runs (Event Monitoring), people, dashboards and days since it last ran
+    assert ind["Report & dashboard usage"] == 25.0  # 1 of 4 reports run in the last 30 days
+    assert [i["label"] for i in areas["area-8"]["indicators"]][0] == "Report & dashboard usage"
+    card = next(i for i in areas["area-8"]["indicators"] if i["label"] == "Report & dashboard usage")
+    assert card["recordObjects"] == ["Report", "Dashboard"]  # reports and dashboards, one tab each
+    # every report by folder, with Salesforce's own fields, who ran it last, and its share of runs frozen last
     page = sf_client_page(client, res)
+    assert page["sortedBy"] == "FolderName"
+    assert [c["name"] for c in page["columns"] if c["type"] != "id"] == [  # the record id is hidden in the table
+        "FolderName", "Name", "CreatedById", "CreatedDate", "LastRunBy", "LastRunDate", "LastModifiedById", "LastModifiedDate", "UsagePct"]
+    assert page["columns"][-1]["frozen"] and page["columns"][-1]["label"] == "Usage %"
     rows = {r["values"]["Name"]: r["values"] for r in page["records"]}
-    assert rows["Pipeline by Stage"]["UsagePct"] == "75.0%"
-    assert (rows["Pipeline by Stage"]["Runs30"], rows["Pipeline by Stage"]["RunUsers"], rows["Pipeline by Stage"]["OnDashboards"]) == (3, 2, 2)
-    assert (rows["Old Quarterly Report"]["UsagePct"], rows["Old Quarterly Report"]["OnDashboards"]) == ("0%", 1)
-    assert rows["Old Quarterly Report"]["DaysSinceRun"] == "Never run"
-    assert [c["name"] for c in page["columns"]][-5:] == ["UsagePct", "Runs30", "RunUsers", "OnDashboards", "DaysSinceRun"]
+    assert (rows["Pipeline by Stage"]["UsagePct"], rows["Pipeline by Stage"]["LastRunBy"]) == ("75.0%", "Bob Ray")  # 3 of 4 runs; Bob ran it last
+    assert (rows["Old Quarterly Report"]["UsagePct"], rows["Old Quarterly Report"]["LastRunBy"]) == ("0%", "—")
     assert ind["Reporting organization issues"] == 1  # the unfiled "Copy of …" report, counted once
     assert ind["Leadership reporting gaps"] == 3  # only pipeline and win/loss-ish names exist
     assert ind["Sales activity gaps"] == 1  # Bob logged 2 in 30 days
@@ -164,10 +171,10 @@ def test_no_reports_access_skips_report_checks(client, sf):
 
 
 def sf_client_page(client, res):
-    """The Report usage card's records, as the page lists them."""
+    """The Report & dashboard usage card's report records, as the page lists them."""
     aid = res["id"] if "id" in res else None
     assessments = client.get(f"{API}/assessments").json()
     aid = aid or (assessments["items"] if isinstance(assessments, dict) else assessments)[0]["id"]
-    got = client.get(f"{API}/assessments/{aid}/areas/area-8/indicator-records", params={"label": "Report usage", "object": "Report"})
+    got = client.get(f"{API}/assessments/{aid}/areas/area-8/indicator-records", params={"label": "Report & dashboard usage", "object": "Report"})
     assert got.status_code == 200, got.text
     return got.json()

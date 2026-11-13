@@ -367,9 +367,8 @@ def _by_queue(rec: dict) -> bool:
 
 
 # Report usage: how much each report is used, after its own columns
-REPORT_USAGE_COLUMNS = [{"name": "UsagePct", "label": "Usage %", "type": "string"}, {"name": "Runs30", "label": "Runs (30 days)", "type": "int"},
-                        {"name": "RunUsers", "label": "Users", "type": "int"}, {"name": "OnDashboards", "label": "On Dashboards", "type": "int"},
-                        {"name": "DaysSinceRun", "label": "Days Since Last Run", "type": "string"}]
+USAGE_COLUMN = {"name": "UsagePct", "label": "Usage %", "type": "string", "frozen": True}  # the last column, frozen
+LAST_RUN_BY_COLUMN = {"name": "LastRunBy", "label": "Last Run By", "type": "string"}  # reports: from Event Monitoring
 # Required field gaps: the rules each record breaks, one per line, the last column, frozen so it stays in view
 BROKEN_RULES_COLUMN = {"name": "BrokenRules", "label": "Broken rule", "type": "lines", "frozen": True}
 # its rule filter: the kind of rule, and how that kind's rules read in the Broken rule column (“Field: Page layout “X””)
@@ -454,25 +453,19 @@ def _with_extra(sf, rec: dict, columns: list[dict], records: list[dict]) -> list
         records.sort(key=lambda r: (place(r).get("batch") or 10**9, place(r).get("level") or 0, str(r["values"].get("Name") or "").lower()))
         names = {BATCH_COLUMN["name"], CHILDREN_COLUMN["name"]}
         return [BATCH_COLUMN, *(c for c in columns if c["name"] not in names), CHILDREN_COLUMN]
-    if rec.get("extra") == "report_usage":  # Report usage: each report's share of runs, users, dashboards and days since it last ran
+    if rec.get("extra") == "report_usage":  # Report & dashboard usage: who ran it last (reports), and its share of all runs, frozen last
         saved, known = rec.get("reasons") or {}, bool(rec.get("usage_known"))
-        today = datetime.now(timezone.utc).date()
+        report = rec.get("object") == "Report"
         for r in records:
             u = saved.get((r.get("id") or "")[:15]) or {}
-            last = str(r["values"].get("LastRunDate") or "")[:10]
-            try:
-                days = (today - date.fromisoformat(last)).days if last else None
-            except ValueError:
-                days = None
-            r["values"].update({
-                "UsagePct": f"{u.get('usage', 0)}%" if known else "N/A",
-                "Runs30": u.get("runs", 0) if known else None,
-                "RunUsers": u.get("users", 0) if known else None,
-                "OnDashboards": u.get("dashboards", 0),
-                "DaysSinceRun": "Never run" if days is None else "Today" if days == 0 else f"{days:,} day{'s' if days != 1 else ''}",
-            })
-        names = {c["name"] for c in REPORT_USAGE_COLUMNS}
-        return [*(c for c in columns if c["name"] not in names), *REPORT_USAGE_COLUMNS]
+            r["values"]["UsagePct"] = f"{u.get('usage', 0)}%" if known else "N/A"
+            if report:
+                r["values"]["LastRunBy"] = u.get("last_user") or ("—" if known else "N/A")
+        cols = [c for c in columns if c["name"] not in (USAGE_COLUMN["name"], LAST_RUN_BY_COLUMN["name"])]
+        if report:  # Last Run By right before Last Run
+            at = next((i for i, c in enumerate(cols) if c["name"] == "LastRunDate"), len(cols))
+            cols.insert(at, LAST_RUN_BY_COLUMN)
+        return [*cols, USAGE_COLUMN]
     if rec.get("extra") == "broken_rules":  # Required field gaps: the rules each record breaks, frozen on the right
         reasons = rec.get("reasons") or {}
         for r in records:
@@ -662,7 +655,7 @@ def indicator_records(
     picked = _picked(fields, rec)
     page = _salesforce(db, http, settings, lambda sf: explorer.records_matching(
         sf, rec["object"], rec.get("where"), cursor, columns=picked or rec.get("columns"), order=rec.get("order"), filters=_filters(filters),
-        exact=bool(picked)), org_id)
+        exact=bool(picked) or bool(rec.get("exact_columns"))), org_id)
     if rec.get("extra"):
         page["columns"] = _salesforce(db, http, settings, lambda sf: _with_extra(sf, rec, page["columns"], page["records"]), org_id)
     if rec.get("extra") == "hierarchy":
@@ -925,7 +918,7 @@ def indicator_records_csv(
     rec, org_id, title = _indicator_records(db, assessment_id, area_id, label, object, only, period, queue, days, record_type)
     picked = _picked(fields, rec)
     return _records_csv(db, http, settings, org_id, rec["object"], rec.get("where"), title, picked or rec.get("columns"), rec.get("order"),
-                        _filters(filters), notes=rec.get("notes"), rec=rec, exact=bool(picked))
+                        _filters(filters), notes=rec.get("notes"), rec=rec, exact=bool(picked) or bool(rec.get("exact_columns")))
 
 
 @router.get("/findings/{finding_id}", response_model=Finding)
