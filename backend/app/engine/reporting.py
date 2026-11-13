@@ -146,10 +146,10 @@ def _report_type_names(ctx: Ctx) -> dict[str, str]:
             if t.get("type"):
                 out[t["type"]] = t.get("label") or t["type"]
     return out
-# Dashboards, as the org names the fields: Title, Dashboard Type, Created By/Date, Running User, Last Modified By/Date. The refreshed
-# date (when it was last run) is read for its usage score but not shown; Source Reports and Usage are added when it's listed.
-DASHBOARD_USAGE_COLUMNS = ["FolderName", "Title", "Type", "CreatedById", "CreatedDate", "RunningUserId", "LastModifiedById", "LastModifiedDate",
-                           "DashboardResultRefreshedDate"]
+# Dashboards: Title, Dashboard Type (shown as Static / Dynamic), Created By/Date, Last Refreshed Date (when its data was last run, which
+# also gives its usage score), Last Modified By/Date. Source Reports and Usage % are added when it's listed.
+DASHBOARD_USAGE_COLUMNS = ["FolderName", "Title", "Type", "CreatedById", "CreatedDate", "DashboardResultRefreshedDate", "LastModifiedById",
+                           "LastModifiedDate"]
 
 
 def _dashboard_sources(ctx: Ctx, dashboard_ids: list[str]) -> dict[str, list[str]]:
@@ -241,8 +241,10 @@ def report_usage(ctx: Ctx) -> None:
             ("Usage %", f"Each report’s share of all report runs in the last {USAGE_DAYS} days ({sum(v['runs'] for v in report_runs.values()):,} runs)"
              if report_runs else f"N/A: {why_not}"),
             ("Report Type", "The report type each report is built on, by the name Salesforce shows (its API name when the name can’t be read)"),
-            ("Dashboard columns", "The org’s own fields: Title, Dashboard Type, Created By, Created Date, Running User, Last Modified By, "
-             "Last Modified Date; and Source Reports, the reports its components show"),
+            ("Dashboard columns", "The org’s own fields: Title, Created By, Created Date, Last Refreshed Date (when its data was last "
+             "refreshed), Last Modified By, Last Modified Date; and Source Reports, the reports its components show"),
+            ("Dashboard Running User", "From Dashboard Type: Static = runs as one specified user, so everyone sees the same data; Dynamic = "
+             "runs as the logged-in user, so each viewer sees their own data; Dynamic (team) = a manager can also view it as anyone on their team"),
             ("Last Viewed Date", "When the report was last opened, as Salesforce keeps it. Salesforce records this per user, "
              "so it’s the connected user’s last view"),
             ("Last Run", "Reports: the Last Run date. Dashboards: when their data was last refreshed (used for the usage score)"),

@@ -371,6 +371,9 @@ def _by_queue(rec: dict) -> bool:
 USAGE_COLUMN = {"name": "UsagePct", "label": "Usage %", "type": "string", "frozen": True}
 REPORT_TYPE_COLUMN = {"name": "ReportType", "label": "Report Type", "type": "string"}  # by its name, right after Report Name
 SOURCE_REPORTS_COLUMN = {"name": "SourceReports", "label": "Source Reports", "type": "lines"}  # dashboards: one report per line
+# dashboards: Dashboard Type in words, where the type was (Static: runs as one set user; Dynamic: as the viewer; team: a manager can view as their team)
+DASHBOARD_MODE_COLUMN = {"name": "DashboardMode", "label": "Dashboard Running User", "type": "string"}
+DASHBOARD_MODES = {"SpecifiedUser": "Static", "LoggedInUser": "Dynamic", "MyTeamUser": "Dynamic (team)"}
 # Required field gaps: the rules each record breaks, one per line, the last column, frozen so it stays in view
 BROKEN_RULES_COLUMN = {"name": "BrokenRules", "label": "Broken rule", "type": "lines", "frozen": True}
 # its rule filter: the kind of rule, and how that kind's rules read in the Broken rule column (“Field: Page layout “X””)
@@ -466,13 +469,19 @@ def _with_extra(sf, rec: dict, columns: list[dict], records: list[dict]) -> list
                 r["values"]["ReportType"] = (rec.get("report_types") or {}).get(api) or api
             else:
                 r["values"]["SourceReports"] = "\n".join((rec.get("sources") or {}).get((r.get("id") or "")[:15], [])) or None
-        cols = [c for c in columns if c["name"] not in (USAGE_COLUMN["name"], REPORT_TYPE_COLUMN["name"], SOURCE_REPORTS_COLUMN["name"])]
+                kind = r["values"].get("Type")
+                r["values"]["DashboardMode"] = DASHBOARD_MODES.get(kind, kind)
+        cols = [c for c in columns if c["name"] not in (USAGE_COLUMN["name"], REPORT_TYPE_COLUMN["name"], SOURCE_REPORTS_COLUMN["name"],
+                                                         DASHBOARD_MODE_COLUMN["name"])]
         if report:  # the type's name right after Report Name; its API name stays hidden
             cols = [{**c, "hidden": True} if c["name"] == "ReportTypeApiName" else c for c in cols]
             at = next((i + 1 for i, c in enumerate(cols) if c["name"] == "Name"), len(cols))
             cols.insert(at, REPORT_TYPE_COLUMN)
-        else:  # dashboards: the refreshed date only feeds the score; Source Reports after Last Modified Date
-            cols = [{**c, "hidden": True} if c["name"] == "DashboardResultRefreshedDate" else c for c in cols]
+        else:  # dashboards: Static / Dynamic where the type was; Last Refreshed Date; Source Reports after Last Modified Date
+            cols = [{**c, "hidden": True} if c["name"] == "Type" else {**c, "label": "Last Refreshed Date"}
+                    if c["name"] == "DashboardResultRefreshedDate" else c for c in cols]
+            at = next((i + 1 for i, c in enumerate(cols) if c["name"] == "Type"), len(cols))  # Static / Dynamic where the type was
+            cols.insert(at, DASHBOARD_MODE_COLUMN)
             at = next((i + 1 for i, c in enumerate(cols) if c["name"] == "LastModifiedDate"), len(cols))
             cols.insert(at, SOURCE_REPORTS_COLUMN)
         return [*cols, USAGE_COLUMN]

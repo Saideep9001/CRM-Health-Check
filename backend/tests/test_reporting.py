@@ -160,7 +160,11 @@ def test_all_reporting_areas(client, sf):
     dash = client.get(f"{API}/assessments/{aid}/areas/area-8/indicator-records",
                       params={"label": "Report & dashboard usage", "object": "Dashboard"}).json()
     assert [c["name"] for c in dash["columns"] if c["type"] != "id" and not c["hidden"]] == [
-        "FolderName", "Title", "Type", "CreatedById", "CreatedDate", "RunningUserId", "LastModifiedById", "LastModifiedDate", "SourceReports", "UsagePct"]
+        "FolderName", "Title", "DashboardMode", "CreatedById", "CreatedDate", "DashboardResultRefreshedDate", "LastModifiedById", "LastModifiedDate",
+        "SourceReports", "UsagePct"]
+    assert next(c for c in dash["columns"] if c["name"] == "DashboardResultRefreshedDate")["label"] == "Last Refreshed Date"
+    assert next(c for c in dash["columns"] if c["name"] == "DashboardMode")["label"] == "Dashboard Running User"
+    assert dash["records"][0]["values"]["DashboardMode"] == "Static"  # runs as one specified user
     assert dash["records"][0]["values"]["SourceReports"] == "Pipeline by Stage\nOld Quarterly Report"
     card = next(i for i in areas["area-8"]["indicators"] if i["label"] == "Report & dashboard usage")
     assert card["score"] == 40.0  # the average of the 5 scores: 100, 100 (run in Event Monitoring), 0, 0, 0
